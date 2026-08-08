@@ -1,21 +1,22 @@
 # Tipsy Android 原生化迁移：现状（唯一状态真值）
 
-> 更新：2026-08-08 ｜ Android 壳：**尚未开工**（仅 Android Studio Compose 模板脚手架）
+> 更新：2026-08-08 ｜ Android 壳：**W0 进行中**（三 flavor debug 可构建，DebugSurface 待真机验证）
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
 ## 0. 三十秒速览
 
-- **波次进度**：W0 未开始。
-- **代码现状**：`app/src/main/java/com/example/tipsy_android/` 下是模板 `MainActivity` + Greeting Composable，**零业务代码**。
-- **submodule**：`tipsy-app` 已挂上，pin `93d2c5551`，**`node_modules` 未安装**。
-- **不存在**：flavor、rn-host、core 模块、feature 模块、桥实现、CI。
+- **波次进度**：W0 前三步已完成（依赖 + 工具链 + autolinking），DebugSurface 真机 gate 未做。
+- **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost）+ `MainActivity`（Compose 原生根）+ `RNSurfaceFragment`。仍是零业务代码。
+- **submodule**：pin `93d2c5551`，`node_modules` 已装（1812 包）。
+- **已验证**：三 flavor debug 构建通过、applicationId 正确、JS bundle 内嵌、51 个 project autolink。
+- **不存在**：五 Tab、Router、core 模块、feature 模块、桥实现、CI。
 
 ## 1. 波次状态
 
 | 波次 | 内容 | 业务量 | 状态 | source_rn_sha | target_android_sha |
 | --- | --- | --- | --- | --- | --- |
-| W0 | 工程地基 + brownfield DebugSurface | 基建 | 🔴 未开始 | `93d2c5551`（待开工确认） | `fe349c0` |
+| W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟡 进行中（三 flavor 可构建；DebugSurface 真机 gate 未做） | `93d2c5551` | `6495ca7` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | ⬜ 阻塞于 W0 | — | — |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | ⬜ 阻塞于 W1 | — | — |
 | W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | ⬜ 阻塞于 W2 | — | — |
@@ -30,34 +31,80 @@
 
 Android Studio 新建 Compose 工程的默认产物：`app/build.gradle.kts`、`MainActivity.kt`、`ui/theme/{Color,Theme,Type}.kt`、模板 res、`gradle/libs.versions.toml`、wrapper、`.idea/`。加本次新增的 `llmdoc/`。
 
-### 2.2 与目标基线的已知偏差（W0 第一件事）
+### 2.2 工具链（已对齐，实测值）
 
-| 项 | 当前值 | RN 0.81.4 要求 | 来源 |
-| --- | --- | --- | --- |
-| AGP | `9.2.1` | `8.11.0` | `tipsy-app/node_modules/react-native/gradle/libs.versions.toml` |
-| Kotlin | `2.2.10` | `2.1.20` | 同上 |
-| compileSdk | `37` | `36` | 同上 |
-| Gradle DSL | `.kts` | Groovy（方案 ADR-004） | — |
-| namespace / applicationId | `com.example.tipsy_android` | 三 flavor 三包名 | `tipsy-app/src/constants/app.js` |
-| 模块结构 | 单 `:app` | `:app` + `:rn-host` + `:core:*` | 方案 §3.4 |
+| 项 | 当前值 | 来源 |
+| --- | --- | --- |
+| AGP | `8.11.0` | RN 自带 catalog |
+| Kotlin | `2.1.20` | 同上 |
+| compileSdk / targetSdk / minSdk | `36 / 36 / 24` | 同上 |
+| Build Tools | `36.0.0` | 同上 |
+| NDK | `27.1.12297006` | 同上 |
+| **Gradle wrapper** | **`8.14.3`** | **AGP 8.11 不支持 Gradle 9；模板原为 9.4.1** |
+| **Compose BOM** | **`2025.04.01`** | **实测可与 Kotlin 2.1.20 共存（模板原为 2026.02.01）** |
+| Gradle DSL | Groovy | 方案 ADR-004；`.kts` 已全部改写 |
+| JDK | 17（daemon 跑 21，编译 target 17） | — |
 
-targetSdk 36 与 minSdk 24 已经对齐，无需改动。
+### 2.2.1 实测的 Gradle task 名（方案 §5.4「命令名不靠猜」）
+
+```
+./gradlew projects
+./gradlew :app:assembleGooglePlayDebug     # → com.tipsyturbo.app
+./gradlew :app:assembleDirectApkDebug      # → ai.lightspeed.tipsy
+./gradlew :app:assembleRuStoreDebug        # → com.tipsytavern.app
+./gradlew :app:testGooglePlayDebugUnitTest
+```
+
+注意 RN 的 Gradle plugin 额外引入了 **`debugOptimized`** build type，故实际 variant 数是
+`3 flavor × 3 build type`（debug / debugOptimized / release），比方案 §5.1 假设的多一档。
+
+### 2.2.2 W0 踩过的坑（都表现为同一句无用报错）
+
+RN/Expo 生态多处假设 `Gradle root = <rn-project>/android`，本仓布局会让它们落到错误目录。
+**症状统一是 `Process 'command 'node'' finished with non-zero exit value 1`，真实 stderr 被 Gradle 吞掉。**
+排查方法：在报错任务的 workingDir 手工复现那条 node 命令。
+
+| 出处 | 错误推导 | 处理 |
+| --- | --- | --- |
+| `expo-constants` `createExpoConfig` | 用 `rootProject.projectDir` 当 projectRoot | doFirst 重定向（配置期改会被写回） |
+| `expo-updates` `create*UpdatesResources` | 用 `rootProject.projectDir.parentFile` | **禁用任务**（其 Property 执行期已 final，改不动；OTA 属 W4） |
+| `autolinkLibrariesFromCommand` | workingDirectory 默认取 Gradle root 的父目录 | 显式传 `tipsy-app` |
+| 第三方模块（apple-authentication / skia 等） | 从 `rootProject.projectDir` 向上找 node_modules | `ext.reactNativeAndroidRoot` 指向 **RN 包根** |
+| `react.cliFile` | 默认 RN `cli.js`，但 Expo 工程无 `@react-native-community/cli` | 改 `@expo/cli` + `bundleCommand=export:embed` |
+
+**另一个已知限制**：`expoAutolinking.exclude` 对 `expo-updates` 等无效 —— `AutolinkingCommandBuilder`
+把多值 `--exclude` 与 `--project-root` 拼进同一 argv，variadic 参数会吞掉后续 flag
+（实测 `--exclude` 在 `--project-root` 之前时不生效）。故 W0 的隔离用「禁用任务」实现。
+
+**磁盘**：debug 默认出四个 ABI，单 flavor 中间产物可达数 GB；曾因磁盘写满导致
+`packageRuStoreDebug` 失败且**不提示空间不足**。现 debug 只出 `arm64-v8a`。
 
 ### 2.3 环境
 
 | 工具 | 状态 |
 | --- | --- |
-| `tipsy-app/node_modules` | **未安装**。W0 需 `npm ci`（lockfile v3） |
-| 根 `node_modules` 符号链接 | **未建**。方案 ADR-004 要求 |
+| `tipsy-app/node_modules` | ✅ 已装（`npm ci`，1812 包，patch-package 与 hermes-O0 patch 均已应用） |
+| 根 `node_modules` 符号链接 | ✅ 已建（不入库，见 `.gitignore`；换机器/CI 需重建） |
 | `sdkmanager` | 曾观察到不可用（未装 cmdline-tools）。W0 需实测并提供明确环境检查与 CI 安装路径 |
 | emulator image | 未固定。W0 记录实际可用的 API 24 / API 36 image |
-| Node / npm | W0 记录实际版本并在 CI 固定 |
+| Node / npm | ✅ 实测 node `v22.22.3` / npm `10.9.8`；settings.gradle 有四级显式解析（见方案 ADR-004 第 3 条） |
 
 ### 2.4 已经不用做的事（RN 侧已就绪，实测）
 
 `tipsy-app` 里已有 **55 个文件**完成壳适配（iOS 壳一年沉淀）：13 个 Surface 入口组件、`SurfaceToastHost`、`TipsyHeader` 栈底 `popSurface` 兜底、`useShellSurfaceRefocus`、`useChatNavigation` 壳分支、`shellGemsEntry`/`shellTaskEntry` 跨栈出口、`axios.ts` 的 401/402 桥上抛、`config_persist` nsfw 镜像接力、`recommendTracking` 壳 outbox、`api.ts`/`lane.ts` 壳 API 地址。
 
 **Android 只要提供能让 `isShellHost()` 返回 true 的 Kotlin 桥，这些全部自动生效。** 另有约 4,500 行现成 RN 测试可作对等 fixture（方案 §8.2）。
+
+### 2.5 W0 剩余项
+
+1. **DebugSurface 真机/模拟器 gate**（W0 的核心验收）：Metro 直连 + 离线内嵌两种来源各挂一次；
+   反复开关 50 次无泄漏；rotation；进程重建。**目前只验证了「能构建出含 JS bundle 的 APK」，
+   未验证「能挂起来」。**
+2. Metro 端口固定 8083（方案 ADR-003）与 `index.surfaces.debug` 入口的联调。
+3. debug manifest 的 cleartext 配置（Metro 走 http，仅 debug 允许）。
+4. merged manifest snapshot 测试（方案 §5.1）：三 flavor 逐项断言 exported/scheme/权限。
+5. lint / detekt 接入并进 `check` 依赖图；CI 的 G1 fast gate（方案 §5.4）。
+6. `sdkmanager` 可用性与 CI SDK 安装路径。
 
 ## 3. 横切能力
 
@@ -68,14 +115,14 @@ targetSdk 36 与 minSdk 24 已经对齐，无需改动。
 | 网络层 | 🔴 未开始 | — |
 | i18n | 🔴 未开始 | — |
 | Router / 深链 | 🔴 未开始 | — |
-| RN Surface 宿主 | 🔴 未开始 | — |
+| RN Surface 宿主 | 🟡 骨架就位 | `RNSurfaceFragment`（继承官方 `ReactFragment`，共享单 ReactHost）；**instanceId / 首帧协议 / onSurfaceReappeared 尚未实现**，见方案 §4.3 |
 | Push | 🔴 未开始 | — |
 | Analytics（Qt） | 🔴 未开始 | 归属待决策（方案 §12.1） |
 | 营销 SDK（ATT/AppsFlyer/FB/TikTok） | 🔴 未开始 | iOS 事故点，方案 §4.2 |
 | Sentry | 🔴 未开始 | — |
 | Widget | 🔴 未开始 | — |
-| OTA | 🔴 未开始 | 隔离方案见 §5.3，**发布需独立授权** |
-| CI | 🔴 不存在 | — |
+| OTA | 🔴 未开始 | 隔离方案见 §5.3。W0 已**显式禁用** expo-updates 资源任务（原因见 §2.2.2），W4 接入时需先解决其 projectRoot 推导 |
+| CI | 🔴 不存在 | W0 剩余项 |
 
 ## 4. Surface 验收矩阵
 
