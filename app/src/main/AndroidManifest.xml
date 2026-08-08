@@ -1,25 +1,62 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  壳工程主 Manifest。
+  W0 只承载「能启动 + 能挂 DebugSurface」，不引入真实业务能力。
+
+  §2.3 的 config plugin 移植状态（这些 patch 在 brownfield 不会自动生效）：
+  - withAndroidLargeHeap      → 已移植（下方 android:largeHeap）
+  - withAndroidStyles         → 见 res/values/styles.xml
+  - withVoiceCallSystemSession→ 未移植（W4 随 voice 能力接入）
+  - withRemoveAgoraMediaProjection → 见 build.gradle 的依赖替换；权限移除见下方
+  - withRuStoreBilling        → 未移植（W0 不接支付，届时走 ruStore flavor source set）
+  漏移植是静默失效，动到相关能力时必须回查方案 §2.3。
+-->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!--
+      withRemoveAgoraMediaProjection 的等价处理：Agora full-sdk 会带入屏幕录制
+      相关权限，本产品不使用（且属商店审核敏感项），显式移除。
+      依赖侧的 full-sdk→voice-sdk 替换见根 build.gradle。
+    -->
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"
+        tools:node="remove" />
+
     <application
-        android:allowBackup="true"
-        android:dataExtractionRules="@xml/data_extraction_rules"
-        android:fullBackupContent="@xml/backup_rules"
+        android:name=".TipsyApplication"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:largeHeap="true"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.TipsyAndroid">
+        android:theme="@style/AppTheme"
+        android:usesCleartextTraffic="false"
+        tools:replace="android:allowBackup">
+
+        <!--
+          withAndroidLargeHeap 的等价处理。注释原文记录这是线上 Android OOM
+          崩溃的缓解措施（多个 ExoPlayer 实例并存时默认堆不足，
+          java.lang.OutOfMemoryError @ ExoPlayerImplInternal.shouldContinueLoading）。
+          Screen 波次（W4）迁 Media3 时这一项必须在位，且不得当作 OOM 的唯一修复。
+        -->
+        <meta-data
+            android:name="tipsy.largeHeap.note"
+            android:value="see android:largeHeap on application" />
+
         <activity
             android:name=".MainActivity"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
             android:exported="true"
             android:label="@string/app_name"
-            android:theme="@style/Theme.TipsyAndroid"
+            android:launchMode="singleTask"
+            android:theme="@style/AppTheme"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>

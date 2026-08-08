@@ -1,0 +1,176 @@
+// Tipsy Android 原生壳 —— settings（Groovy DSL，方案 ADR-004：全仓不混 .gradle.kts）
+//
+// 布局差异：Gradle root = 仓库根，RN 业务在 ./tipsy-app（git submodule）。
+// 标准 Expo 布局是 Gradle root = <rn-project>/android，因此需要两处显式处理：
+//   1. expoAutolinking.projectRoot 指向 tipsy-app（官方公开可覆盖项）
+//   2. 仓库根的 node_modules 软链（见 .gitignore 说明）——
+//      ExpoGradleHelperExtension.getReactNativeDir 硬编码从 Gradle root 跑
+//      `node --print require.resolve('react-native/package.json')` 且无覆盖入口
+//
+// 本文件的 includeBuild / plugins / autolinking 写法对齐 CNG 生成的参考工程
+// （`npx expo prebuild --platform android` 的产物），只改布局相关的路径。
+//
+// Node 显式解析（方案 ADR-004 第 3 条）：Node 是本仓库真实的构建输入，而
+// fnm/nvm/asdf 只在交互式 shell 注入 PATH —— 从 Finder/Dock 启动的
+// Android Studio、launchd、多数 CI runner 都解析不到裸 "node"，报
+// "A problem occurred starting process 'command 'node''" 且无上下文。
+//
+// pluginManagement 必须是 settings 脚本第一条语句，故这段逻辑只能内联，
+// 结果经 gradle.ext 暴露给后续构建复用。
+
+pluginManagement {
+    def settingsRoot = settingsDir
+    def rnProjectRoot = new File(settingsRoot, 'tipsy-app')
+
+    def trimToNull = { String value ->
+        def trimmed = value?.trim()
+        return (trimmed == null || trimmed.isEmpty()) ? null : trimmed
+    }
+
+    def readLocalProperty = { String key ->
+        def file = new File(settingsRoot, 'local.properties')
+        if (!file.exists()) return null
+        def props = new Properties()
+        file.withInputStream { props.load(it) }
+        return trimToNull(props.getProperty(key))
+    }
+
+    // 优先级：环境变量（CI）→ local.properties（开发机，不入库）
+    //        → Gradle property（可选团队默认）→ 回退裸 "node" 走 $PATH
+    def candidates = [
+        [source: 'TIPSY_NODE_EXECUTABLE 环境变量',
+         value : trimToNull(providers.environmentVariable('TIPSY_NODE_EXECUTABLE').getOrElse(''))],
+        [source: 'local.properties 的 tipsy.node.executable',
+         value : readLocalProperty('tipsy.node.executable')],
+        [source: 'tipsy.node.executable Gradle property',
+         value : trimToNull(providers.gradleProperty('tipsy.node.executable').getOrElse(''))],
+    ].findAll { it.value != null }
+
+    def nodeExecutable = 'node'
+    def nodeSource = '$PATH 查找'
+    if (!candidates.isEmpty()) {
+        def selected = candidates.first()
+        def file = new File(selected.value)
+        if (!file.isAbsolute()) {
+            throw new GradleException("${selected.source} 必须是绝对路径，当前为 '${selected.value}'。")
+        }
+        if (!file.isFile() || !file.canExecute()) {
+            throw new GradleException("${selected.source} 指向 '${selected.value}'，它不是可执行文件。")
+        }
+        nodeExecutable = file.absolutePath
+        nodeSource = selected.source
+    }
+
+    // Expo 的 AutolinkingCommandBuilder 硬编码裸 "node" 且无覆盖入口，又位于
+    // 禁止修改的 tipsy-app/node_modules —— 显式传参覆盖不了全部调用点，故把
+    // 解析出的 node 目录前置进 daemon PATH。
+    // 必须早于下面第一次 providers.exec：Gradle 在首次 exec 时快照进程环境，
+    // 之后再改无效，裸 "node" 的调用点会继续失败。
+    def nodeBinDir = new File(nodeExecutable).parentFile?.absolutePath
+    if (nodeBinDir != null) {
+        def currentPath = System.getenv('PATH') ?: ''
+        if (!currentPath.tokenize(File.pathSeparator).contains(nodeBinDir)) {
+            try {
+                org.gradle.internal.nativeintegration.services.NativeServices
+                    .getInstance()
+                    .get(org.gradle.internal.nativeintegration.ProcessEnvironment)
+                    .maybeSetEnvironmentVariable(
+                        'PATH',
+                        currentPath.isEmpty() ? nodeBinDir : "${nodeBinDir}${File.pathSeparator}${currentPath}"
+                    )
+            } catch (Throwable ignored) {
+                // 非致命：能接受显式路径的调用点仍会拿到绝对路径
+            }
+        }
+    }
+
+    // 尽早验证，替代 Gradle 无上下文的报错
+    try {
+        def nodeVersion = providers.exec {
+            commandLine(nodeExecutable, '--version')
+        }.standardOutput.asText.get().trim()
+        gradle.ext.tipsyNodeExecutable = nodeExecutable
+        gradle.ext.tipsyRnProjectRoot = rnProjectRoot
+        println "[Tipsy] node ${nodeVersion}（来源：${nodeSource}）"
+    } catch (Exception e) {
+        throw new GradleException(
+            "无法执行 node（来源：${nodeSource}，路径：${nodeExecutable}）。\n" +
+            "请设置 TIPSY_NODE_EXECUTABLE 环境变量，或在 local.properties 写入\n" +
+            "  tipsy.node.executable=/absolute/path/to/node\n" +
+            "原始错误：${e.message}"
+        )
+    }
+
+    // RN Gradle plugin（included build，非 Maven 制品）——工作目录用 RN 工程根
+    def reactNativeGradlePlugin = new File(
+        providers.exec {
+            workingDir(rnProjectRoot)
+            commandLine(nodeExecutable, '--print',
+                "require.resolve('@react-native/gradle-plugin/package.json', { paths: [require.resolve('react-native/package.json')] })")
+        }.standardOutput.asText.get().trim()
+    ).getParentFile().absolutePath
+    includeBuild(reactNativeGradlePlugin)
+
+    // Expo autolinking plugin（included build）
+    def expoPluginsPath = new File(
+        providers.exec {
+            workingDir(rnProjectRoot)
+            commandLine(nodeExecutable, '--print',
+                "require.resolve('expo-modules-autolinking/package.json', { paths: [require.resolve('expo/package.json')] })")
+        }.standardOutput.asText.get().trim(),
+        '../android/expo-gradle-plugin'
+    ).absolutePath
+    includeBuild(expoPluginsPath)
+
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+plugins {
+    id 'com.facebook.react.settings'
+    id 'expo-autolinking-settings'
+}
+
+// ADR-004 支点 1：projectRoot 是官方公开可覆盖项，其 doc 注释明写
+// "Should be used by projects that don't follow the /android folder structure"。
+// 必须在 useExpoModules() / rnConfigCommand 之前设置。
+expoAutolinking {
+    projectRoot = gradle.ext.tipsyRnProjectRoot
+
+    // W0 严格隔离（方案 §5.2）：只验证「壳能启动 + 能挂 DebugSurface」，
+    // 不启用任何真实业务能力。这些模块各自要求 W0 尚不具备的前提：
+    //   expo-updates      —— OTA 属 W4，且需先定 channel/runtime 隔离方案（§5.3）
+    //   expo-splash-screen—— 需 app.config.js 生成的 splash 资源（壳不跑 prebuild）
+    //   expo-dev-client 系 —— dev launcher/menu 会劫持 bundle 加载，壳自管入口
+    // 每一项都必须由所属 packet 在 owner 契约与 manifest gate 就绪后单独接回，
+    // **不要为了让构建变绿而随手删掉某一行**。
+    exclude = [
+        'expo-updates',
+        'expo-splash-screen',
+        'expo-dev-client',
+        'expo-dev-launcher',
+        'expo-dev-menu',
+        'expo-dev-menu-interface',
+    ]
+}
+
+extensions.configure(com.facebook.react.ReactSettingsExtension) { ex ->
+    // workingDirectory 必须显式传 RN 工程根。
+    // 默认值是 settings.layout.rootDirectory.dir("../")，即「Gradle root 的父目录」
+    // —— 这假设了标准布局（Gradle root = <rn-project>/android，父目录正好是 RN 工程根）。
+    // 本仓 Gradle root = 仓库根，父目录是 ~/Developer，那里没有 node_modules，
+    // 命令内的 require.resolve('expo/package.json') 直接抛
+    // "Cannot find module 'expo/package.json'"，且 Gradle 只报
+    // "Process 'command 'node'' finished with non-zero exit value 1"（stderr 被吞）。
+    ex.autolinkLibrariesFromCommand(expoAutolinking.rnConfigCommand, gradle.ext.tipsyRnProjectRoot)
+}
+
+expoAutolinking.useExpoModules()
+
+rootProject.name = 'tipsy-Android'
+
+include ':app'
+includeBuild(expoAutolinking.reactNativeGradlePlugin)
