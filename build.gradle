@@ -44,6 +44,13 @@ plugins {
 // 版本号与 tipsy-app/node_modules/react-native-agora 的 build.gradle 保持一致。
 subprojects { sub ->
     sub.configurations.configureEach { cfg ->
+        // 本工程用 Hermes（gradle.properties 的 hermesEnabled=true），不装 JSC。
+        // expo-dev-client 仍声明了 org.webkit:android-jsc:+ 这个可选依赖，而
+        // jsc-android 包并未安装、也没有对应 Maven 仓库 —— 任何需要解析它的任务
+        // （实测：lint 的 generate*LintModel）都会失败：
+        //   "Could not find any matches for org.webkit:android-jsc:+"
+        // 直接排除，而不是为一个用不到的引擎去加仓库。
+        cfg.exclude group: 'org.webkit', module: 'android-jsc'
         cfg.exclude group: 'io.agora.rtc', module: 'full-screen-sharing'
         cfg.resolutionStrategy.dependencySubstitution { subs ->
             subs.substitute(subs.module('io.agora.rtc:full-sdk'))

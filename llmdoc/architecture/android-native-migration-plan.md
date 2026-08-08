@@ -598,6 +598,18 @@ distribution flavor × build type
   googlePlay / directApk / ruStore   ×   debug / qa / release
 ```
 
+> **W0 实测发现的一类风险：autolinking 会把开发期模块接进 release。**
+> `expo-dev-client` 在 `tipsy-app/package.json` 里是 **`dependencies`**（非 devDependencies），
+> autolinking 因此把 `expo-dev-launcher` / `expo-dev-menu` 接进 **release** runtime classpath，
+> 进而把 `androidx.compose.ui:ui-tooling` 的 `PreviewActivity`（**`exported=true`**）
+> 合并进 release manifest —— **生产包对外暴露一个调试 Activity，且普通构建不报错**。
+> W0 用 `src/release/AndroidManifest.xml` 的 `tools:node="remove"` 兜底，并由
+> merged manifest 断言长期看守（§5.1）。根治需改 `tipsy-app` 的依赖分类或按 variant
+> 排除 dev 模块 —— 前者不在本仓权限内。**每次新增 RN 依赖都要复查 release manifest diff。**
+>
+> 同理，`expo-dev-client` 声明的 `org.webkit:android-jsc:+`（本工程用 Hermes、未装 jsc-android）
+> 会让任何解析它的任务失败（实测 lint 的 `generate*LintModel`），需全局排除。
+
 > **W0 实测补正**：RN 的 Gradle plugin 会额外引入一个 **`debugOptimized`** build type，
 > 所以实际 variant 数比上式多一档（W0 现状 = 3 flavor × {debug, debugOptimized, release}）。
 > 规划 `qa` build type 时要把它算进矩阵，CI 任务名也以 `./gradlew :app:tasks` 实际输出为准。

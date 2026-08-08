@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  API 35+ 才有 android:useBoundsForWidth。
+  与 values/styles.xml 的说明配套 —— 改动其一时请同步另一处。
+-->
+<resources>
+
+    <style name="Widget.App.TextView" parent="Widget.AppCompat.TextView">
+        <item name="android:useBoundsForWidth">false</item>
+    </style>
+
+</resources>

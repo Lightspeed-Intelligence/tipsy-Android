@@ -129,6 +129,25 @@ android {
         buildConfig true
     }
 
+    lint {
+        // W0 起 lint 就是硬门（方案 §5.4 的 G1 gate）：新增告警必须当场处理，
+        // 否则很快积累到无人看的程度。
+        abortOnError true
+        warningsAsErrors true
+        checkDependencies false   // 50+ 个第三方 RN 模块的告警不由本仓负责
+        sarifReport true          // CI 用（GitHub code scanning 可直接消费）
+        htmlReport true
+        // baseline：首次运行会生成，把**现存**告警记为已知，之后只拦新增。
+        // 注意 baseline 是「技术债台账」而非豁免 —— 清理它属后续波次。
+        baseline = file('lint-baseline.xml')
+        disable += [
+            // RN/Expo 生态大量使用反射与动态注册，这两项误报率高
+            'UnusedResources',
+            // 壳的 W0 阶段刻意不做多语言
+            'MissingTranslation',
+        ]
+    }
+
     packaging {
         resources {
             excludes += ['/META-INF/{AL2.0,LGPL2.1}']
