@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug 专属：允许明文访问 Metro（http://10.0.2.2:8083）与 RN 的开发浮层。
+  仅存在于 debug source set —— main manifest 保持 usesCleartextTraffic=false，
+  release 产物不会带上这些（方案 §5.2：cleartext 只允许 debug 开启）。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <application
+        android:networkSecurityConfig="@xml/network_security_config_debug"
+        android:usesCleartextTraffic="true"
+        tools:replace="android:usesCleartextTraffic">
+
+        <!-- RN 的红屏/开发菜单浮层 -->
+        <activity
+            android:name="com.facebook.react.devsupport.DevSettingsActivity"
+            android:exported="false" />
+    </application>
+
+</manifest>
