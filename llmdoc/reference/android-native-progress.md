@@ -1,6 +1,6 @@
 # Tipsy Android 原生化迁移：现状（唯一状态真值）
 
-> 更新：2026-08-08 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门；仅 CI 未接）
+> 更新：2026-08-08 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门 + G1 CI）
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
@@ -16,7 +16,7 @@
 
 | 波次 | 内容 | 业务量 | 状态 | source_rn_sha | target_android_sha |
 | --- | --- | --- | --- | --- | --- |
-| W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成（仅 CI 未接） | `93d2c5551` | `d9cc241` |
+| W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | ⬜ 阻塞于 W0 | — | — |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | ⬜ 阻塞于 W1 | — | — |
 | W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | ⬜ 阻塞于 W2 | — | — |
@@ -155,10 +155,8 @@ W0 验证刻意改用 `directApk` flavor（包名 `ai.lightspeed.tipsy` 未被�
 4. ~~lint 接入~~ ✅ 见 §2.9（detekt 仍未接）
 5. ~~`sdkmanager` 可用性~~ ✅ 已装 cmdline-tools 12.0（`~/Library/Android/sdk/cmdline-tools/latest`）
 6. ~~API 24 冒烟~~ ✅ 见 §2.3.1
-7. **CI 未接** —— 这是 W0 唯一剩余项。方案 §5.4 的 G1 fast gate 需要：
-   `assemble{三 flavor}Debug` + `testDirectApkDebugUnitTest` + `lintDirectApkDebug`
-   （本机全量约 3.5 分钟），外加 SDK/NDK 安装与 node 解析（见 §2.2 的四级解析）。
-8. detekt 未接。
+7. ~~CI~~ ✅ 见 §2.10
+8. detekt 未接（lint 已是硬门，detekt 属增量）。
 7. ~~release 产物验证~~ ✅ 已完成，见 §2.7
 
 ### 2.7 release 产物验证（已完成）
@@ -232,6 +230,39 @@ W1 起每次新增依赖都应看一眼这个测试的 diff。
 顺带修掉：`expo-dev-client` 声明了 `org.webkit:android-jsc:+` 这个可选依赖，
 但本工程用 Hermes、`jsc-android` 未安装也无对应仓库，任何需要解析它的任务
 （实测 lint 的 `generate*LintModel`）都会失败。已在根 `build.gradle` 全局排除。
+
+### 2.10 G1 fast gate CI（已完成）
+
+`.github/workflows/android-ci.yml`。与 `tipsy-app` / `tipsy-iOS` 的 `ci.yml` **分开** ——
+那些是 agentic workflow（issue/PR 智能体），本文件是纯构建门禁。
+
+序列：**lint（硬门）→ assemble googlePlayDebug → release manifest → 单测**。
+本机模拟整条 **1m59s**。
+
+**范围取舍**：assemble 只跑单个 flavor，三 flavor 全量与 release 打包留 G3 nightly ——
+PR 门要快。**代价是 flavor 专属与 release 专属问题不由 G1 拦**（§2.8 抓到的 release
+暴露 PreviewActivity 正属后者），**nightly 必须补上三 flavor + release 全量**。
+
+**过程中修掉一个「假绿」隐患**（正是 §5.4「NOT RUN 不等于通过」警告的情形）：
+`MergedManifestTest` 原先把 variant 写死成 `directApkRelease` / `directApkDebug`，
+而 CI 只 assemble `googlePlayDebug` —— 实测 **5 条断言里 4 条被 `assumeTrue` 跳过，
+而跳过在 JUnit 里算通过**，等于断言静默失效。两处修正：
+
+1. 断言改为「任一同 build type 的 variant」，与 flavor 解耦
+2. 同时识别 AGP 的**两个**输出目录：`merged_manifest/`（单数，`process*MainManifest`
+   产物，只跑 manifest 任务即有）与 `merged_manifests/`（复数，打包产物）——
+   只认复数那个会导致「只跑 manifest 任务时断言被跳过」
+
+CI 侧再加一道防线：显式校验 `MergedManifestTest` 的 `skipped=0`，跳过即失败。
+
+**前置条件**：需在本仓配置 `PAT_TOKEN` secret 拉私有子模块。`.gitmodules` 用 SSH URL
+而 CI 只有 HTTPS token，故 workflow 不用 checkout 的 `submodules` 选项，而是手工把
+submodule URL 换成带 token 的 HTTPS（只改本地配置，不写进 `.gitmodules`）。
+**缺该 secret 时 workflow 明确报错并给出配置指引，不静默跳过。**
+
+另：`cmake` 版本已钉进 `libs.versions.toml`（原先只有 `ndk`）。AGP 默认挑「已装的最高版」，
+本机与 CI 不一致会产生难复现的构建差异。workflow 从 catalog 读取并做空值检查 ——
+grep 未匹配时 `cut` 输出空串**不报错**，静默装错版本比直接失败更糟。
 
 ## 3. 横切能力
 
