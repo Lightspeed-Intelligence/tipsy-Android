@@ -1,6 +1,6 @@
 # Tipsy Android 原生化迁移：现状（唯一状态真值）
 
-> 更新：2026-08-08 ｜ Android 壳：**W0 主体已完成**（三 flavor 可构建 + DebugSurface gate 实测通过；CI 与 manifest 快照待做）
+> 更新：2026-08-08 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门；仅 CI 未接）
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
@@ -16,7 +16,7 @@
 
 | 波次 | 内容 | 业务量 | 状态 | source_rn_sha | target_android_sha |
 | --- | --- | --- | --- | --- | --- |
-| W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 主体完成（gate 已过；剩 CI / manifest 快照 / lint 接入） | `93d2c5551` | `e3df0ed` |
+| W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成（仅 CI 未接） | `93d2c5551` | `d9cc241` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | ⬜ 阻塞于 W0 | — | — |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | ⬜ 阻塞于 W1 | — | — |
 | W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | ⬜ 阻塞于 W2 | — | — |
@@ -121,6 +121,22 @@ RN/Expo 生态多处假设 `Gradle root = <rn-project>/android`，本仓布局�
    漏掉的表现是 `isMetroRunning()` 永远探测 8081 → 静默回退内嵌 bundle，
    **「改了 JS 却不生效」且不报错**。端口取 8083（ADR-003）。
 
+### 2.3.1 API 24 冒烟（minSdk，已完成）
+
+方案 §5.4 的设备矩阵要求 minSdk 也过一遍。环境：**API 24 / arm64-v8a**
+（`Api24_Smoke` AVD，google_apis 镜像）。
+
+| 项 | 结果 |
+| --- | --- |
+| 安装 + 启动 | ✅ 无崩溃 |
+| 原生根渲染 | ✅ |
+| Surface 挂载 | ✅ `DebugSurface rendered` —— 无 SoLoader / UnsatisfiedLink 问题 |
+| 返回 + 10 轮开关 | ✅ 无崩溃 |
+| 单 Runtime 不变量 | ✅ GC 后 `Activities=1`、`ViewRootImpl=1` |
+| PSS | 168MB（比 API 37 的 204MB 更低） |
+
+**结论：minSdk 24 可行**，RN 0.81 + 新架构在 Android 7.0 上正常工作。
+
 ### 2.5 模拟器上的现成 fixture（**勿卸载**）
 
 模拟器已装 `com.tipsyturbo.app` **versionName 1.4.4** 的真实 RN 包，`files/mmkv/` 下有
@@ -135,10 +151,14 @@ W0 验证刻意改用 `directApk` flavor（包名 `ai.lightspeed.tipsy` 未被�
 
 1. ~~DebugSurface gate~~ ✅ 已完成，见 §2.4
 2. ~~Metro 端口 8083 + cleartext 配置~~ ✅ 已完成
-3. **merged manifest snapshot 测试**（方案 §5.1）：三 flavor 逐项断言 exported/scheme/权限。
-4. **lint / detekt 接入**并进 `check` 依赖图；CI 的 G1 fast gate（方案 §5.4）。
-5. `sdkmanager` 可用性与 CI 的 SDK 安装路径。
-6. **API 24 冒烟**：目前只在 API 37 验过，方案 §5.4 的设备矩阵要求 minSdk 也过一遍。
+3. ~~merged manifest snapshot 测试~~ ✅ 见 §2.8
+4. ~~lint 接入~~ ✅ 见 §2.9（detekt 仍未接）
+5. ~~`sdkmanager` 可用性~~ ✅ 已装 cmdline-tools 12.0（`~/Library/Android/sdk/cmdline-tools/latest`）
+6. ~~API 24 冒烟~~ ✅ 见 §2.3.1
+7. **CI 未接** —— 这是 W0 唯一剩余项。方案 §5.4 的 G1 fast gate 需要：
+   `assemble{三 flavor}Debug` + `testDirectApkDebugUnitTest` + `lintDirectApkDebug`
+   （本机全量约 3.5 分钟），外加 SDK/NDK 安装与 node 解析（见 §2.2 的四级解析）。
+8. detekt 未接。
 7. ~~release 产物验证~~ ✅ 已完成，见 §2.7
 
 ### 2.7 release 产物验证（已完成）
@@ -165,6 +185,53 @@ W0 刻意不配签名，无发布能力）。逐项断言 debug 配置未泄漏�
    提到 6G 后暴露真实错误：`ThrowableExtension`（Bazel desugar 残留，Agora 日志引用）
    与 `DevLog`（QT SDK 调试类，release AAR 未含）。两者运行时都不需要，用 `-dontwarn`
    而非 keep。**注意别无脑 `-dontwarn **` 掩盖后续真实缺失。**
+
+### 2.8 merged manifest 快照测试（已完成）
+
+`app/src/test/.../MergedManifestTest.kt`，5 条断言全绿：
+
+1. **三渠道 applicationId 钉死** —— 改错会破坏覆盖升级
+2. **release 不含开发期组件**
+3. 有 `intent-filter` 的组件必须显式声明 `exported`
+4. 不含已排除的敏感权限（`MEDIA_PROJECTION` / `ACCESS_FINE_LOCATION`）
+5. release 保留 `largeHeap`
+
+**这个测试立刻抓到一个真实缺陷**：`androidx.compose.ui.tooling.PreviewActivity`
+以 **`exported=true`** 出现在 **release** manifest 里 —— 生产包对外暴露一个调试
+Activity，而普通构建完全不报错。
+
+根因链：`expo-dev-client` 在 `tipsy-app/package.json` 里是 **`dependencies`**
+（不是 devDependencies）→ autolinking 把 `expo-dev-launcher` / `expo-dev-menu`
+接进 release runtime classpath → 带入 `androidx.compose.ui:ui-tooling` →
+其 manifest 的 PreviewActivity 被合并。
+
+W0 的处理：`app/src/release/AndroidManifest.xml` 用 `tools:node="remove"` 兜底。
+**根治**要么把 `expo-dev-client` 移到 devDependencies（属 `tipsy-app`，本仓不得改），
+要么让 autolinking 按 variant 排除 dev 模块 —— 都超出 W0 范围。
+**若将来 release 里再出现别的开发期组件，先查这条链，别只加 remove。**
+
+另外权限总数已达 **51 条**（几乎都是 autolinked SDK 传递引入的），其中
+`ACCESS_ADSERVICES_*`、`CAMERA`、`RECORD_AUDIO`、`USE_BIOMETRIC` 等会直接影响商店审核 ——
+W1 起每次新增依赖都应看一眼这个测试的 diff。
+
+### 2.9 lint 硬门（已完成）
+
+`abortOnError=true` + `warningsAsErrors=true` + `sarifReport`（CI 可喂 GitHub code scanning）。
+`checkDependencies=false` —— 50+ 个第三方 RN 模块的告警不由本仓负责。
+
+**lint 抓到一个我自己写的真实缺陷**：`android:useBoundsForWidth`（`withAndroidStyles`
+移植项）是 **API 35** 新增属性，而 minSdk=24 —— 报 `NewApi`。已按资源限定符拆分：
+`values/styles.xml` 留空壳 style，`values-v35/styles.xml` 放该属性。
+**这是真修复，不是记进 baseline。**
+
+`app/lint-baseline.xml` 记录 **19 条**既有问题（9 条 `GradleDependency`、2 条
+`UseTomlInstead`、2 条 `NewerVersionAvailable`、2 条 `AndroidGradlePluginVersion` 等）。
+**baseline 是技术债台账而非豁免** —— 多数是「有更新版本可用」类提示，与 §3.3
+钉死工具链的决定冲突，清理属后续波次。
+
+顺带修掉：`expo-dev-client` 声明了 `org.webkit:android-jsc:+` 这个可选依赖，
+但本工程用 Hermes、`jsc-android` 未安装也无对应仓库，任何需要解析它的任务
+（实测 lint 的 `generate*LintModel`）都会失败。已在根 `build.gradle` 全局排除。
 
 ## 3. 横切能力
 
