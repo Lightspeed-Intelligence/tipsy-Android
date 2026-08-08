@@ -1,49 +1,56 @@
-# llmdoc 索引
+# Tipsy Android 壳工程 - LLM 文档索引
 
-## 文档分类
+> Kotlin/Compose 原生壳，以 integrated brownfield 方式托管 `tipsy-app`（Expo React Native，
+> git submodule）。核心页面逐步原生化，其余以 RN Surface 运行。
+>
+> **当前状态：未开工**（仅 Android Studio 模板脚手架）。状态一律以
+> [android-native-progress.md](reference/android-native-progress.md) 为准。
 
-| 类型 | 用途 | 是否记录完成状态 |
-|---|---|---|
-| `overview` | 项目背景、仓库关系、迁移目标 | 否 |
-| `retrospective` | iOS 已完成迁移的事实复盘与经验 | 否 |
-| `architecture` | 长期目标、边界与不可破坏契约 | 否 |
-| `reference` | 功能矩阵、质量规则、唯一进度 | 仅 progress 可以 |
-| `execution` | 一次可由 Codex 独立执行并验收的任务包 | 否；状态只引用 progress |
+**目标技术栈：** Kotlin, Compose Material 3, OkHttp + Retrofit + kotlinx.serialization,
+MMKV, Coroutines/StateFlow, Media3 ExoPlayer, Coil, Expo `ReactHost`（RN 宿主）。
 
-禁止在多份文档复制“当前完成状态”。发现漂移时，以代码、Git SHA 和 `android-native-progress.md` 为准，修正其他文档中的错误快照。
+**架构：** Fragment 宿主 + ComposeView（原生页）/ ReactFragment（RN Surface）；单 React
+Runtime 多 Surface；显式 AppContainer（首轮不引 DI 框架）。
 
-## 核心文档
+RN 侧文档见 `tipsy-app/llmdoc/`；iOS 壳的同构实践见 `../Tipsy-iOS/llmdoc/`。
 
-### 背景与复盘
+---
 
-- [项目现状与目标](overview/project-overview.md)
-- [iOS Native 迁移复盘](retrospective/ios-native-migration-retrospective.md)
+## 架构
 
-### 架构契约
+| 文档 | 描述 |
+| --- | --- |
+| [android-native-migration-plan.md](architecture/android-native-migration-plan.md) | **迁移技术方案**：架构决策（5 个 ADR）、Android 四条硬约束、跨界契约、构建/渠道/OTA、波次计划、风险登记 |
 
-- [Android Native 迁移蓝图](architecture/android-native-migration-blueprint.md)
-- [Android Native / RN Surface 边界](architecture/android-rn-boundary-contract.md)
-- [构建、发布与 OTA 架构](architecture/android-build-release-ota-architecture.md)
+## 参考
 
-### 执行依据
+| 文档 | 描述 |
+| --- | --- |
+| [android-native-progress.md](reference/android-native-progress.md) | **状态权威**：波次进度、工程实况、与目标基线的偏差、未决问题 |
 
-- [唯一进度状态](reference/android-native-progress.md)
-- [RN 功能对等与归属矩阵](reference/rn-parity-contract-matrix.md)
-- [Android 质量门禁](reference/android-quality-gates.md)
+---
 
-### 顺序执行的任务包
+## 读文档的顺序
 
-1. [00 仓库、基线与 Brownfield POC](execution/00-repository-bootstrap-and-baseline.md)
-2. [01 平台基础与跨端契约](execution/01-platform-foundation-and-contracts.md)
-3. [02 首个 Native 垂直切片](execution/02-first-native-vertical-slice.md)
-4. [03 核心 Tab 分波迁移](execution/03-core-tabs-migration-waves.md)
-5. [04 高风险媒体、RN Surface 与系统能力](execution/04-high-risk-media-surfaces-and-system.md)
-6. [05 对等、性能与质量加固](execution/05-parity-performance-and-quality.md)
-7. [06 三渠道发布、覆盖升级与切换](execution/06-release-cutover-and-rollback.md)
+方案的 **§8 是主体**（业务迁移范围：29k 行 RN 要重写，逐页规格 + 现成 fixture 来源），
+§2-§7 是让 §8 能安全执行的前置约束。按你要做的事挑着读：
 
-## 执行原则
+| 你要做的事 | 读哪里 |
+| --- | --- |
+| 写业务页面（**最常见**） | **§8.1 对应页面的规格表** + §8.2 fixture + §8.3 Surface 顺序 + §8.4 列表纪律 + §4.5 网络契约 |
+| 搭工程 / 改 Gradle | §3.3 + ADR-004 |
+| 动 auth / 存储 | §2.1 + §2.4 + §4.4 + §4.6 |
+| 打包 / 发渠道 / 发 OTA | §2.2 + §2.3 + §5 + §6 |
+| 判断某功能迁不迁 | §1.3 归属表 |
+| 现在做到哪了 | 进度文档（不在方案里） |
 
-- 一次 Codex 工作只处理 progress 中唯一 READY 的 work unit；大型 packet 定义内部子任务及串行/并行规则，但状态仍只在 progress 更新。
-- 上游 gate 不通过，下游 packet 保持 `BLOCKED`。
-- 外部凭据、生产发布、商店操作只提供 runbook 和验证脚本，不由 Codex 自行执行。
-- 每个迁移波次结束都要固定新的 RN SHA 或确认仍使用原 SHA，并运行一次 parity delta audit。
+无论做什么，先扫一遍方案 **§2（Android 四条硬约束）**——那是照抄 iOS 会静默出错的四处。
+
+## 硬性纪律
+
+- **禁止在本仓直接改 `tipsy-app/` 内部文件**。RN 侧改动走 tipsy-app 自己的 PR 流程，
+  合入后回本仓 bump submodule pin。本仓 PR 中的 submodule 变更只允许是指针 bump。
+- **`index.surfaces.js` 是 iOS 壳与 Android 壳共用入口**，改动需双壳回归。
+- 状态只写在进度文档一处，不在别处复制快照。
+- 不继承 RN 侧的弱化质量配置（`lintOptions.abortOnError false`、`passWithNoTests`）。
+- OTA 发布、签名、真实版本号递增都需要独立明确授权。

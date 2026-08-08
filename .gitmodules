@@ -1,0 +1,4 @@
+[submodule "tipsy-app"]
+	path = tipsy-app
+	url = git@github.com:Lightspeed-Intelligence/tipsy-app.git
+	branch = release/1.4.5
