@@ -139,7 +139,32 @@ W0 验证刻意改用 `directApk` flavor（包名 `ai.lightspeed.tipsy` 未被�
 4. **lint / detekt 接入**并进 `check` 依赖图；CI 的 G1 fast gate（方案 §5.4）。
 5. `sdkmanager` 可用性与 CI 的 SDK 安装路径。
 6. **API 24 冒烟**：目前只在 API 37 验过，方案 §5.4 的设备矩阵要求 minSdk 也过一遍。
-7. release 产物验证：确认 debug 专属配置（cleartext / DevSettings / 8083 端口）**未**泄漏进 release。
+7. ~~release 产物验证~~ ✅ 已完成，见 §2.7
+
+### 2.7 release 产物验证（已完成）
+
+`assembleDirectApkRelease` 通过（R8 + 两个 ABI，约 3 分钟，产物 168MB **unsigned** ——
+W0 刻意不配签名，无发布能力）。逐项断言 debug 配置未泄漏：
+
+| 检查 | 结果 |
+| --- | --- |
+| `usesCleartextTraffic` | ✅ `false`（debug 的 `true` 未泄漏） |
+| `DevSettingsActivity` | ✅ 不存在 |
+| dev server 端口 | ✅ `8081`（默认值；8083 只在 debug 生效） |
+| `android:largeHeap`（§2.3 必须项） | ✅ `true` |
+| `FOREGROUND_SERVICE_MEDIA_PROJECTION` | ✅ 已移除（Agora patch 生效） |
+
+**过程中修掉两个 release 专属问题**（debug 完全不会暴露）：
+
+1. **`proguard-rules.pro` 不存在** —— `app/build.gradle` 引用了它但文件没建，
+   R8 直接报 `Supplied proguard configuration does not exist`。现已补上壳自己的
+   keep 规则（Application/Activity 反射实例化、`@ReactMethod`、`@DoNotStrip`、
+   Expo 模块、Sentry 需要的 SourceFile/LineNumberTable）。
+2. **R8 堆不足 + 两个 Missing class**。50+ 个 RN/Expo 模块在 2G 堆下 R8 OOM
+   （报 `Compilation failed to complete` 且 daemon 提示堆耗尽，跑了 13 分钟才失败）；
+   提到 6G 后暴露真实错误：`ThrowableExtension`（Bazel desugar 残留，Agora 日志引用）
+   与 `DevLog`（QT SDK 调试类，release AAR 未含）。两者运行时都不需要，用 `-dontwarn`
+   而非 keep。**注意别无脑 `-dontwarn **` 掩盖后续真实缺失。**
 
 ## 3. 横切能力
 
