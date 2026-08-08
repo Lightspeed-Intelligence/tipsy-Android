@@ -45,6 +45,13 @@ jobs:
           submodules: false
           persist-credentials: false
 
+      # 凭据说明：PAT_TOKEN 是**本仓自己的** repo secret。
+      # secret 按仓库隔离，没有跨仓引用语法 —— tipsy-iOS 上的同名 secret 在这里不可见，
+      # 而 org 级只挂了 ANTHROPIC_* / FEISHU_LLMDOC_*，不含 PAT_TOKEN。
+      # 现状是「同一 PAT 值在 tipsy-iOS 与本仓各存一份」：**轮换时必须两处都改**，
+      # 漏改一处会让对应仓的 CI 在子模块那步失败。若以后 Android 侧要加更多 workflow，
+      # 值得改成 org secret + 授权给本仓，只留一处真值。
+      # auth 形式用 x-access-token（已实测对私有仓有效）。
       - name: 拉取 tipsy-app 子模块
         env:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
@@ -52,7 +59,9 @@ jobs:
           set -euo pipefail
           if [ -z "${PAT_TOKEN:-}" ]; then
             echo "::error::缺少 PAT_TOKEN secret —— 无法 checkout 私有子模块 tipsy-app。"
-            echo "::error::请在本仓 Settings → Secrets → Actions 添加 PAT_TOKEN（与 tipsy-iOS 同构）。"
+            echo "::error::secret 是**按仓库**隔离的：tipsy-iOS 上的同名 secret 本仓看不到，"
+            echo "::error::GITHUB_TOKEN 也只对本仓有权限、读不了 tipsy-app。"
+            echo "::error::请在本仓 Settings → Secrets → Actions 添加 PAT_TOKEN（值可与 tipsy-iOS 相同）。"
             exit 1
           fi
           # 只改本地 URL，不写进 .gitmodules

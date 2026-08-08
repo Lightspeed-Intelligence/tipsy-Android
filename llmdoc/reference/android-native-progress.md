@@ -255,10 +255,21 @@ PR 门要快。**代价是 flavor 专属与 release 专属问题不由 G1 拦**�
 
 CI 侧再加一道防线：显式校验 `MergedManifestTest` 的 `skipped=0`，跳过即失败。
 
-**前置条件**：需在本仓配置 `PAT_TOKEN` secret 拉私有子模块。`.gitmodules` 用 SSH URL
-而 CI 只有 HTTPS token，故 workflow 不用 checkout 的 `submodules` 选项，而是手工把
-submodule URL 换成带 token 的 HTTPS（只改本地配置，不写进 `.gitmodules`）。
-**缺该 secret 时 workflow 明确报错并给出配置指引，不静默跳过。**
+**前置条件：本仓需自己配 `PAT_TOKEN` secret。**
+
+secret 是**按仓库**隔离的，没有跨仓引用语法 —— `tipsy-iOS` 上的同名 secret 在本仓
+workflow 里不可见；内置 `GITHUB_TOKEN` 也只对本仓有权限，读不了私有的 `tipsy-app`。
+实测本仓可继承的 org 级 secret 只有 `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` /
+`FEISHU_LLMDOC_WEBHOOK_TOKEN`，**不含 `PAT_TOKEN`**（它是 `tipsy-iOS` 的 repo secret）。
+
+当前做法是**同一 PAT 值在 `tipsy-iOS` 与本仓各存一份**。
+⚠️ **轮换该 PAT 时必须两个仓都改**，漏改一处会让对应仓 CI 在子模块那步失败。
+若 Android 侧后续要加更多 workflow，值得改成 org secret + 授权本仓，只留一处真值。
+
+技术细节：`.gitmodules` 用 SSH URL 而 CI 只有 HTTPS token，故 workflow 不用 checkout 的
+`submodules` 选项，而是手工把 submodule URL 换成带 token 的 HTTPS（只改本地配置，
+不写进 `.gitmodules`）。auth 形式用 `x-access-token`（已实测对私有仓有效）。
+**缺该 secret 时 workflow 明确报错并说明原因，不静默跳过。**
 
 另：`cmake` 版本已钉进 `libs.versions.toml`（原先只有 `ndk`）。AGP 默认挑「已装的最高版」，
 本机与 CI 不一致会产生难复现的构建差异。workflow 从 catalog 读取并做空值检查 ——
