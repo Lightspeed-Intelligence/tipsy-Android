@@ -85,6 +85,16 @@ android {
     buildTypes {
         debug {
             versionNameSuffix '-debug'
+            // Metro 端口固定 8083（方案 ADR-003：8081 归 tipsy-app 自身、
+            // 8082 归 iOS 壳，三者互不抢端口）。
+            // RN 从 R.integer.react_native_dev_server_port 读该值
+            // （AndroidInfoHelpers.kt），默认 8081。**不能靠 debug source set 的
+            // res/values 覆盖** —— 那是 RN 库自带资源，app 侧同名 integer 不会胜出
+            // （实测 aapt2 dump 仍是 8081）。必须用 resValue 注入到 app 自己的
+            // 资源表，才会在合并时覆盖库资源。
+            // 漏掉的表现：isMetroRunning() 永远探测 8081 → 静默回退内嵌 bundle，
+            // 「改了 JS 却不生效」且不报错。
+            resValue 'integer', 'react_native_dev_server_port', '8083'
             // 本机/CI 的 debug 只出当前设备与模拟器需要的 ABI：
             // 四个 ABI 全出会让单个 flavor 的中间产物达数 GB（曾因磁盘写满
             // 导致 packageRuStoreDebug 失败，且报错不提示空间不足）。

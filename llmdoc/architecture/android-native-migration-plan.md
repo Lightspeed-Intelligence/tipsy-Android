@@ -456,6 +456,18 @@ Native 通过 initial props 下发：
 
 **W1 建立 `SurfaceDependencyChecklist`（测试 + 文档），逐项对照上表。未过清单的 Surface 不得注册。**
 
+#### 宿主侧的两个硬前提（W0 实测，构建期查不出来）
+
+1. **宿主 Activity 必须实现 `DefaultHardwareBackBtnHandler`**。`ReactFragment.onResume` →
+   `reactDelegate.onHostResume()` 内部把宿主强转成该接口，不实现直接
+   `ClassCastException: Host Activity does not implement DefaultHardwareBackBtnHandler`，
+   **崩在 onResume**。语义是「RN 不处理返回键时回调原生默认返回」——
+   W1 接 Router 时这里要改成「先给 RN 微栈，到栈底才 pop 原生」（§4.7）。
+2. **Metro 端口要用 `resValue` 注入，不能靠 source set 的 `res/values`**。RN 从
+   `R.integer.react_native_dev_server_port` 读端口（`AndroidInfoHelpers.kt`），默认 8081；
+   app 侧 `res/values` 放同名 integer **不会覆盖库资源**（实测 aapt2 dump 仍是 8081）。
+   漏掉的表现是 `isMetroRunning()` 恒探测 8081 → **静默回退内嵌 bundle，改了 JS 不生效且不报错**。
+
 #### 微栈原则
 
 Surface 只挂最小 root stack。**RN 页内 `navigate` 的所有目的页必须都在微栈内**——iOS 的 RoleCardSurface 因缺 `CreateStack` 出现过死链。跳出微栈的目的页要么经桥走 Native Router，要么在 shell-host 下降级 no-op（React Navigation 对不存在的目标栈是静默 no-op，不崩）。

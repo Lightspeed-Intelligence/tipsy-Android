@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
 import androidx.fragment.app.commit
+import com.facebook.react.modules.core.DefaultHardwareBackBtnHandler
 
 /**
  * 壳的宿主 Activity。
@@ -26,7 +27,7 @@ import androidx.fragment.app.commit
  * W0 边界：这里还没有五 Tab 与 Router（W1/W2 的事），只提供一个能验证
  * 「原生根可显示 + 能挂载/卸载 RN Surface」的最小宿主。
  */
-class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -40,6 +41,22 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * RN 的返回键契约（**必须实现，否则 Surface 一挂就崩**）。
+     *
+     * `ReactFragment.onResume` → `reactDelegate.onHostResume()` 内部会把宿主
+     * Activity 强转成 [DefaultHardwareBackBtnHandler]，不实现就抛
+     * `ClassCastException: Host Activity does not implement DefaultHardwareBackBtnHandler`
+     * —— 且崩在 onResume，构建期与静态检查都发现不了（W0 gate 实测捕获）。
+     *
+     * 语义：RN 侧不处理返回键时回调到这里，执行原生默认返回。
+     * W1 起这里要接 Router：先给当前 RN 微栈，到栈底才 pop 原生（方案 §4.7）。
+     */
+    override fun invokeDefaultOnBackPressed() {
+        @Suppress("DEPRECATION")
+        super.onBackPressed()
     }
 
     /**
