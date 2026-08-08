@@ -1,22 +1,22 @@
 # Tipsy Android 原生化迁移：现状（唯一状态真值）
 
-> 更新：2026-08-08 ｜ Android 壳：**W0 进行中**（三 flavor debug 可构建，DebugSurface 待真机验证）
+> 更新：2026-08-08 ｜ Android 壳：**W0 主体已完成**（三 flavor 可构建 + DebugSurface gate 实测通过；CI 与 manifest 快照待做）
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
 ## 0. 三十秒速览
 
-- **波次进度**：W0 前三步已完成（依赖 + 工具链 + autolinking），DebugSurface 真机 gate 未做。
+- **波次进度**：W0 主体完成 —— 依赖 + 工具链 + autolinking + **DebugSurface gate 实测通过**。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost）+ `MainActivity`（Compose 原生根）+ `RNSurfaceFragment`。仍是零业务代码。
 - **submodule**：pin `93d2c5551`，`node_modules` 已装（1812 包）。
-- **已验证**：三 flavor debug 构建通过、applicationId 正确、JS bundle 内嵌、51 个 project autolink。
+- **已验证**：三 flavor debug 构建通过、applicationId 正确、JS bundle 内嵌、51 个 project autolink、**Surface 两种 bundle 来源均可挂载**（详见 §2.6）。
 - **不存在**：五 Tab、Router、core 模块、feature 模块、桥实现、CI。
 
 ## 1. 波次状态
 
 | 波次 | 内容 | 业务量 | 状态 | source_rn_sha | target_android_sha |
 | --- | --- | --- | --- | --- | --- |
-| W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟡 进行中（三 flavor 可构建；DebugSurface 真机 gate 未做） | `93d2c5551` | `6495ca7` |
+| W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 主体完成（gate 已过；剩 CI / manifest 快照 / lint 接入） | `93d2c5551` | `e3df0ed` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | ⬜ 阻塞于 W0 | — | — |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | ⬜ 阻塞于 W1 | — | — |
 | W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | ⬜ 阻塞于 W2 | — | — |
@@ -95,16 +95,51 @@ RN/Expo 生态多处假设 `Gradle root = <rn-project>/android`，本仓布局�
 
 **Android 只要提供能让 `isShellHost()` 返回 true 的 Kotlin 桥，这些全部自动生效。** 另有约 4,500 行现成 RN 测试可作对等 fixture（方案 §8.2）。
 
-### 2.5 W0 剩余项
+### 2.4 DebugSurface gate 实测结果
 
-1. **DebugSurface 真机/模拟器 gate**（W0 的核心验收）：Metro 直连 + 离线内嵌两种来源各挂一次；
-   反复开关 50 次无泄漏；rotation；进程重建。**目前只验证了「能构建出含 JS bundle 的 APK」，
-   未验证「能挂起来」。**
-2. Metro 端口固定 8083（方案 ADR-003）与 `index.surfaces.debug` 入口的联调。
-3. debug manifest 的 cleartext 配置（Metro 走 http，仅 debug 允许）。
-4. merged manifest snapshot 测试（方案 §5.1）：三 flavor 逐项断言 exported/scheme/权限。
-5. lint / detekt 接入并进 `check` 依赖图；CI 的 G1 fast gate（方案 §5.4）。
-6. `sdkmanager` 可用性与 CI SDK 安装路径。
+环境：**API 37 / arm64-v8a 模拟器**，`directApk` flavor debug 包。
+
+| 验收项 | 结果 |
+| --- | --- |
+| 原生根先渲染（不依赖 RN） | ✅ |
+| **离线内嵌 bundle** 挂载 Surface | ✅ `[Surfaces:debug] DebugSurface rendered` —— 无 Metro，证明 release 可离线 |
+| **Metro 直连**挂载 Surface | ✅ `isMetroRunning=true`，Metro 侧收到 bundle 请求（HTTP 200 / 4.3MB） |
+| 返回键回原生根、进程不退出 | ✅ |
+| **50 次挂载/卸载** | ✅ 无崩溃、PID 不变；PSS 199→208MB 但增速递减（前 10 轮 +4.4MB，后 10 轮 +0.4MB），GC 后回落至 204MB |
+| **单 Runtime 不变量**（ADR-003） | ✅ 50 轮后 GC：`Activities=1`、`ViewRootImpl=1`、`Views=19`，**无滞留 Activity/View** |
+| 旋转（横↔竖，Surface 挂载中） | ✅ 无崩溃，Surface 存活并重渲染 |
+| 进程重建（force-stop 后重启） | ✅ 新 PID、`rootTag` 归 1、Surface 可再挂 |
+
+**gate 捕获的两个真实缺陷**（构建期与静态检查都发现不了）：
+
+1. **`MainActivity` 必须实现 `DefaultHardwareBackBtnHandler`**。`ReactFragment.onResume`
+   → `reactDelegate.onHostResume()` 内部把宿主 Activity 强转成该接口，不实现直接
+   `ClassCastException` **崩在 onResume**。只有真机挂载才暴露 —— 这就是 gate 的价值。
+2. **Metro 端口必须用 `resValue` 注入**。RN 从 `R.integer.react_native_dev_server_port`
+   读端口（`AndroidInfoHelpers.kt`），默认 8081。**debug source set 的 `res/values` 放同名
+   integer 不会胜出**（实测 aapt2 dump 仍是 8081），必须 `resValue` 注入 app 自己的资源表。
+   漏掉的表现是 `isMetroRunning()` 永远探测 8081 → 静默回退内嵌 bundle，
+   **「改了 JS 却不生效」且不报错**。端口取 8083（ADR-003）。
+
+### 2.5 模拟器上的现成 fixture（**勿卸载**）
+
+模拟器已装 `com.tipsyturbo.app` **versionName 1.4.4** 的真实 RN 包，`files/mmkv/` 下有
+`mmkv.default`（`token-storage` 所在）、`chat-list-cache`、`for-you-cache` 等真实数据。
+
+**这是 W1 覆盖升级验证（§2.4 迁移算法 + §6.1 矩阵）的现成 fixture**，请勿卸载。
+W0 验证刻意改用 `directApk` flavor（包名 `ai.lightspeed.tipsy` 未被占用）以避免破坏它。
+注意壳的 debug 签名与该包不同，直接覆盖装会报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE` ——
+真实覆盖升级验证需用匹配签名的产物（方案 §6.1 已写明「debug 签名重装不构成证据」）。
+
+### 2.6 W0 剩余项
+
+1. ~~DebugSurface gate~~ ✅ 已完成，见 §2.4
+2. ~~Metro 端口 8083 + cleartext 配置~~ ✅ 已完成
+3. **merged manifest snapshot 测试**（方案 §5.1）：三 flavor 逐项断言 exported/scheme/权限。
+4. **lint / detekt 接入**并进 `check` 依赖图；CI 的 G1 fast gate（方案 §5.4）。
+5. `sdkmanager` 可用性与 CI 的 SDK 安装路径。
+6. **API 24 冒烟**：目前只在 API 37 验过，方案 §5.4 的设备矩阵要求 minSdk 也过一遍。
+7. release 产物验证：确认 debug 专属配置（cleartext / DevSettings / 8083 端口）**未**泄漏进 release。
 
 ## 3. 横切能力
 
