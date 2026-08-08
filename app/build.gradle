@@ -1,0 +1,171 @@
+// app 模块（Groovy DSL，方案 ADR-004）
+//
+// 三个 distribution flavor 对应现网三条渠道，applicationId 必须与线上一致，
+// 否则覆盖升级拿不到旧数据目录（方案 §2.2 / §5.1）。
+plugins {
+    alias libs.plugins.android.application
+    alias libs.plugins.kotlin.android
+    alias libs.plugins.kotlin.compose
+}
+
+// RN Gradle plugin：由 settings 的 autolinking 引入，提供 react { } 扩展
+apply plugin: 'com.facebook.react'
+
+react {
+    // RN 工程根 = submodule 目录（本仓 Gradle root 是仓库根）
+    root = file('../tipsy-app')
+    reactNativeDir = file('../tipsy-app/node_modules/react-native')
+    codegenDir = file('../tipsy-app/node_modules/@react-native/codegen')
+    // Expo 工程不依赖 @react-native-community/cli，打包走 Expo CLI，
+    // 否则 RN 的 cli.js 会提示缺 @react-native-community/cli 并退出 1
+    // （对齐 CNG 参考工程：cliFile=@expo/cli + bundleCommand=export:embed）。
+    cliFile = new File(
+        providers.exec {
+            workingDir(rootProject.file('tipsy-app'))
+            commandLine(gradle.ext.tipsyNodeExecutable, '--print',
+                "require.resolve('@expo/cli', { paths: [require.resolve('expo/package.json')] })")
+        }.standardOutput.asText.get().trim()
+    )
+    bundleCommand = 'export:embed'
+
+    // W0 严格隔离期：只打零业务依赖的自检入口，用于二分「挂载层问题 vs
+    // 业务 import 链问题」。业务 native module 经 capability gate 接回后，
+    // 由所属 packet 切到 index.surfaces.js（方案 §5.2）。
+    entryFile = file('../tipsy-app/index.surfaces.debug.js')
+    bundleAssetName = 'index.android.bundle'
+
+    // Hermes 由 gradle.properties 的 hermesEnabled 控制，不是 react {} 的属性
+    autolinkLibrariesWithApp()
+}
+
+android {
+    namespace 'ai.lightspeed.tipsy.shell'
+    compileSdk = libs.versions.compileSdk.get().toInteger()
+    buildToolsVersion = libs.versions.buildTools.get()
+    ndkVersion = libs.versions.ndk.get()
+
+    defaultConfig {
+        minSdk = libs.versions.minSdk.get().toInteger()
+        targetSdk = libs.versions.targetSdk.get().toInteger()
+
+        // W0 不是可发布版本：显式标记，防误上传（方案 §5.1）
+        versionCode = 1
+        versionName = '0.0.0-dev'
+
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+
+        ndk {
+            // 对齐 app.config.js 的 buildArchs（release 只出两个 ABI）
+            abiFilters 'armeabi-v7a', 'arm64-v8a'
+        }
+    }
+
+    flavorDimensions += 'distribution'
+    productFlavors {
+        googlePlay {
+            dimension 'distribution'
+            applicationId 'com.tipsyturbo.app'
+            manifestPlaceholders = [distributionName: 'googlePlay']
+            buildConfigField 'String', 'DOWNLOAD_CHANNEL', '"GooglePlay"'
+        }
+        directApk {
+            dimension 'distribution'
+            applicationId 'ai.lightspeed.tipsy'
+            manifestPlaceholders = [distributionName: 'directApk']
+            buildConfigField 'String', 'DOWNLOAD_CHANNEL', '"APK"'
+        }
+        ruStore {
+            dimension 'distribution'
+            applicationId 'com.tipsytavern.app'
+            manifestPlaceholders = [distributionName: 'ruStore']
+            buildConfigField 'String', 'DOWNLOAD_CHANNEL', '"RuStore"'
+        }
+    }
+
+    buildTypes {
+        debug {
+            versionNameSuffix '-debug'
+            // 本机/CI 的 debug 只出当前设备与模拟器需要的 ABI：
+            // 四个 ABI 全出会让单个 flavor 的中间产物达数 GB（曾因磁盘写满
+            // 导致 packageRuStoreDebug 失败，且报错不提示空间不足）。
+            // release 的 ABI 由 defaultConfig.ndk.abiFilters 控制，不受此影响。
+            ndk {
+                abiFilters.clear()
+                abiFilters 'arm64-v8a'
+            }
+        }
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // W0 刻意不配置签名：无发布能力（方案 §5.1）
+            // signingConfig 留空 —— assembleRelease 会产出未签名产物
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        }
+    }
+
+    buildFeatures {
+        compose true
+        buildConfig true
+    }
+
+    packaging {
+        resources {
+            excludes += ['/META-INF/{AL2.0,LGPL2.1}']
+        }
+    }
+}
+
+dependencies {
+    // RN：版本由 autolinking 从 submodule 的 node_modules 解析
+    implementation 'com.facebook.react:react-android'
+    implementation 'com.facebook.react:hermes-android'
+
+    implementation libs.androidx.core.ktx
+    implementation libs.androidx.appcompat
+    implementation libs.androidx.fragment.ktx
+    implementation libs.androidx.lifecycle.runtime.ktx
+    implementation libs.androidx.lifecycle.viewmodel.compose
+    implementation libs.androidx.activity.compose
+
+    implementation platform(libs.androidx.compose.bom)
+    implementation libs.androidx.compose.ui
+    implementation libs.androidx.compose.ui.graphics
+    implementation libs.androidx.compose.material3
+    implementation libs.androidx.compose.ui.tooling.preview
+    debugImplementation libs.androidx.compose.ui.tooling
+    debugImplementation libs.androidx.compose.ui.test.manifest
+
+    testImplementation libs.junit
+    androidTestImplementation libs.androidx.junit
+    androidTestImplementation libs.androidx.espresso.core
+    androidTestImplementation platform(libs.androidx.compose.bom)
+    androidTestImplementation libs.androidx.compose.ui.test.junit4
+}
+
+// expo-updates（OTA）在 W0 不启用 —— 方案 §5.3 明确 W1~W3 只用 embedded bundle，
+// OTA 属 W4 且必须先定 channel/runtime/entry 三重隔离方案。
+//
+// 为什么是禁用任务而不是从 autolinking 排除：
+//   1. `expoAutolinking.exclude` 对 expo-updates 无效 —— 它经 useExpoModules()
+//      的 resolve 链接，而 AutolinkingCommandBuilder 把多值 --exclude 与
+//      --project-root 拼进同一 argv，variadic 参数会吞掉后续 flag（实测：
+//      --exclude 在 --project-root 之前时不生效）。
+//   2. 该插件的 create*UpdatesResources 任务把 projectRoot 按
+//      「Gradle root 的父目录」推导（假设 <rn-project>/android 布局），本仓会算到
+//      仓库父目录；而该 Property 在执行期已 final，配置期与 doFirst 都改不动。
+// 结论：W0 直接跳过这些任务。W4 接 OTA 时删除本段，并按 §5.3 处理 projectRoot
+// （可能需要向 upstream 提 issue 或改用 UpdatesController.overrideConfiguration）。
+tasks.matching { it.name ==~ /create.*UpdatesResources/ }.configureEach {
+    enabled = false
+}

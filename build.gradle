@@ -1,0 +1,87 @@
+// 根构建脚本（Groovy DSL，方案 ADR-004）
+//
+// ext 里的值供 RN/Expo 的 autolinked 模块读取：它们普遍用
+// `safeExtGet('compileSdkVersion', <fallback>)` 从根工程取，读不到就退回自带
+// fallback（往往与 RN 基线不一致）。tipsy-app/modules/widget 还会读
+// rootProject.ext.kotlinVersion 去解析 compose compiler 插件 classpath ——
+// 与本仓 Kotlin 版本不一致会在 autolinking 阶段失败。
+buildscript {
+    ext {
+        buildToolsVersion = libs.versions.buildTools.get()
+        minSdkVersion = libs.versions.minSdk.get().toInteger()
+        compileSdkVersion = libs.versions.compileSdk.get().toInteger()
+        targetSdkVersion = libs.versions.targetSdk.get().toInteger()
+        ndkVersion = libs.versions.ndk.get()
+        kotlinVersion = libs.versions.kotlin.get()
+
+        // 布局补偿：部分第三方 RN 模块（如 react-native-apple-authentication）
+        // 靠「从 rootProject.projectDir 向上找 node_modules/react-native」定位 RN
+        // 制品仓库。本仓 Gradle root 是仓库根，RN 在 ./tipsy-app 下，向上找必然
+        // 失败（会拿到 null 并抛 File#<init> 重载歧义）。这些模块都支持用
+        // rootProject.ext.reactNativeAndroidRoot 覆盖，故在此显式提供。
+        // 注意该 ext 被两类消费方共用，取值必须是 **RN 包根**：
+        //   - 第三方模块当 Maven 仓库目录用（RN 0.81 已无 android/ 预编译目录，
+        //     取不到就走「向上找」的回退路径）
+        //   - react-native-skia 直接当 -DREACT_NATIVE_DIR 传给 CMake，
+        //     其 CMakeLists 会拼 ReactCommon/cmake-utils/react-native-flags.cmake
+        // 曾误设为 .../react-native/ReactAndroid，导致 Skia/expo-modules-core 的
+        // CMake 报 include could not find requested file。
+        reactNativeAndroidRoot = new File(rootDir, 'tipsy-app/node_modules/react-native')
+    }
+}
+
+plugins {
+    alias libs.plugins.android.application apply false
+    alias libs.plugins.kotlin.android apply false
+    alias libs.plugins.kotlin.compose apply false
+}
+
+// withRemoveAgoraMediaProjection 移植（方案 §2.3）：把 Agora full-sdk 换成
+// voice-sdk 并排除屏幕共享模块。RN 侧靠 config plugin 在 prebuild 时改 gradle，
+// 壳不跑 prebuild，必须在此手工复刻，否则会：
+//   - 引入屏幕录制能力与 FOREGROUND_SERVICE_MEDIA_PROJECTION 权限（商店审核敏感）
+//   - 显著增大包体（full-sdk 带 20+ 个子模块）
+// 版本号与 tipsy-app/node_modules/react-native-agora 的 build.gradle 保持一致。
+subprojects { sub ->
+    sub.configurations.configureEach { cfg ->
+        cfg.exclude group: 'io.agora.rtc', module: 'full-screen-sharing'
+        cfg.resolutionStrategy.dependencySubstitution { subs ->
+            subs.substitute(subs.module('io.agora.rtc:full-sdk'))
+                .using(subs.module('io.agora.rtc:voice-sdk:4.5.2'))
+                .because('withRemoveAgoraMediaProjection: 本产品只用语音，不用屏幕共享')
+        }
+    }
+}
+
+// ── 布局补偿：把「假设 Gradle root = <rn-project>/android」的任务指回 RN 工程根 ──
+//
+// RN/Expo 生态里有多处按该假设推导 RN 工程根，方式各不相同：
+//   - expo-constants  createExpoConfig：用 rootProject.projectDir 当 projectRoot
+//   - expo-updates    create*UpdatesResources：用 rootProject.projectDir.parentFile
+//   - 第三方 RN 模块：从 rootProject.projectDir 向上找 node_modules/react-native
+//     （见上方 ext.reactNativeAndroidRoot）
+// 本仓 Gradle root = 仓库根、RN 在 ./tipsy-app，以上推导都会落到错误目录。
+// 症状统一是 Gradle 只报 "Process 'command 'node'' finished with non-zero exit
+// value 1"（真实 stderr 被吞），排查代价高 —— 故集中在此处修正并留档。
+//
+// 新增依赖后若再出现同类报错：先手工在报错任务的 workingDir 复现那条 node 命令，
+// 拿到真实 stderr，再决定是覆盖属性还是提 upstream。
+def rnProjectRoot = new File(rootDir, 'tipsy-app')
+
+allprojects {
+    // expo-constants：commandLine 的第一个位置参数是 projectRoot
+    tasks.matching { it.name == 'createExpoConfig' }.configureEach { t ->
+        // 用 doFirst 在执行期覆盖 —— 该任务的 commandLine/workingDir 在其所属
+        // 脚本的 afterEvaluate 里设置，配置期覆盖会被写回。
+        t.doFirst {
+            t.workingDir = rnProjectRoot
+            def parts = new ArrayList(t.commandLine)
+            def idx = parts.findIndexOf { it.toString().endsWith('getAppConfig.js') }
+            if (idx >= 0 && idx + 1 < parts.size()) {
+                parts.set(idx + 1, rnProjectRoot.absolutePath)
+                t.commandLine = parts
+            }
+        }
+    }
+}
+

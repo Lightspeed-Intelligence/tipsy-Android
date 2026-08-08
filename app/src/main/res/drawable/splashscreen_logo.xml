@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  占位：expo-splash-screen 的 values.xml 引用 @drawable/splashscreen_logo，
+  而该资源本应由 app.config.js 经 prebuild 生成（壳不跑 prebuild，方案 §2.3）。
+  W0 提供一个纯色占位让资源链接通过；真实开屏图随 splash 能力（W2 之后）
+  一并接入，届时替换为设计资产。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#180201" />
+</shape>

@@ -283,6 +283,20 @@ reactNativeDir = reactNativeDirFromSource ?: File(
 
    **解法：在仓库根做 `node_modules` 符号链接指向 `tipsy-app/node_modules`**，让从仓库根跑的 `require.resolve('react-native/package.json')` 自然命中。这正是 iOS 壳在用的方案（实测 `Tipsy-iOS/node_modules -> tipsy-app/node_modules`，且 `.eas/build/*.yml` 三个 profile 都有 `ln -sf tipsy-app/node_modules node_modules` 步骤）。
 
+> **W0 实测结论（2026-08-08）**：上面两个支点**均已验证成立** —— 51 个 project 正确 autolink，
+> 三个 flavor 的 debug 包构建通过，**未使用任何反射**。但实测另外发现**第三类问题**：
+> RN/Expo 生态里有至少 5 处按「Gradle root = `<rn-project>/android`」推导路径，
+> 且推导方式各不相同（`rootProject.projectDir`、其 `.parentFile`、向上遍历找
+> `node_modules`…）。**症状统一是 `Process 'command 'node'' finished with non-zero
+> exit value 1`，真实 stderr 被 Gradle 吞掉**，逐个排查代价很高。
+> 完整清单与处理方式见进度文档 §2.2.2 —— 新增依赖后若再撞同类报错，
+> **先在报错任务的 workingDir 手工复现那条 node 命令拿到真实 stderr**，再决定怎么改。
+>
+> 另有一项已知限制：`expoAutolinking.exclude` 对经 `useExpoModules()` 链接的模块无效
+> （`AutolinkingCommandBuilder` 把多值 `--exclude` 与 `--project-root` 拼进同一 argv，
+> variadic 参数吞掉后续 flag）。**W0 的严格隔离因此改用「禁用相关任务」实现**，
+> 不能依赖 exclude 列表。
+
 > **不采用反射 hack** 去改写 `ExpoGradleHelperExtension` 的私有 `lateinit` 字段缓存：依赖私有字段名、Kotlin backing field、Gradle decorated subclass 与回调时序——脆、且不承诺 configuration cache 兼容。符号链接 + 公开的 `projectRoot` 覆盖是两个稳定支点，优先用它们。若实测仍有解析缺口，先补最小 shim（如非递归的 `tipsy-app/android` 占位软链，对齐 iOS 的 `ios/` shim 做法），再考虑反射，且必须写下删除条件。
 
 3. **Node 可执行文件必须显式解析（已实测，W0 必做）**。上面两个支点都靠 `providers.exec` 跑 `node --print require.resolve(...)`，**Node 因此是本仓库真实的构建输入**（RN Gradle plugin、Expo autolinking、Hermes bundle 全部 shell out 到它）。而 Expo/RN 的调用点都是裸 `"node"`、依赖 `$PATH`：
@@ -312,7 +326,7 @@ W1/W2 用手写 `AppContainer` 装配 singleton。边界稳定、且有测试证
 
 | 组件 | 固定值 | 当前脚手架 | 动作 |
 | --- | --- | --- | --- |
-| Gradle | 8.14.3 | — | 核对 wrapper |
+| **Gradle wrapper** | **8.14.3** | 9.4.1 | **必须降**（AGP 8.11 不支持 Gradle 9；W0 实测） |
 | **AGP** | **8.11.0** | **9.2.1** | **必须降** |
 | **Kotlin** | **2.1.20** | **2.2.10** | **必须降** |
 | **compileSdk / targetSdk / minSdk** | **36 / 36 / 24** | **37 / 36 / 24** | **compileSdk 必须降到 36** |
@@ -322,7 +336,7 @@ W1/W2 用手写 `AppContainer` 装配 singleton。边界稳定、且有测试证
 | Hermes / 新架构 | 开启 | — | 保持 |
 | Release ABI | `armeabi-v7a,arm64-v8a` | — | 对齐（`app.config.js` 的 `buildArchs`） |
 
-> **这是 W0 的第一件事**。当前 `gradle/libs.versions.toml` 的 AGP 9.2.1 / Kotlin 2.2.10 / compileSdk 37 是 Android Studio 模板默认值，与 RN 0.81.4 要求的原生编译基线不兼容，且 `modules/widget/android/build.gradle` 会读 `rootProject.ext.kotlinVersion` 去解析 Compose 编译器插件——版本不一致会在 autolinking 阶段炸。Compose BOM 需实测能与 Kotlin 2.1.20 共存的稳定版本并写死（当前 `2026.02.01` 待验证）。
+> **这是 W0 的第一件事**。当前 `gradle/libs.versions.toml` 的 AGP 9.2.1 / Kotlin 2.2.10 / compileSdk 37 是 Android Studio 模板默认值，与 RN 0.81.4 要求的原生编译基线不兼容，且 `modules/widget/android/build.gradle` 会读 `rootProject.ext.kotlinVersion` 去解析 Compose 编译器插件——版本不一致会在 autolinking 阶段炸。Compose BOM 已实测定为 **`2025.04.01`**（模板默认的 `2026.02.01` 与 Kotlin 2.1.20 不匹配）。
 
 **其余选型**：网络 OkHttp + Retrofit + kotlinx.serialization；UI Compose Material 3；异步 Coroutines + StateFlow；媒体 Media3 ExoPlayer + 有界 preload manager；图片 Coil。
 
@@ -571,6 +585,12 @@ Intent / Push / Widget / Compose click / RN bridge
 distribution flavor × build type
   googlePlay / directApk / ruStore   ×   debug / qa / release
 ```
+
+> **W0 实测补正**：RN 的 Gradle plugin 会额外引入一个 **`debugOptimized`** build type，
+> 所以实际 variant 数比上式多一档（W0 现状 = 3 flavor × {debug, debugOptimized, release}）。
+> 规划 `qa` build type 时要把它算进矩阵，CI 任务名也以 `./gradlew :app:tasks` 实际输出为准。
+> 另：debug 默认出四个 ABI，单 flavor 中间产物可达数 GB —— 曾因磁盘写满导致
+> `packageRuStoreDebug` 失败且**不提示空间不足**，现 debug 只出 `arm64-v8a`。
 
 | Flavor | applicationId | 渠道规则 |
 | --- | --- | --- |

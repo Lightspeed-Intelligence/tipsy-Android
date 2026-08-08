@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  壳主题。
+  RN Surface 需要 AppCompat 主题（ReactFragment 挂在 AppCompatActivity 上）。
+
+  withAndroidStyles 移植（方案 §2.3）：RN 侧的 config plugin 给全局 AppTheme
+  设置了 android:textViewStyle=@style/Widget.App.TextView，其内容是
+  android:useBoundsForWidth=false。它影响所有 RN Surface 内 Text 的排版宽度，
+  漏掉表现为静默的文字截断/换行差异（不报错）。故在此手工复刻。
+-->
+<resources>
+
+    <style name="Widget.App.TextView" parent="Widget.AppCompat.TextView">
+        <item name="android:useBoundsForWidth">false</item>
+    </style>
+
+    <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:textViewStyle">@style/Widget.App.TextView</item>
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+
+</resources>

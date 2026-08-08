@@ -1,6 +1,15 @@
 *.iml
 .gradle
 /local.properties
+
+# RN 依赖软链：仓库根 -> tipsy-app/node_modules（ADR-004）。
+# Expo 的 ExpoGradleHelperExtension.getReactNativeDir 硬编码从 Gradle root 跑
+# `node --print require.resolve('react-native/package.json')` 且无覆盖入口，
+# 故必须在仓库根提供此软链。由开发者/CI 各自创建，不入库。
+/node_modules
+
+# MCP 网关本地产物
+/mcp-gateway
 /.idea/caches
 /.idea/libraries
 /.idea/modules.xml
@@ -13,3 +22,5 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+/.idea/vcs.xml
