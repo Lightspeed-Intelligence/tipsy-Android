@@ -7,14 +7,14 @@
 > **P0 桥已接通**（§2.11）｜ **P1 auth 契约已完成**（§2.13）｜ **P2 机制已验、兜底推迟**（§2.12）
 > ｜ **P2 剩余 + P3 已决定合并推迟到上线前**（2026-08-10，见 W1 计划 §5.6）
 > ｜ **P4 Router 已完成**（含真机验证）｜ **P6 network 已完成**（§2.14）
-> ｜ **P5 / P7 / P8 / P9 未开始**
+> ｜ **§12 Fragment 四件事已完成**（§2.15，含真机验证）｜ **P5 / P7 / P8 / P9 未开始**
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
 ## 0. 三十秒速览
 
 - **波次进度**：W0 完成；**W1 走到 P1**（P0 桥 + P1 auth 契约完成，P2 一半，P3 推迟，P4-P9 未开始）。
-- **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost）+ `MainActivity`（Compose 原生根）+ `RNSurfaceFragment`（**仍是 36 行 stub**）+ `auth/`（6 个类，token 真值）+ `bridge/ShellAuthProvider`。**仍是零业务代码。**
+- **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost）+ `MainActivity`（Compose 原生根 + Router 接线）+ `RNSurfaceFragment`（§12 四件事已补齐）+ `auth/`（6 类）+ `network/`（7 类）+ `router/`（3 类）+ `surface/`（2 类）+ `bridge/ShellAuthProvider`。**仍是零业务代码。**
 - **submodule**：pin `56c4bbfa7`（分支 `feat/tipsy-auth-android`，**未合进 main/release**，按约定靠子模块指针引用），`node_modules` 已装（1812 包）。
 - **已验证**：三 flavor debug 构建通过、applicationId 正确、JS bundle 内嵌、51 个 project autolink、**Surface 两种 bundle 来源均可挂载**（§2.6）、**MMKV 互操作**（§2.12）、**auth 契约单测 62 条**（§2.13）。
 - **不存在**：五 Tab、i18n、Sentry、core/feature 模块、**G3 nightly**（G1 已激活，但三 flavor 全量与 release 打包仍无自动防线）。Router 与 network 层已建（§2.14），但**只有 ChatDetail 一个目标启用**。
@@ -688,6 +688,64 @@ RN 的 `constants/api.ts` 会优先用它 —— 保证原生页与 Surface 命�
 新增测试依赖 `okhttp3:mockwebserver:4.12.0`（版本与 RN 解析出的 okhttp 对齐）。
 **用真实 HTTP 往返而非 mock OkHttp 接口** —— 后者只会验到自己写的 stub，
 验不了「实际发出了什么 header」。
+
+### 2.15 W1-§12：RNSurfaceFragment 四件事（已完成）
+
+`RNSurfaceFragment` 从 36 行 stub 补齐到可承载生产 Surface。
+**这是 W2 启用 `CreateSurface` 的前置** —— 任何生产 Surface 都要它。
+
+单测 13 条（`SurfaceContractTest` 7 + `ReappearPolicyTest` 6），
+连同既有共 **169 条**，skipped=0。
+
+| 要求 | 实现 |
+| --- | --- |
+| §12.1 `surfaceInstanceId` | `SurfaceContract.newInstanceId()`，每次打开新 UUID |
+| §12.2 首帧协议 | `surface_placeholder.xml` + 等首个非零尺寸子节点后**单次**淡出 |
+| §12.3 `onSurfaceReappeared` | 非首次 `onResume` 发射，payload 是**组件名** |
+| §12.4 capability handshake | `SurfaceContract.buildInitialProps()` |
+
+#### 真机验证（API 37）
+
+- Surface 挂载正常（`RN Surface OK` 渲染出来），无崩溃
+- 切后台再回前台 → 实测日志 `发射 onSurfaceReappeared: surface=DebugSurface`
+
+⚠️ **payload 必须是组件名，不是 instanceId**。RN 侧
+`useShellSurfaceRefocus.ts:39` 比对的是 `payload.surface !== surface`，
+传 instanceId 会让 hook **永不匹配** —— 表现为「事件发了但页面不刷新」，
+而且两边都不报错。该事件的去重粒度是 Surface **类型**。
+
+#### `popSurface` 改为按实例判定（§12.1）
+
+W0 的实现是「栈里有 Surface 就 pop」。现在比对 `surfaceInstanceId`，
+不符则忽略并记日志。
+
+iOS 的闸是**类型判定**，于是「迟到的旧实例事件弹掉了新打开的同类型页」——
+用户点返回后又被弹掉一层，后来靠 `closingRef` 补。Android 从第一天按实例判定。
+
+#### 首帧不用固定延时猜（§12.2）
+
+判据是「RN root view 有了非零尺寸的子节点」。固定延时短了闪白屏、长了拖慢首帧，
+且真机与模拟器的合适值不同（iOS `b2773e1` 处理过同一问题）。
+`isRevealed` 守着只淡出一次 —— 重复淡出会让快速切换时闪烁，
+且 listener 不摘会一直跑在每帧上。
+
+占位层刻意**不放 loading 指示器**：首帧目标是几十毫秒级，转圈一闪而过更像卡顿。
+
+#### ⚠️ 一处自我订正：旋转不重建 Fragment
+
+实现时我写了「旋转会重建 Fragment，所以标记要存 saved state」——**该前提不成立**：
+`MainActivity` 的 `configChanges` 已含 `orientation|screenSize`（manifest:52），
+转屏不重建 Activity/Fragment。
+
+saved state 仍然需要，但理由是**进程重建**（App 后台被杀、用户从最近任务返回）。
+注释与测试名都已改准。若照原来的错理由写，日后有人删掉 `configChanges`
+就会失去这层保护而无人察觉。
+
+#### token 不进 initial props（§12.4）
+
+`SurfaceContractTest` 有一条断言 key 常量里不含 `token`/`auth`/`jwt` 字样。
+挡不住硬编码字符串，但能挡住「顺手加个 KEY_TOKEN」。
+initial props 会进 `Bundle`，可能落入 saved instance state、ANR trace、崩溃日志。
 
 ## 3. 横切能力
 

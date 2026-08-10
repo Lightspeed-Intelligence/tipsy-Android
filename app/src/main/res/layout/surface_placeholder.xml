@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Surface 首帧占位层（W1 计划 §12.2）。
+
+  ready 前盖在 RN root view 之上，ready 后单次淡出并移除。
+  **不用固定延时猜 ready** —— 延时短了闪白屏、长了拖慢首帧，且真机与模拟器
+  的合适值不同（iOS b2773e1 处理过同一问题）。判据见
+  RNSurfaceFragment.scheduleFirstFrameReveal。
+
+  背景色用 windowBackground：与壳的主题一致，避免占位层本身造成一次视觉跳变。
+  这里刻意**不放 loading 指示器** —— 首帧目标是几十毫秒级，转圈一闪而过
+  反而更像卡顿。真需要时应由 RN 侧的 skeleton 承担。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="?android:attr/windowBackground"
+    android:importantForAccessibility="no" />

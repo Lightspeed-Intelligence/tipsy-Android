@@ -169,6 +169,24 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
      */
     private fun popSurface(surfaceInstanceId: String?) {
         if (supportFragmentManager.backStackEntryCount == 0) return
+
+        val current = supportFragmentManager.findFragmentById(R.id.surface_container)
+                as? RNSurfaceFragment
+
+        // ⚠️ **按实例判定，不是按类型**（ADR-003 / §12.1）。
+        // iOS 的 popSurface 闸是类型判定，于是「迟到的旧实例事件弹掉了新打开的
+        // 同类型页」—— 用户点返回后又被弹掉一层，后来靠 closingRef 补。
+        // Android 从第一天按实例判定，别重复那个 bug。
+        if (surfaceInstanceId != null && current != null &&
+            current.surfaceInstanceId != surfaceInstanceId
+        ) {
+            Log.i(
+                TAG,
+                "忽略迟到的 popSurface：请求 id 与当前容器不符（当前=${current.surfaceInstanceId}）",
+            )
+            return
+        }
+
         supportFragmentManager.popBackStack()
     }
 
