@@ -262,6 +262,13 @@ workflow 里不可见；内置 `GITHUB_TOKEN` 也只对本仓有权限，读不�
 实测本仓可继承的 org 级 secret 只有 `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` /
 `FEISHU_LLMDOC_WEBHOOK_TOKEN`，**不含 `PAT_TOKEN`**（它是 `tipsy-iOS` 的 repo secret）。
 
+**与 `tipsy-iOS` 同构** —— 它的 `ci.yml` / `eas-build.yml` 都是用 repo 级 `PAT_TOKEN`
+改写 submodule URL 走 HTTPS(runner 无 SSH key)。该 PAT 是 **classic token**。
+
+⚠️ **`tipsy-app` 上那个只读 deploy key(`eas-submodule-ro`)状态是 `Never used`** ——
+它是当初为 EAS 建的残留,**不是在用的链路**。iOS 仓的 secrets 里也没有任何 SSH 私钥。
+别误以为 SSH/deploy key 那条路在本环境验证过。
+
 当前做法是**同一 PAT 值在 `tipsy-iOS` 与本仓各存一份**。
 ⚠️ **轮换该 PAT 时必须两个仓都改**，漏改一处会让对应仓 CI 在子模块那步失败。
 若 Android 侧后续要加更多 workflow，值得改成 org secret + 授权本仓，只留一处真值。
@@ -270,6 +277,14 @@ workflow 里不可见；内置 `GITHUB_TOKEN` 也只对本仓有权限，读不�
 `submodules` 选项，而是手工把 submodule URL 换成带 token 的 HTTPS（只改本地配置，
 不写进 `.gitmodules`）。auth 形式用 `x-access-token`（已实测对私有仓有效）。
 **缺该 secret 时 workflow 明确报错并说明原因，不静默跳过。**
+
+**不得用 `--depth 1` 拉子模块**（这条经验来自 `tipsy-iOS` 的 `eas-build.yml`）：
+子模块 pin 常滞后于 `tipsy-app` 的 main tip —— 实测当前 pin **落后 `origin/main` 175 个
+commit**，浅拉只能拿到 tip、取不到 pin 的那个 commit，CI 会直接在子模块那步失败。
+
+与 iOS 的一处有意差异：iOS 用 `git config --global ... insteadOf` 全局改写所有
+`git@github.com:` 前缀；本仓只改 `submodule.tipsy-app.url` 一项，范围更窄、不影响
+其他 SSH 操作，行为等价。
 
 另：`cmake` 版本已钉进 `libs.versions.toml`（原先只有 `ndk`）。AGP 默认挑「已装的最高版」，
 本机与 CI 不一致会产生难复现的构建差异。workflow 从 catalog 读取并做空值检查 ——

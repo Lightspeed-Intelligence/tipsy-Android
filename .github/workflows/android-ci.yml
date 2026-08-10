@@ -45,13 +45,19 @@ jobs:
           submodules: false
           persist-credentials: false
 
-      # 凭据说明：PAT_TOKEN 是**本仓自己的** repo secret。
-      # secret 按仓库隔离，没有跨仓引用语法 —— tipsy-iOS 上的同名 secret 在这里不可见，
-      # 而 org 级只挂了 ANTHROPIC_* / FEISHU_LLMDOC_*，不含 PAT_TOKEN。
-      # 现状是「同一 PAT 值在 tipsy-iOS 与本仓各存一份」：**轮换时必须两处都改**，
-      # 漏改一处会让对应仓的 CI 在子模块那步失败。若以后 Android 侧要加更多 workflow，
-      # 值得改成 org secret + 授权给本仓，只留一处真值。
-      # auth 形式用 x-access-token（已实测对私有仓有效）。
+      # 凭据说明：与 tipsy-iOS 同构 —— 它的 ci.yml / eas-build.yml 都用 repo 级
+      # PAT_TOKEN 改写 submodule URL 走 HTTPS（runner 无 SSH key）。
+      #
+      # PAT_TOKEN 必须是**本仓自己的** repo secret：secret 按仓库隔离、没有跨仓引用语法，
+      # tipsy-iOS 的同名 secret 在这里不可见；org 级只挂了 ANTHROPIC_* / FEISHU_LLMDOC_*。
+      # 现状是「同一 PAT 值在 tipsy-iOS 与本仓各存一份」：**轮换时必须两处都改**。
+      #
+      # 注：tipsy-app 上那个只读 deploy key（eas-submodule-ro）状态是 **Never used**，
+      # 是给 EAS 建的残留、不是在用的链路 —— 别误以为 SSH 那条路已经验证过。
+      #
+      # 与 iOS 的一处差异：iOS 用 git config --global ... insteadOf 全局改写所有
+      # git@github.com: 前缀；这里只改 submodule.tipsy-app.url 一项，范围更窄，
+      # 不影响其他 SSH 操作。行为等价。
       - name: 拉取 tipsy-app 子模块
         env:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
@@ -68,7 +74,9 @@ jobs:
           git config submodule.tipsy-app.url \
             "https://x-access-token:${PAT_TOKEN}@github.com/Lightspeed-Intelligence/tipsy-app.git"
           git submodule sync tipsy-app
-          git submodule update --init --depth 1 tipsy-app
+          # 不用 --depth 1：子模块 pin 常滞后于 tipsy-app 的 main tip，
+          # 浅拉不保证能取到 pin 的那个 commit（这条经验来自 tipsy-iOS 的 eas-build.yml）。
+          git submodule update --init tipsy-app
           echo "tipsy-app SHA: $(git -C tipsy-app rev-parse HEAD)"
 
       - name: Setup JDK 17
