@@ -1,16 +1,14 @@
 # Android 壳的 G1 fast gate（方案 §5.4）。
 #
-# ⚠️ **当前未激活**：只留了 workflow_dispatch（手动触发），没有 pull_request / push。
-#    原因是本仓还没有 PAT_TOKEN secret —— 没有它就拉不到私有子模块 tipsy-app，
-#    而 npm ci / autolinking / assemble / 单测全都依赖它，等于一步也跑不了。
-#    自动触发会让主干上挂一个**永久红**的 workflow，比没有 CI 更糟（红久了没人看）。
+# ✅ **已激活**（2026-08-10）：PAT_TOKEN 已配，pull_request / push 自动触发。
 #
-#    **启用步骤**（token 到位后）：
-#      1. 在本仓 Settings → Secrets → Actions 添加 PAT_TOKEN
-#         （需对 tipsy-app 有读权限；与 tipsy-iOS 同构，那个 PAT 不属于 @WishQi 个人账号，
-#          其 fine-grained / classic 列表均为空，故需另行取得或新建）
-#      2. 把下面 on: 里注释掉的 pull_request / push 两段放开
-#      3. 手动 workflow_dispatch 跑一次确认绿，再依赖它做门禁
+#    PAT_TOKEN 是本仓**独立签发**的 classic token，只勾 repo scope（够拉私有子模块）。
+#    ⚠️ 它与 tipsy-iOS 的同名 secret **不是同一个值** —— 轮换本仓这个不影响 iOS，
+#    反之亦然。（早期文档记的「同一值两处各存一份、轮换须两仓都改」已不适用。）
+#
+#    换机器 / 重建 secret 时：值经**交互输入或 stdin** 传给 `gh secret set PAT_TOKEN`，
+#    第一个参数是**名字**。把值写成第一个参数会创建一个以 token 明文为名的 secret ——
+#    **secret 名是可读的**，等于当场泄漏（2026-08-10 真踩过，已吊销重签）。
 #
 # 与 tipsy-app / tipsy-iOS 的 ci.yml 分开：那些是 agentic workflow（issue/PR 智能体），
 # 本文件是纯构建门禁，职责不同、失败含义也不同。
@@ -21,18 +19,20 @@
 name: Android CI
 
 on:
-  # ── 启用时放开以下两段（见文件头「启用步骤」）──
-  # pull_request:
-  #   types: [opened, synchronize, reopened]
-  #   paths:
-  #     - 'app/**'
-  #     - 'gradle/**'
-  #     - '*.gradle'
-  #     - 'gradle.properties'
-  #     - '.github/workflows/android-ci.yml'
-  #     - '.gitmodules'
-  # push:
-  #   branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'app/**'
+      - 'gradle/**'
+      - '*.gradle'
+      - 'gradle.properties'
+      - '.github/workflows/android-ci.yml'
+      - '.gitmodules'
+      # 桥模块住在 submodule 里，改它不会动本仓任何 path ——
+      # 但 pin 前进一定伴随这个文件变化，所以它是子模块改动的可靠触发点。
+      - 'tipsy-app'
+  push:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -62,8 +62,9 @@ jobs:
       # PAT_TOKEN 改写 submodule URL 走 HTTPS（runner 无 SSH key）。
       #
       # PAT_TOKEN 必须是**本仓自己的** repo secret：secret 按仓库隔离、没有跨仓引用语法，
-      # tipsy-iOS 的同名 secret 在这里不可见；org 级只挂了 ANTHROPIC_* / FEISHU_LLMDOC_*。
-      # 现状是「同一 PAT 值在 tipsy-iOS 与本仓各存一份」：**轮换时必须两处都改**。
+      # tipsy-iOS 的同名 secret 在这里不可见；org 级只挂了 ANTHROPIC_* / FEISHU_LLMDOC_*
+      # （org secret 需 admin:org，当前账号没有该 scope，故走 repo secret）。
+      # 本仓的值是**独立签发**的，与 iOS 那个无关 —— 轮换互不影响。
       #
       # 注：tipsy-app 上那个只读 deploy key（eas-submodule-ro）状态是 **Never used**，
       # 是给 EAS 建的残留、不是在用的链路 —— 别误以为 SSH 那条路已经验证过。
@@ -172,22 +173,49 @@ jobs:
       - name: 单元测试 + merged manifest 快照
         run: ./gradlew :app:testGooglePlayDebugUnitTest --no-daemon --stacktrace
 
-      - name: 校验 manifest 断言真的跑了
-        # 防「假绿」：assumeTrue 会让跳过的测试也算通过。这里断言测试确实执行过。
+      - name: tipsy-auth 桥单测
+        # 桥模块住在 submodule 里（tipsy-app/modules/tipsy-auth），但它是**壳的一部分**
+        # —— 契约、registry、主线程切换都由本仓的壳消费，坏了壳直接不可用。
+        #
+        # 为什么必须进 G1：LiveAppSafetyTest 守的是本项目最高危的失败模式 ——
+        # 该模块会被 autolink 进**现网三个 RN 包**，那里没有壳、不注册 provider，
+        # 此时 isShellHost() 必须为 false。若为 true，现网 App 会把 auth 交给
+        # 一个不存在的壳 → **直接掉登录**。这条断言不进 CI 等于没有防线。
+        run: ./gradlew :tipsy-auth:testDebugUnitTest --no-daemon --stacktrace
+
+      - name: 校验关键断言真的跑了（skipped=0）
+        # 防「假绿」：assumeTrue 会让跳过的测试也算通过（JUnit 语义）。
+        # 这里对两个**守边界**的 suite 断言它们确实执行过且零跳过：
+        #   MergedManifestTest —— 三渠道 applicationId / release 不含开发期组件
+        #   LiveAppSafetyTest  —— 无 provider 时 isShellHost() 必须 false（现网掉登录防线）
         run: |
           set -euo pipefail
-          XML=$(find app/build/test-results -name 'TEST-*MergedManifestTest.xml' | head -1)
-          if [ -z "$XML" ]; then
-            echo "::error::没有 MergedManifestTest 结果文件 —— 测试没跑"; exit 1
-          fi
-          SKIPPED=$(grep -oE 'skipped="[0-9]+"' "$XML" | head -1 | grep -oE '[0-9]+')
-          TESTS=$(grep -oE 'tests="[0-9]+"' "$XML" | head -1 | grep -oE '[0-9]+')
-          echo "MergedManifestTest: $TESTS 条，跳过 $SKIPPED 条"
-          if [ "${SKIPPED:-0}" != "0" ]; then
-            echo "::error::有 $SKIPPED 条 manifest 断言被跳过（merged manifest 产物缺失？）"
-            echo "::error::跳过不等于通过 —— 见方案 §5.4「NOT RUN 不等于通过」"
-            exit 1
-          fi
+          check() {
+            local name="$1" root="$2"
+            local xml
+            xml=$(find "$root" -name "TEST-*${name}.xml" 2>/dev/null | head -1)
+            if [ -z "$xml" ]; then
+              echo "::error::没有 ${name} 结果文件 —— 测试没跑"
+              return 1
+            fi
+            local tests skipped
+            tests=$(grep -oE 'tests="[0-9]+"' "$xml" | head -1 | grep -oE '[0-9]+')
+            skipped=$(grep -oE 'skipped="[0-9]+"' "$xml" | head -1 | grep -oE '[0-9]+')
+            echo "${name}: ${tests} 条，跳过 ${skipped:-0} 条"
+            if [ "${tests:-0}" = "0" ]; then
+              echo "::error::${name} 一条都没跑"
+              return 1
+            fi
+            if [ "${skipped:-0}" != "0" ]; then
+              echo "::error::${name} 有 ${skipped} 条被跳过 —— 跳过不等于通过"
+              echo "::error::见方案 §5.4「NOT RUN 不等于通过」"
+              return 1
+            fi
+          }
+          rc=0
+          check MergedManifestTest app/build/test-results || rc=1
+          check LiveAppSafetyTest tipsy-app/modules/tipsy-auth/android/build/test-results || rc=1
+          exit $rc
 
       - name: 上传测试报告
         if: always()
