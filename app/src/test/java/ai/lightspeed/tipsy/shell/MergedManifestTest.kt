@@ -24,11 +24,45 @@ import org.w3c.dom.Element
  */
 class MergedManifestTest {
 
-    private fun manifestFor(variant: String): File? {
-        val dir = File("build/intermediates/merged_manifests/$variant")
-        if (!dir.isDirectory) return null
-        return dir.walkTopDown().firstOrNull { it.name == "AndroidManifest.xml" }
-    }
+    /**
+     * AGP 有**两个**相似的输出目录，内容都是合并后的 manifest：
+     *   - `merged_manifest/`（单数）— `process*MainManifest` 的产物，只跑 manifest 处理即有
+     *   - `merged_manifests/`（复数）— 打包阶段产物，需要 assemble
+     * 只认复数那个会导致「只跑 manifest 任务时断言被跳过」，故两个都找。
+     */
+    private fun manifestRoots(): List<File> =
+        listOf("merged_manifest", "merged_manifests")
+            .map { File("build/intermediates/$it") }
+            .filter { it.isDirectory }
+
+    private fun manifestFor(variant: String): File? =
+        manifestRoots().firstNotNullOfOrNull { root ->
+            File(root, variant)
+                .takeIf { it.isDirectory }
+                ?.walkTopDown()
+                ?.firstOrNull { it.name == "AndroidManifest.xml" }
+        }
+
+    /**
+     * 找**任意一个**符合 build type 的 merged manifest。
+     *
+     * 为什么不写死 flavor：G1 fast gate 只 assemble 单个 flavor（方案 §5.4），
+     * 若断言写死 `directApkRelease`，CI 上会因产物不存在而 `assumeTrue` 跳过 ——
+     * **跳过在 JUnit 里算通过**，等于断言静默失效。实测只 assemble
+     * googlePlayDebug 时 5 条里有 4 条被跳过。
+     *
+     * 这些断言检查的是与 flavor 无关的性质（开发组件、权限、largeHeap），
+     * 任一同 build type 的 variant 都能代表。
+     */
+    private fun anyManifestOfBuildType(suffix: String): File? =
+        manifestRoots().firstNotNullOfOrNull { root ->
+            root.listFiles()
+                ?.filter { it.isDirectory && it.name.endsWith(suffix) }
+                ?.sortedBy { it.name }
+                ?.firstNotNullOfOrNull { dir ->
+                    dir.walkTopDown().firstOrNull { it.name == "AndroidManifest.xml" }
+                }
+        }
 
     /**
      * 注意：AGP 产出的 merged manifest **不带 `xmlns:android` 声明**，
@@ -99,8 +133,8 @@ class MergedManifestTest {
      */
     @Test
     fun `release 不含开发期组件`() {
-        val file = manifestFor("directApkRelease")
-        assumeTrue("未找到 release merged manifest", file != null)
+        val file = anyManifestOfBuildType("Release")
+        assumeTrue("未找到任何 release merged manifest", file != null)
         val root = parse(file!!)
         val forbidden = listOf(
             "androidx.compose.ui.tooling.PreviewActivity",
@@ -115,8 +149,8 @@ class MergedManifestTest {
     /** 所有 exported 组件都要显式声明，避免依赖默认值（API31+ 语义变化）。 */
     @Test
     fun `有 intent-filter 的组件必须显式声明 exported`() {
-        val file = manifestFor("directApkDebug")
-        assumeTrue("未找到 merged manifest", file != null)
+        val file = anyManifestOfBuildType("Debug")
+        assumeTrue("未找到任何 debug merged manifest", file != null)
         val root = parse(file!!)
         listOf("activity", "service", "receiver").forEach { tag ->
             components(root, tag).forEach { e ->
@@ -138,8 +172,8 @@ class MergedManifestTest {
      */
     @Test
     fun `不含已明确排除的敏感权限`() {
-        val file = manifestFor("directApkRelease")
-        assumeTrue("未找到 release merged manifest", file != null)
+        val file = anyManifestOfBuildType("Release")
+        assumeTrue("未找到任何 release merged manifest", file != null)
         val perms = permissions(parse(file!!))
         // withRemoveAgoraMediaProjection：本产品只用语音，不做屏幕共享
         assertTrue(
@@ -155,8 +189,8 @@ class MergedManifestTest {
     /** withAndroidLargeHeap（方案 §2.3）：线上 ExoPlayer OOM 的缓解措施，漏掉是静默回归。 */
     @Test
     fun `release 保留 largeHeap`() {
-        val file = manifestFor("directApkRelease")
-        assumeTrue("未找到 release merged manifest", file != null)
+        val file = anyManifestOfBuildType("Release")
+        assumeTrue("未找到任何 release merged manifest", file != null)
         val app = directChildren(parse(file!!), "application").first()
         assertEquals(
             "largeHeap 丢失 —— 这是线上 OOM 缓解措施（方案 §2.3）",
