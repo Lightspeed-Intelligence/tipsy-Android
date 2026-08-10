@@ -2,6 +2,8 @@
 
 > 更新：2026-08-08 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
 > G1 CI 已写但**未激活**（缺 `PAT_TOKEN`，见 §2.10）
+>
+> **下一步：W1** —— 细化方案见 [`../architecture/android-w1-plan.md`](../architecture/android-w1-plan.md)
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
