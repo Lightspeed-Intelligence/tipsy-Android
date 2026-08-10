@@ -95,6 +95,11 @@ android {
             // 漏掉的表现：isMetroRunning() 永远探测 8081 → 静默回退内嵌 bundle，
             // 「改了 JS 却不生效」且不报错。
             resValue 'integer', 'react_native_dev_server_port', '8083'
+            // 与 tipsy-app 的 .env.development 一致（EXPO_PUBLIC_API_URL）。
+            // 壳与 RN Surface **必须命中同一后端** —— 不一致会让原生页与
+            // Surface 看到不同数据，且两边都不报错。
+            // 这不是凭据，是公开端点；真凭据一律走 CI secret（方案 §12.7）。
+            buildConfigField 'String', 'API_BASE_URL', '"https://api.dev.fantacy.live/api/v1"'
             // 本机/CI 的 debug 只出当前设备与模拟器需要的 ABI：
             // 四个 ABI 全出会让单个 flavor 的中间产物达数 GB（曾因磁盘写满
             // 导致 packageRuStoreDebug 失败，且报错不提示空间不足）。
@@ -110,6 +115,14 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             // W0 刻意不配置签名：无发布能力（方案 §5.1）
             // signingConfig 留空 —— assembleRelease 会产出未签名产物
+            // 与 tipsy-app 的 .env.production 一致。见 debug 分支的说明。
+            buildConfigField 'String', 'API_BASE_URL', '"https://api.tipsy.chat/api/v1"'
+        }
+        debugOptimized {
+            // RN 的 Gradle plugin 引入的第三档 build type（进度文档 §2.2.1）。
+            // 不给它配 API 地址会让 BuildConfig.API_BASE_URL 编译不过。
+            initWith debug
+            buildConfigField 'String', 'API_BASE_URL', '"https://api.dev.fantacy.live/api/v1"'
         }
     }
 
@@ -161,6 +174,8 @@ dependencies {
 
     // android.jar 的 org.json 是 stub（调用即抛 "not mocked"），JVM 单测需真实实现。
     testImplementation libs.json
+    // auth 的 single-flight 刷新与 generation 闸门要测并发时序（runTest）
+    testImplementation libs.kotlinx.coroutines.test
 
     // RN：版本由 autolinking 从 submodule 的 node_modules 解析
     implementation 'com.facebook.react:react-android'

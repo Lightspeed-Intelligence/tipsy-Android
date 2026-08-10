@@ -40,6 +40,13 @@ fragment = "1.8.5"
 junit = "4.13.2"
 androidxJunit = "1.2.1"
 espressoCore = "3.6.1"
+# ⚠️ **与 RN 侧的耦合约束，不是「越新越好」的普通依赖**（同 mmkv 的性质）。
+# `expo-modules-core/android/build.gradle:191-192` 用 `api` 暴露 coroutines **1.7.3**，
+# 它是壳运行时实际加载的版本。这里声明更高版本会通过 Gradle 的版本冲突解析
+# 把整个 runtime 顶上去 —— 抬升 RN 生态的运行时依赖不属 W1 范围。
+# 只有 tipsy-app 侧升级 expo-modules-core 时才同步改这里。
+#noinspection NewerVersionAvailable
+coroutines = "1.7.3"
 
 [libraries]
 mmkv = { module = "io.github.zhongwuzw:mmkv", version.ref = "mmkv" }
@@ -47,6 +54,7 @@ mmkv = { module = "io.github.zhongwuzw:mmkv", version.ref = "mmkv" }
 # ⚠️ 不用 testOptions.unitTests.returnDefaultValues = true 来绕 —— 那会让
 # 所有未 mock 的 Android API 静默返回默认值，是方案 §5.4 点名的「假绿色」。
 json = { module = "org.json:json", version = "20260719" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 androidx-fragment-ktx = { group = "androidx.fragment", name = "fragment-ktx", version.ref = "fragment" }

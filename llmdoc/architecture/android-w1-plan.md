@@ -2,7 +2,11 @@
 
 > 派生自 `android-native-migration-plan.md`（下称「方案」）。本文只做 W1 的**执行级**细化，
 > 不重复方案的论证。方案是真值，本文与之冲突时以方案为准。
-> 更新：2026-08-10 ｜ 状态：**待评审，未开工**
+> 更新：2026-08-10 ｜ 状态：**执行中**
+>
+> **进度只看**[`../reference/android-native-progress.md`](../reference/android-native-progress.md)
+> （本文不记状态快照——重复的「当前进度」是 iOS 侧真实发生过的漂移源）。
+> 截至最后更新：P0 ✅ / P1 ✅ / P2 一半 / P3 已推迟 / P4-P9 未开始。
 
 ## 0. W1 的目标与不做什么
 
@@ -36,7 +40,7 @@ W1 有一条**硬依赖链**,不能并行:桥不通 → 所有 RN 侧适配都�
 P0  tipsy-auth Android 桥骨架（isShellHost() 返回 true）
      └─ 这一步通了，RN 侧 55 个文件的壳适配「自动激活」（方案 §7.2）
         ↓
-P1  auth 契约实现（13 个必须方法 + 双 generation + single-flight refresh）
+P1  auth 契约实现（12 个必须方法 + 双 generation + single-flight refresh）
         ↓
 P2  token 迁移（MMKV 直读 → AuthBootstrapSurface 兜底）
         ↓
@@ -151,6 +155,28 @@ W1 虽然还没有五 Tab,但**订阅机制要在 W1 建好**,W2 加 Tab 时直�
 
 失效 auth generation → 取消/废弃在飞 refresh → 清 Native 与兼容共享态 →
 **收敛返回栈** → 发**一次** `loggedOut`。
+
+⚠️ `clearToken()` **刻意只做清 token**，不收栈、不广播 —— 调用方（如
+`DeleteAccountSurface`）自己控制后续导航。把两者实现成一样会让删号流程中途被弹栈。
+
+### 3.6 ⚠️ 主线程约束（P1 实测补充，**P4 起每加桥方法都适用**）
+
+Expo 的 `AsyncFunction` **默认在后台线程执行**。凡是触碰壳 UI / Router /
+FragmentManager 的契约方法都必须切主线程 —— iOS 契约对同组方法全标了 `@MainActor`，
+Android 侧最初漏了（PR #1614 的审查提出过）。
+
+现在的收口方式：契约标 `@MainThread`，桥侧统一经 `dispatchOnMain` 切换。
+**新增任何 UI/导航桥方法都要走它**，不要下推给壳侧实现（每个实现都得记得做一次，
+漏一个就是一个间歇 bug）。
+
+两条细节：
+- 用 `withContext` 而非 `Handler.post` —— 后者发射后不管，JS 的 await 会在导航
+  真正发生前 resolve。
+- **未标 `@MainThread` 但内部要动 UI 的方法要自己切**（`logout()` 就是：
+  它主要做存储清理，但要收栈）。桥的 `onMain` 只覆盖标注过的方法。
+
+漏掉的表现不是稳定崩溃，而是**间歇** `CalledFromWrongThreadException` 或导航丢失，
+取决于 JS 调用落在哪个线程 —— 本地基本复现不出来。
 
 ---
 

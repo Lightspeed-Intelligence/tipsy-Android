@@ -11,10 +11,18 @@ import com.facebook.react.ReactPackage
 import com.facebook.react.common.ReleaseLevel
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint
 import com.facebook.react.defaults.DefaultReactNativeHost
+import ai.lightspeed.tipsy.shell.auth.AuthStateHub
+import ai.lightspeed.tipsy.shell.auth.Generations
+import ai.lightspeed.tipsy.shell.auth.MmkvTokenPersistence
+import ai.lightspeed.tipsy.shell.auth.RefreshTokenApi
+import ai.lightspeed.tipsy.shell.auth.ShellTokenStore
 import ai.lightspeed.tipsy.shell.bridge.ShellAuthProvider
 import expo.modules.ApplicationLifecycleDispatcher
 import expo.modules.ReactNativeHostWrapper
 import expo.modules.tipsyauth.TipsyAuthRegistry
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
 /**
  * 壳 Application。
@@ -60,6 +68,25 @@ class TipsyApplication : Application(), ReactApplication {
     private var authProvider: ShellAuthProvider? = null
 
     /**
+     * 进程级作用域。`SupervisorJob` 让单个失败的子任务不连带取消其他 ——
+     * auth 相关的 fire-and-forget（如 401 触发登出）不能因为别处的异常被取消。
+     *
+     * 刻意**不**在 provider 内部新建 scope：那样登出会随调用方作用域被取消，
+     * 表现为"401 了但没登出"，且只在特定时序下发生。
+     */
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /**
+     * 壳内登录态广播（W1-P1，§3.4）。W2 的五 Tab 直接订阅它 ——
+     * iOS 因为常驻 Tab 只广播给 RN 桥，踩过"登录后无人重拉""登出串账号数据"。
+     */
+    val authStateHub = AuthStateHub()
+
+    /** token 真值。W2 原生 Login 页登录成功后调 [ShellTokenStore.onLoggedIn]。 */
+    lateinit var tokenStore: ShellTokenStore
+        private set
+
+    /**
      * 当前承载 Surface 的容器提供的"关闭自己"回调。
      * 由 [MainActivity] 在 onCreate/onDestroy 设置与清除 ——
      * Application 不该直接持 Activity 引用（泄漏），所以用可空回调转接。
@@ -87,12 +114,35 @@ class TipsyApplication : Application(), ReactApplication {
      * 所以这里必须持一个强引用字段，否则会被回收、`isShellHost()` 悄悄变回 false。
      */
     private fun registerAuthBridge() {
+        // 手写装配（ADR-005：W1/W2 不引 DI 框架 —— 不把「引入 DI」与
+        // 「首次 brownfield 集成」混在一起，两个都失败时无法二分定位）。
+        val generations = Generations()
+        tokenStore = ShellTokenStore(
+            persistence = MmkvTokenPersistence.open(this),
+            refreshApi = RefreshTokenApi(
+                baseUrl = BuildConfig.API_BASE_URL,
+                appVersion = BuildConfig.VERSION_NAME,
+                downloadChannel = BuildConfig.DOWNLOAD_CHANNEL,
+            ),
+            generations = generations,
+            scope = appScope,
+            listener = object : ShellTokenStore.Listener {
+                override fun onTokenCleared() {
+                    // 通知 RN 侧已 hydrate 的 store，以及壳内常驻页
+                    TipsyAuthRegistry.notifyAuthStateChanged("loggedOut")
+                }
+            },
+        )
+
         val provider = ShellAuthProvider(
             isDebugBuild = BuildConfig.DEBUG,
             // P5 会换成壳的 L10n store。现在返回 null = 壳无意见，
             // RN 侧沿用自己的语言判定，不至于被一个假值锁死。
             languageCodeProvider = { null },
             onPopSurface = { instanceId -> onPopSurfaceRequested?.invoke(instanceId) },
+            tokenStore = tokenStore,
+            authStateHub = authStateHub,
+            scope = appScope,
         )
         authProvider = provider
         TipsyAuthRegistry.register(provider)
