@@ -93,7 +93,7 @@ RN/Expo 生态多处假设 `Gradle root = <rn-project>/android`，本仓布局�
 | `sdkmanager` | 曾观察到不可用（未装 cmdline-tools）。W0 需实测并提供明确环境检查与 CI 安装路径 |
 | emulator image | 未固定。W0 记录实际可用的 API 24 / API 36 image |
 | Node / npm | ✅ 实测 node `v22.22.3` / npm `10.9.8`；settings.gradle 有四级显式解析（见方案 ADR-004 第 3 条） |
-| 从 Android Studio（Dock/Finder）启动 sync | ✅ 2026-08-10 修复。需**两层**配置，缺一层即失败：① `local.properties` 写 `tipsy.node.executable`（用 fnm 的 `aliases/default` 路径，不是 `which node`）；② launchd GUI 域 PATH 含 node 目录（LaunchAgent 固化，改完须完全重启 Studio）。**两者都不入库，换机器需重做**。详见方案 ADR-004 第 3 条 |
+| 从 Android Studio（Dock/Finder）启动 sync | ✅ 2026-08-10 修复。需**两层**配置，缺一层即失败：① `local.properties` 写 `tipsy.node.executable`（用 fnm 的 `aliases/default` 路径，不是 `which node`）；② launchd GUI 域 PATH 含 node 目录（LaunchAgent 固化）。**两者都不入库，换机器需重做**。<br>⚠️ **改完 PATH 必须 ⌘Q 退出 Studio 再打开** —— `launchctl setenv` 只影响此后新启动的进程；Sync / Invalidate Caches / `--stop` 都不够。查证用 `ps eww <studio-pid> \| tr ' ' '\n' \| grep ^PATH=` 看进程**实际**的 PATH，别看 `launchctl getenv`（那是「新进程会拿到什么」）。<br>缺第二层时 `settings.gradle` 现在会**在 1 秒内明确报错**并给出修复步骤（原先要等到 plugin 内部炸出无上下文的 `error=2`）。详见方案 ADR-004 第 3 条 |
 
 ### 2.4 已经不用做的事（RN 侧已就绪，实测）
 

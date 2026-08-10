@@ -61,27 +61,58 @@ pluginManagement {
         nodeSource = selected.source
     }
 
-    // Expo 的 AutolinkingCommandBuilder 硬编码裸 "node" 且无覆盖入口，又位于
-    // 禁止修改的 tipsy-app/node_modules —— 显式传参覆盖不了全部调用点，故把
-    // 解析出的 node 目录前置进 daemon PATH。
-    // 必须早于下面第一次 providers.exec：Gradle 在首次 exec 时快照进程环境，
-    // 之后再改无效，裸 "node" 的调用点会继续失败。
+    // ── 裸 "node" 调用点的前置检查（不是兜底，是提前失败）────────────────
+    //
+    // 上面解析出的绝对路径只对**显式传参**的调用点有效（commandLine(nodeExecutable, …)）。
+    // 但 Expo 的 AutolinkingCommandBuilder 硬编码裸 "node" 且无覆盖入口，
+    // 又位于禁止修改的 tipsy-app/node_modules —— 那些调用点**只能靠进程自身的 PATH**。
+    //
+    // ⚠️ 这里曾经放过一段「把 node 目录前置进 daemon PATH」的 hack
+    //    （ProcessEnvironment.maybeSetEnvironmentVariable）。**实测无效已删**：
+    //    子进程确实继承了新 PATH（sh -c 'command -v node' 能找到），
+    //    但 Gradle 解析 program name 时不看它，同一次构建内
+    //    providers.exec { commandLine('node', …) } 仍抛 error=2。
+    //    且那段包在 catch (Throwable ignored) 里静默失败，会让人误以为有兜底。
+    //
+    // 真正的解法是让**进程本身**的 PATH 含 node 目录：
+    //   - 终端跑 ./gradlew：shell PATH 已含（fnm/nvm 会注入），天然可用
+    //   - Android Studio 从 Dock/Finder 启动：走 launchd GUI 域，**不读 shell 配置**
+    //     → 必须 `launchctl setenv PATH …`（建议做成 LaunchAgent 固化）
+    //     → ⚠️ **改完必须完全退出 Studio 再打开**（⌘Q，不是 Sync/Invalidate Caches）：
+    //        launchctl setenv 只影响此后新启动的进程，Studio 及其派生的 Gradle
+    //        daemon 继承的是**它自己启动那一刻**的环境。
+    //
+    // 所以这里只做检查并**明确报错**，而不是假装能修好 —— 否则失败点会漂移到
+    // 某个 plugin 内部，报出无上下文的 `Cannot run program "node"`。
     def nodeBinDir = new File(nodeExecutable).parentFile?.absolutePath
-    if (nodeBinDir != null) {
-        def currentPath = System.getenv('PATH') ?: ''
-        if (!currentPath.tokenize(File.pathSeparator).contains(nodeBinDir)) {
-            try {
-                org.gradle.internal.nativeintegration.services.NativeServices
-                    .getInstance()
-                    .get(org.gradle.internal.nativeintegration.ProcessEnvironment)
-                    .maybeSetEnvironmentVariable(
-                        'PATH',
-                        currentPath.isEmpty() ? nodeBinDir : "${nodeBinDir}${File.pathSeparator}${currentPath}"
-                    )
-            } catch (Throwable ignored) {
-                // 非致命：能接受显式路径的调用点仍会拿到绝对路径
-            }
-        }
+    def currentPath = System.getenv('PATH') ?: ''
+    def pathEntries = currentPath.tokenize(File.pathSeparator)
+    def pathHasNode = pathEntries.any { new File(it, 'node').canExecute() }
+    if (!pathHasNode) {
+        throw new GradleException(
+            "当前 Gradle 进程的 \$PATH 里找不到可执行的 `node`。\n" +
+            "\n" +
+            "已解析到 node 绝对路径（${nodeSource}）：${nodeExecutable}\n" +
+            "但它**不够** —— Expo 的 autolinking plugin 硬编码裸 `node`，\n" +
+            "只能靠进程自身的 \$PATH 解析，无法用参数覆盖。\n" +
+            "\n" +
+            "当前 \$PATH：${currentPath}\n" +
+            "\n" +
+            "从 Android Studio（Dock/Finder）启动时最常见，因为它走 launchd GUI 域、\n" +
+            "**不读 shell 配置**。修复：\n" +
+            // ⚠️ 这里给的是**展开后的完整值**，不是 \$PATH 变量引用 ——
+            //    launchctl setenv 不做 shell 展开，写 \$PATH 会把字面量存进去。
+            "  1) 在**终端**里执行（值已展开，可直接粘贴）：\n" +
+            "     launchctl setenv PATH \"${nodeBinDir}${File.pathSeparator}${System.getenv('PATH') ?: ''}\"\n" +
+            "     ⚠️ launchctl 不做 shell 展开，别写 \\\$PATH。\n" +
+            "     长期方案：做成 LaunchAgent，否则重启机器后失效。\n" +
+            "  2) ./gradlew --stop\n" +
+            "  3) **完全退出 Android Studio（⌘Q）再打开** —— Sync 或\n" +
+            "     Invalidate Caches 都不够：daemon 继承的是 Studio 启动那刻的环境。\n" +
+            "\n" +
+            "从终端跑时通常不会遇到（shell PATH 已含 node）。\n" +
+            "详见 llmdoc/reference/android-native-progress.md 的 §2.3 与方案 ADR-004 第 3 条。"
+        )
     }
 
     // 尽早验证，替代 Gradle 无上下文的报错
