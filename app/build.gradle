@@ -150,14 +150,35 @@ android {
         checkDependencies false   // 50+ 个第三方 RN 模块的告警不由本仓负责
         sarifReport true          // CI 用（GitHub code scanning 可直接消费）
         htmlReport true
-        // baseline：首次运行会生成，把**现存**告警记为已知，之后只拦新增。
+        // baseline：把**现存**告警记为已知，之后只拦新增。
         // 注意 baseline 是「技术债台账」而非豁免 —— 清理它属后续波次。
+        //
+        // ⚠️ **baseline 对 app 模块外的文件不可移植**（2026-08-10 CI 首跑实测）：
+        // lint 把 `gradle/libs.versions.toml` 与 `gradle/wrapper/*.properties` 的
+        // location 记成 `$HOME/Developer/Tipsy-Android/...` 这种**机器相关**的绝对路径，
+        // 在 CI 上（/home/runner/work/...）**一条都匹配不到**。
+        // 症状：本机「18 条被 baseline 过滤、0 新增」，CI 上「5 条过滤、13 条新增」→ 硬门失败。
+        // 那 13 条全是下面 disable 掉的三类「有新版可用」，所以现在 baseline 只剩
+        // app 模块内的 5 条，全部是相对路径、可移植。
         baseline = file('lint-baseline.xml')
         disable += [
             // RN/Expo 生态大量使用反射与动态注册，这两项误报率高
             'UnusedResources',
             // 壳的 W0 阶段刻意不做多语言
             'MissingTranslation',
+            // ── 以下三类是「有新版可用」提示，与本工程**刻意钉死工具链**的决定冲突 ──
+            // 方案 §3.3：AGP/Kotlin/compileSdk 等版本是 RN 0.81.4 的兼容事实，不是选型；
+            // mmkv 与 coroutines 更是与 RN 侧的**耦合约束**（升了会静默出错，见
+            // libs.versions.toml 的注释）。让 lint 反复报"可以升级"没有信息量，
+            // 而 warningsAsErrors 会把它变成硬门失败。
+            //
+            // ⚠️ 代价：**真正需要关注的依赖升级（含安全更新）也不再由 lint 提醒**。
+            // 依赖升级改为跟随 RN 侧节奏人工评估 —— 见进度文档 §2.9。
+            // 若将来要恢复提醒，应改用「只对 app 模块内依赖生效」的方式，
+            // 而不是把 baseline 退回不可移植状态。
+            'GradleDependency',
+            'AndroidGradlePluginVersion',
+            'NewerVersionAvailable',
         ]
     }
 
