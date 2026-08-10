@@ -1,27 +1,28 @@
 # Tipsy Android 原生化迁移：现状（唯一状态真值）
 
-> 更新：2026-08-08 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
+> 更新：2026-08-10 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
 > G1 CI 已写但**未激活**（缺 `PAT_TOKEN`，见 §2.10）
 >
-> **W1 进行中** —— 细化方案见 [`../architecture/android-w1-plan.md`](../architecture/android-w1-plan.md)；
-> **P0 auth 桥已接通**（`isShellHost()` 实测 true，见 §2.11）
+> **W1 进行中** —— 细化方案见 [`../architecture/android-w1-plan.md`](../architecture/android-w1-plan.md)。
+> **P0 桥已接通**（§2.11）｜ **P1 auth 契约已完成**（§2.13）｜ **P2 机制已验、迁移链未接**（§2.12）
+> ｜ P3 已决定推迟到上线前 ｜ **P4-P9 未开始**
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
 ## 0. 三十秒速览
 
-- **波次进度**：W0 主体完成 —— 依赖 + 工具链 + autolinking + **DebugSurface gate 实测通过**。
-- **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost）+ `MainActivity`（Compose 原生根）+ `RNSurfaceFragment`。仍是零业务代码。
-- **submodule**：pin `93d2c5551`，`node_modules` 已装（1812 包）。
-- **已验证**：三 flavor debug 构建通过、applicationId 正确、JS bundle 内嵌、51 个 project autolink、**Surface 两种 bundle 来源均可挂载**（详见 §2.6）。
-- **不存在**：五 Tab、Router、core 模块、feature 模块、桥实现、CI。
+- **波次进度**：W0 完成；**W1 走到 P1**（P0 桥 + P1 auth 契约完成，P2 一半，P3 推迟，P4-P9 未开始）。
+- **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost）+ `MainActivity`（Compose 原生根）+ `RNSurfaceFragment`（**仍是 36 行 stub**）+ `auth/`（6 个类，token 真值）+ `bridge/ShellAuthProvider`。**仍是零业务代码。**
+- **submodule**：pin `56c4bbfa7`（分支 `feat/tipsy-auth-android`，**未合进 main/release**，按约定靠子模块指针引用），`node_modules` 已装（1812 包）。
+- **已验证**：三 flavor debug 构建通过、applicationId 正确、JS bundle 内嵌、51 个 project autolink、**Surface 两种 bundle 来源均可挂载**（§2.6）、**MMKV 互操作**（§2.12）、**auth 契约单测 62 条**（§2.13）。
+- **不存在**：五 Tab、Router、i18n、network 层、Sentry、core/feature 模块、CI（已写未激活）。
 
 ## 1. 波次状态
 
 | 波次 | 内容 | 业务量 | 状态 | source_rn_sha | target_android_sha |
 | --- | --- | --- | --- | --- | --- |
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
-| W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | ⬜ 阻塞于 W0 | — | — |
+| W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟡 **进行中（P0/P1 完成）** | `56c4bbfa7` | — |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | ⬜ 阻塞于 W1 | — | — |
 | W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | ⬜ 阻塞于 W2 | — | — |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | ⬜ 阻塞于 W3 | — | — |
@@ -398,6 +399,89 @@ lint 的 NewerVersionAvailable**（它建议升到 2.4.1）—— 这个版本�
 
 它证明的是**机制**。P2 状态是「机制已验证,真实数据待验」,**不是完成**。
 
+### 2.13 W1-P1：auth 契约（已完成）
+
+**壳成为 token 的唯一刷新者与持久化者。** 单测 **62 条全绿（skipped=0）**，
+人工门禁四步全过（lint 硬门 / assemble / release manifest / 单测）。
+
+落地的 6 个类（`shell/auth/` + `bridge/`）：
+
+| 类 | 职责 | 关键约束 |
+| --- | --- | --- |
+| `Jwt` | payload 解析 + 过期判定 | 逐行对齐 RN `lib/auth/jwt.ts`，阈值 **5 分钟** |
+| `ShellTokenStore` | token 真值 + single-flight 刷新 | 见下方三条语义 |
+| `Generations` | 双轨闸门 | `auth` / `mutation` **互不替代** |
+| `AuthStateHub` | 登录态订阅 | W2 五 Tab 直接用 |
+| `MmkvTokenPersistence` | 读写 `token-storage` | 裸字符串形态，只碰这一个 key |
+| `RefreshTokenApi` | `POST /auth/refresh_token` | `token` header（非 Bearer）+ envelope |
+
+**三条照搬 RN 而非重新设计的语义**（偏差会产生只在特定时间窗出现的问题）：
+
+1. **已过期 token 不走刷新**。RN `isJwtExpiringSoon` 的条件是
+   `exp - now > 0 && < 300` —— 已过期返回 **false**。这类 token 被当作"未临过期"
+   原样返回，发请求得 401，再走 authRejected 兜底。看着像 bug，是现网已验证行为。
+   **`JwtTest` 有一条专测它**，防止有人"修正"成主动刷新。
+2. **刷新失败但旧 token 未过期 → 返回旧 token**（`jwt.ts:127-129`）。
+3. **不重试**。RN 侧没有重试，加了会让登录态在网络抖动时行为分叉。
+
+**401 归属判定是本步最高危项**：`notifyServerAuthRejectedForToken` 只在被拒 token
+仍是当前 token 时登出。旧账号迟到的 401 若无条件登出，会把刚登录的新账号踢下线 ——
+用户看到"刚登录就被登出"且无法复现。已用测试钉死，另有一条断言**任何日志都不含 token**。
+
+**`logout()` 与 `clearToken()` 刻意不同**：前者清 token + 收栈 + 广播一次 loggedOut；
+后者只清 token。合并两者会让删号流程在中途被强行弹栈。
+
+#### 顺带修掉的桥缺陷（跨仓，tipsy-app 侧）
+
+`TipsyAuthModule` 的 6 个 UI/导航方法在 `AsyncFunction` 里**直接调 provider，
+无主线程约束** —— 而 Expo 的 `AsyncFunction` 默认在后台线程执行。
+iOS 契约对同组方法全标了 `@MainActor`（已核实 `TipsyAuthModule.swift`），Android 漏了。
+这是 PR #1614 的审查机器人提的 REQUEST_CHANGES，此前未处理。
+
+处理：契约加 `@MainThread` 标注，桥侧统一经 `dispatchOnMain` 切主线程，
+新增 `MainThreadDispatchTest`（6 条）。**用 `withContext` 而非 `Handler.post`** ——
+后者发射后不管，JS 的 await 会在导航真正发生前 resolve。
+
+⚠️ **`logout()` 在契约里不是 `@MainThread`**（它主要做存储清理），但它要收栈，
+所以**自己切主线程**。桥的 `onMain` 只覆盖标注过的方法，不会替它做。
+
+#### 三处踩到的「假绿色」诱惑（都已按方案 §5.4 拒绝）
+
+| 遇到什么 | 诱惑 | 实际做法 |
+| --- | --- | --- |
+| `android.util.Base64` JVM 单测抛 stub 异常 | `returnDefaultValues = true` | `Jwt` 自带 base64url 解码（`java.util.Base64` 要 API 26 > minSdk 24） |
+| `android.util.Log` 同样抛 | 同上 | provider 注入 `Logger` 抽象，顺带让日志可断言 |
+| token 判定用真实系统时钟 | 测试跟着改时间 | 注入 `nowSeconds` —— 否则"刷新中过期"这类分支根本测不了 |
+
+`returnDefaultValues` 会让**所有**未 mock 的 Android API 静默返回默认值，
+是方案 §5.4 点名的假绿色（§2.12 为 `org.json` 记过同一决定）。
+
+#### coroutines 版本是耦合约束，不是普通依赖
+
+lint 硬门抓到新增的 `kotlinx-coroutines-test` 有更新版可用。**没有升**：
+`expo-modules-core/android/build.gradle:191-192` 用 `api` 暴露 coroutines **1.7.3**，
+那是壳运行时实际加载的版本。声明更高版本会经 Gradle 版本冲突解析**把整个 RN
+运行时的 coroutines 顶上去** —— 抬升 RN 生态运行时依赖不属 W1 范围。
+已钉在 `libs.versions.toml` 并按 mmkv 同样的方式 `#noinspection` 压制。
+**lint-baseline 未新增任何条目**（仍 19 条）。
+
+#### 新增的 BuildConfig 字段
+
+`API_BASE_URL` 按 build type 注入（debug/debugOptimized → dev，release → prod），
+值与 `tipsy-app` 的 `.env.*` 一致。**壳与 RN Surface 必须命中同一后端** ——
+不一致会让原生页与 Surface 看到不同数据，且两边都不报错。
+这不是凭据，是公开端点；真凭据仍走 CI secret（方案 §12.7）。
+注意 RN plugin 引入的 `debugOptimized` 也要给值，否则编译不过。
+
+#### P1 未做的（明确边界）
+
+- `requestLogin()` 仍未实现（W2 原生 Login 页）—— debug 抛、release 记 error
+- **SecureStore 兜底读未做**（P2）：覆盖升级设备上 SecureStore 里的 token
+  目前读不出来，那批用户会被当作未登录。**这是已知缺口，不是 bug**
+- `mutationGeneration` 已建但**无消费方** —— 它的使用点（ChatList 左滑删除/置顶、
+  Profile 卡片菜单）都在 W3
+- 权限总数仍 **51 条**，未因本步新增
+
 **顺带修掉一处「假绿色」诱惑**:`android.jar` 里的 `org.json` 是抛异常的 stub,
 JVM 单测会全红。**没有**用 `testOptions.unitTests.returnDefaultValues = true` 去绕 ——
 那会让所有未 mock 的 Android API 静默返回默认值,正是方案 §5.4 点名的假绿色。
@@ -407,8 +491,8 @@ JVM 单测会全红。**没有**用 `testOptions.unitTests.returnDefaultValues =
 
 | 能力 | 状态 | 落地处 |
 | --- | --- | --- |
-| Auth 所有权 | 🔴 未开始 | 需 §2.1 桥 + §2.4 迁移 |
-| `tipsy-auth` Android 实现 | 🔴 不存在 | `modules/tipsy-auth` 仅 apple |
+| Auth 所有权 | 🟢 **壳已是 owner** | `shell/auth/`（§2.13）。刷新/登出/401 归属已实现；**历史 token 迁移未完**（P2） |
+| `tipsy-auth` Android 实现 | 🟢 **已实现** | `modules/tipsy-auth/android/`（12 个必须方法 + 主线程约束），§2.11 / §2.13 |
 | 网络层 | 🔴 未开始 | — |
 | i18n | 🔴 未开始 | — |
 | Router / 深链 | 🔴 未开始 | — |

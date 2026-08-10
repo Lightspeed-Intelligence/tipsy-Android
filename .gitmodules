@@ -1,4 +1,7 @@
 [submodule "tipsy-app"]
 	path = tipsy-app
 	url = git@github.com:Lightspeed-Intelligence/tipsy-app.git
-	branch = release/1.4.5
+	# 迁移主分支：tipsy-app 侧的 Android 壳相关改动一律落在这里
+	# （项目 owner 2026-08-10 决定）。不再从 release/1.4.5 跟踪 ——
+	# 那条分支不含 modules/tipsy-auth 的 android 实现。
+	branch = feat/android-native
