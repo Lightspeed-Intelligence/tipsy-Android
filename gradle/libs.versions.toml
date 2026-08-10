@@ -55,6 +55,12 @@ mmkv = { module = "io.github.zhongwuzw:mmkv", version.ref = "mmkv" }
 # 所有未 mock 的 Android API 静默返回默认值，是方案 §5.4 点名的「假绿色」。
 json = { module = "org.json:json", version = "20260719" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+# ⚠️ **不声明 okhttp 本体**：RN 自己就带（实测依赖树解析到 4.12.0），
+# 壳与 RN 必须共享同一个 OkHttpClient —— 各起一套会让连接池/DNS/TLS session
+# 变成两份，且「同一后端两条链路」的问题难查。
+# mockwebserver 是测试专用，版本跟 RN 解析出的 okhttp 对齐，避免协议行为差异。
+#noinspection NewerVersionAvailable
+okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver", version = "4.12.0" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 androidx-fragment-ktx = { group = "androidx.fragment", name = "fragment-ktx", version.ref = "fragment" }

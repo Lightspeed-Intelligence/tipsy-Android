@@ -6,7 +6,8 @@
 > **W1 进行中** —— 细化方案见 [`../architecture/android-w1-plan.md`](../architecture/android-w1-plan.md)。
 > **P0 桥已接通**（§2.11）｜ **P1 auth 契约已完成**（§2.13）｜ **P2 机制已验、兜底推迟**（§2.12）
 > ｜ **P2 剩余 + P3 已决定合并推迟到上线前**（2026-08-10，见 W1 计划 §5.6）
-> ｜ **当前在做 P4/P5/P6**（Router / i18n / network，可并行）｜ P7-P9 未开始
+> ｜ **P4 Router 已完成**（含真机验证）｜ **P6 network 已完成**（§2.14）
+> ｜ **P5 / P7 / P8 / P9 未开始**
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
@@ -16,7 +17,7 @@
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost）+ `MainActivity`（Compose 原生根）+ `RNSurfaceFragment`（**仍是 36 行 stub**）+ `auth/`（6 个类，token 真值）+ `bridge/ShellAuthProvider`。**仍是零业务代码。**
 - **submodule**：pin `56c4bbfa7`（分支 `feat/tipsy-auth-android`，**未合进 main/release**，按约定靠子模块指针引用），`node_modules` 已装（1812 包）。
 - **已验证**：三 flavor debug 构建通过、applicationId 正确、JS bundle 内嵌、51 个 project autolink、**Surface 两种 bundle 来源均可挂载**（§2.6）、**MMKV 互操作**（§2.12）、**auth 契约单测 62 条**（§2.13）。
-- **不存在**：五 Tab、Router、i18n、network 层、Sentry、core/feature 模块、**G3 nightly**（G1 已激活，但三 flavor 全量与 release 打包仍无自动防线）。
+- **不存在**：五 Tab、i18n、Sentry、core/feature 模块、**G3 nightly**（G1 已激活，但三 flavor 全量与 release 打包仍无自动防线）。Router 与 network 层已建（§2.14），但**只有 ChatDetail 一个目标启用**。
 
 ## 1. 波次状态
 
@@ -597,13 +598,104 @@ JVM 单测会全红。**没有**用 `testOptions.unitTests.returnDefaultValues =
 那会让所有未 mock 的 Android API 静默返回默认值,正是方案 §5.4 点名的假绿色。
 改为引入真实 `org.json:json` 测试依赖。
 
+### 2.14 W1-P6：network 层（已完成）
+
+`shell/network/` 六个类，**单测 46 条**（连同既有共 **156 条**，skipped=0）。
+
+| 类 | 职责 |
+| --- | --- |
+| `AuthMode` | 三鉴权模式枚举 |
+| `ApiClient` | OkHttp 请求 + header + envelope 解析 |
+| `ApiEnvelope` | `{code,msg,data}` 与已知业务码 |
+| `ApiException` | 分型异常（业务码保持可分辨） |
+| `ApiErrorGate` | 401/402 唯一汇聚点 + 独立防抖 |
+| `ScalarCoercion` | 标量漂移容错 |
+| `LaneHeader` | BOE 泳道 header（含安全白名单） |
+
+#### 选型：用 OkHttp，**不引 Retrofit**
+
+OkHttp **已在依赖树里** —— RN 自己就用它，实测三个来源（3.14.9 / 3.9.1 / 4.9.2）
+全部解析到 **4.12.0**。所以这不是新增依赖；坚持用 `HttpURLConnection` 也省不了体积。
+
+且壳与 RN **共享同一个 `OkHttpClient`**（经反射取 `OkHttpClientProvider`，
+失败则退化为自建、不抛）。各起一套会让连接池 / DNS 缓存 / TLS session 变成两份，
+还会让「同一后端两条链路」的问题难查（如 RN 侧能连、原生页超时）。
+
+不引 Retrofit 的理由：
+1. **统一 envelope 与它的模型冲突** —— HTTP 200 + `code != 0` 是常见组合，
+   接进去要写 `CallAdapter` + `Converter`，代码量不比手写少还多一层抽象
+2. **三鉴权模式**的 `OPPORTUNISTIC` 语义要在 Interceptor 里做，与 Retrofit 无关
+3. **标量漂移容错**要自定义反序列化，Retrofit 只是转交 Moshi/Gson
+
+W1 只需一个 endpoint（`/auth/refresh_token` 已在 P1 写好且**刻意不走本层** ——
+它是 auth 前置，走这里会形成「取 token → 刷新 → 取 token」循环）。
+W3 若 API 面大到手写吃力，届时业务形态已清楚再评估。
+
+#### ⚠️ `axiosPublic` 不等于「永不带 token」
+
+三模式存在的**唯一理由**。iOS 把 `/search/character_search` 实现成
+`authorized: false`，结果**最近搜索历史永久为空** —— 那个接口带 token 才会
+把搜索词记入历史。不报错、不崩溃，功能静默失效。
+
+正确映射：`axiosPublic` → `OPPORTUNISTIC`（**有 token 就带，没有也照发**），
+不是 `NONE`。已用 `ApiClientTest` 的真实 HTTP 往返钉死「实际发出了什么 header」。
+
+#### 逐条对齐 RN 的实测细节
+
+- **token 走 `token` header**，不是 `Authorization: Bearer`
+- header 大小写在 RN 内部就不一致：`axios.ts:116` 是 `Platform`（大写），
+  `apis/auth.ts:55` 是 `platform`（小写）。两者都在现网跑 → 后端不区分大小写。
+  壳照抄主路径（`axios.ts`）的写法
+- **业务码 9（角色卡超限）不在 RN 的 `AppRespCode` 枚举里** ——
+  它是 `axios.ts:221` 的字面量。别因为「枚举里没有」就当它不存在
+- `REQUIRED` 无 token 时**不发请求**（对齐 `axiosAuth`）：发一个必然 401 的
+  请求毫无意义，还会触发 auth 兜底造成误登出路径
+
+#### lane header 的白名单是**安全约束**
+
+`lane.ts:43-68` 的判定要全部满足：https + 无 userInfo + 端口 443/空 + host 白名单。
+目的是**防 lane 值泄漏到第三方域**（lane 名暴露内部测试环境标识）。
+
+⚠️ **两个 host 的匹配规则不对称**（实测 `lane.ts:59-63`）：
+`api.dev.fantacy.live` 含子域，`api-studio.infra.fantacy.live` **仅精确匹配**。
+统一成「都允许子域」会扩大泄漏面；统一成「都精确」会让 API 子域静默失去泳道。
+
+（写这段时我一开始把 studio host 猜成 `studio.dev.fantacy.live`，实际是
+`api-studio.infra.` —— **不要凭 base URL 推断常量**。）
+
+#### 401/402 汇聚与防抖
+
+两个入口（原生页经本层 / RN Surface 经桥）**汇到同一 handler**，
+否则防抖各算一套，用户会看到弹两次登录页。
+
+- **不带 token 的 401 不得触发登出**（对齐 `axios.ts:32-33`）：
+  无法判断会话归属，登出会踢掉刚登录的新账号
+- **401 与 402 各自独立防抖**：合用一个窗口会让 401 后 3 秒内的付费墙不弹
+
+#### P6 接线时踩到并修掉的一个真 bug
+
+`notifyServerPaymentRequired()` 原本标着「W1-P6 未实现」，
+而 `notImplemented` 在 debug 下**会抛** —— 一旦接上 `ApiErrorGate`，
+**每次收到 402 都会让 App 崩**。已实现为经 Router 导航（目标 Surface 属 W4，
+Router 会明确拒绝并记日志，不静默）。`ShellAuthProviderTest` 加了一条
+在 `isDebug = true` 下的断言防止改回去。
+
+#### 本步同时收口的
+
+`apiBaseURL()` 从返回 null 改为**壳侧真值**（`BuildConfig.API_BASE_URL`）。
+RN 的 `constants/api.ts` 会优先用它 —— 保证原生页与 Surface 命中同一后端。
+
+新增测试依赖 `okhttp3:mockwebserver:4.12.0`（版本与 RN 解析出的 okhttp 对齐）。
+**用真实 HTTP 往返而非 mock OkHttp 接口** —— 后者只会验到自己写的 stub，
+验不了「实际发出了什么 header」。
+
 ## 3. 横切能力
 
 | 能力 | 状态 | 落地处 |
 | --- | --- | --- |
 | Auth 所有权 | 🟢 **壳已是 owner** | `shell/auth/`（§2.13）。刷新/登出/401 归属已实现；**历史 token 迁移未完**（P2） |
 | `tipsy-auth` Android 实现 | 🟢 **已实现** | `modules/tipsy-auth/android/`（12 个必须方法 + 主线程约束），§2.11 / §2.13 |
-| 网络层 | 🔴 未开始 | — |
+| 网络层 | 🟢 **已完成** | `shell/network/`（§2.14）。OkHttp（与 RN 共享 client）+ 三鉴权模式 + envelope + 401/402 汇聚 + 标量漂移容错。**未引 Retrofit** |
 | i18n | 🔴 未开始 | — |
 | Router / 深链 | 🔴 未开始 | — |
 | RN Surface 宿主 | 🟡 骨架就位 | `RNSurfaceFragment`（继承官方 `ReactFragment`，共享单 ReactHost）；**instanceId / 首帧协议 / onSurfaceReappeared 尚未实现**，见方案 §4.3 |

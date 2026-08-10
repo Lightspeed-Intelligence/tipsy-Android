@@ -47,6 +47,12 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
         app.onPopSurfaceRequested = { instanceId ->
             runOnUiThread { popSurface(instanceId) }
         }
+        // 402 兜底与桥的 openGemsPurchase 都汇到 Router（W1-P6）
+        app.onNavigateGemsPurchaseRequested = { params ->
+            runOnUiThread {
+                router.handle(AppRoute.GemsPurchase(params), AppRouter.Source.BRIDGE)
+            }
+        }
 
         router = AppRouter(
             navigator = ShellNavigator(),
@@ -102,7 +108,10 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
     }
 
     override fun onDestroy() {
-        (application as TipsyApplication).onPopSurfaceRequested = null
+        (application as TipsyApplication).let {
+            it.onPopSurfaceRequested = null
+            it.onNavigateGemsPurchaseRequested = null
+        }
         // 必须 dispose：Router 订阅了 AuthStateHub（进程级），
         // 不解绑会让已销毁的 Activity 收到登录事件 → 往死掉的 FragmentManager 提交事务
         router.dispose()
