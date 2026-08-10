@@ -1,5 +1,17 @@
 # Android 壳的 G1 fast gate（方案 §5.4）。
 #
+# ⚠️ **当前未激活**：只留了 workflow_dispatch（手动触发），没有 pull_request / push。
+#    原因是本仓还没有 PAT_TOKEN secret —— 没有它就拉不到私有子模块 tipsy-app，
+#    而 npm ci / autolinking / assemble / 单测全都依赖它，等于一步也跑不了。
+#    自动触发会让主干上挂一个**永久红**的 workflow，比没有 CI 更糟（红久了没人看）。
+#
+#    **启用步骤**（token 到位后）：
+#      1. 在本仓 Settings → Secrets → Actions 添加 PAT_TOKEN
+#         （需对 tipsy-app 有读权限；与 tipsy-iOS 同构，那个 PAT 不属于 @WishQi 个人账号，
+#          其 fine-grained / classic 列表均为空，故需另行取得或新建）
+#      2. 把下面 on: 里注释掉的 pull_request / push 两段放开
+#      3. 手动 workflow_dispatch 跑一次确认绿，再依赖它做门禁
+#
 # 与 tipsy-app / tipsy-iOS 的 ci.yml 分开：那些是 agentic workflow（issue/PR 智能体），
 # 本文件是纯构建门禁，职责不同、失败含义也不同。
 #
@@ -9,17 +21,18 @@
 name: Android CI
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-    paths:
-      - 'app/**'
-      - 'gradle/**'
-      - '*.gradle'
-      - 'gradle.properties'
-      - '.github/workflows/android-ci.yml'
-      - '.gitmodules'
-  push:
-    branches: [main]
+  # ── 启用时放开以下两段（见文件头「启用步骤」）──
+  # pull_request:
+  #   types: [opened, synchronize, reopened]
+  #   paths:
+  #     - 'app/**'
+  #     - 'gradle/**'
+  #     - '*.gradle'
+  #     - 'gradle.properties'
+  #     - '.github/workflows/android-ci.yml'
+  #     - '.gitmodules'
+  # push:
+  #   branches: [main]
   workflow_dispatch:
 
 concurrency:

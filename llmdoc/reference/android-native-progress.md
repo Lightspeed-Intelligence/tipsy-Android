@@ -1,6 +1,7 @@
 # Tipsy Android 原生化迁移：现状（唯一状态真值）
 
-> 更新：2026-08-08 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门 + G1 CI）
+> 更新：2026-08-08 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
+> G1 CI 已写但**未激活**（缺 `PAT_TOKEN`，见 §2.10）
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
@@ -155,7 +156,7 @@ W0 验证刻意改用 `directApk` flavor（包名 `ai.lightspeed.tipsy` 未被�
 4. ~~lint 接入~~ ✅ 见 §2.9（detekt 仍未接）
 5. ~~`sdkmanager` 可用性~~ ✅ 已装 cmdline-tools 12.0（`~/Library/Android/sdk/cmdline-tools/latest`）
 6. ~~API 24 冒烟~~ ✅ 见 §2.3.1
-7. ~~CI~~ ✅ 见 §2.10
+7. **CI 已写但未激活** —— workflow 文件已进主干，只留手动触发；缺 `PAT_TOKEN` secret，见 §2.10
 8. detekt 未接（lint 已是硬门，detekt 属增量）。
 7. ~~release 产物验证~~ ✅ 已完成，见 §2.7
 
@@ -231,13 +232,23 @@ W1 起每次新增依赖都应看一眼这个测试的 diff。
 但本工程用 Hermes、`jsc-android` 未安装也无对应仓库，任何需要解析它的任务
 （实测 lint 的 `generate*LintModel`）都会失败。已在根 `build.gradle` 全局排除。
 
-### 2.10 G1 fast gate CI（已完成）
+### 2.10 G1 fast gate CI（**已写，未激活**）
 
 `.github/workflows/android-ci.yml`。与 `tipsy-app` / `tipsy-iOS` 的 `ci.yml` **分开** ——
 那些是 agentic workflow（issue/PR 智能体），本文件是纯构建门禁。
 
 序列：**lint（硬门）→ assemble googlePlayDebug → release manifest → 单测**。
-本机模拟整条 **1m59s**。
+本机模拟整条 **1m59s**（CI 上未实跑过）。
+
+> ⚠️ **当前只保留 `workflow_dispatch`（手动触发），没有 `pull_request` / `push`。**
+> 本仓还没有 `PAT_TOKEN`，拉不到私有子模块 → `npm ci` / autolinking / assemble / 单测
+> 全都跑不了。自动触发只会让主干挂一个**永久红**的 workflow，比没有 CI 更糟。
+> 启用步骤写在 workflow 文件头：配 secret → 放开 `on:` 里注释的两段 → 手动跑一次确认绿。
+>
+> **这意味着 G1 目前不构成任何门禁** —— 合并前的检查仍然靠人工在本地跑
+> `./gradlew :app:lintDirectApkDebug :app:assembleGooglePlayDebug
+> :app:processGooglePlayReleaseMainManifest :app:testGooglePlayDebugUnitTest`。
+> 按方案 §5.4 的纪律，这属于 `NOT RUN`，**不等于通过**。
 
 **范围取舍**：assemble 只跑单个 flavor，三 flavor 全量与 release 打包留 G3 nightly ——
 PR 门要快。**代价是 flavor 专属与 release 专属问题不由 G1 拦**（§2.8 抓到的 release
@@ -255,7 +266,12 @@ PR 门要快。**代价是 flavor 专属与 release 专属问题不由 G1 拦**�
 
 CI 侧再加一道防线：显式校验 `MergedManifestTest` 的 `skipped=0`，跳过即失败。
 
-**前置条件：本仓需自己配 `PAT_TOKEN` secret。**
+**前置条件：本仓需自己配 `PAT_TOKEN` secret（尚未完成，故 CI 未激活）。**
+
+⚠️ **那个 PAT 不在 @WishQi 的个人账号下** —— fine-grained 与 classic 两个列表均为空。
+但 `tipsy-iOS` 的 `eas-build.yml`（唯一真正用它拉子模块的 workflow）**2026-08-07 仍成功运行**，
+说明该 PAT 有效且属于 org 内其他成员（org 共 30 人）。
+所以要么向持有者取得该值，要么新建一个有 `tipsy-app` 读权限的 token。
 
 secret 是**按仓库**隔离的，没有跨仓引用语法 —— `tipsy-iOS` 上的同名 secret 在本仓
 workflow 里不可见；内置 `GITHUB_TOKEN` 也只对本仓有权限，读不了私有的 `tipsy-app`。
