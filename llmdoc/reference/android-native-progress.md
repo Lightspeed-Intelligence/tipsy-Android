@@ -1,7 +1,7 @@
 # Tipsy Android 原生化迁移：现状（唯一状态真值）
 
 > 更新：2026-08-10 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
-> G1 CI 已写但**未激活**（缺 `PAT_TOKEN`，见 §2.10）
+> **G1 CI 已激活**（2026-08-10，`PAT_TOKEN` 已配，首次真绿，见 §2.10）
 >
 > **W1 进行中** —— 细化方案见 [`../architecture/android-w1-plan.md`](../architecture/android-w1-plan.md)。
 > **P0 桥已接通**（§2.11）｜ **P1 auth 契约已完成**（§2.13）｜ **P2 机制已验、迁移链未接**（§2.12）
@@ -15,7 +15,7 @@
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost）+ `MainActivity`（Compose 原生根）+ `RNSurfaceFragment`（**仍是 36 行 stub**）+ `auth/`（6 个类，token 真值）+ `bridge/ShellAuthProvider`。**仍是零业务代码。**
 - **submodule**：pin `56c4bbfa7`（分支 `feat/tipsy-auth-android`，**未合进 main/release**，按约定靠子模块指针引用），`node_modules` 已装（1812 包）。
 - **已验证**：三 flavor debug 构建通过、applicationId 正确、JS bundle 内嵌、51 个 project autolink、**Surface 两种 bundle 来源均可挂载**（§2.6）、**MMKV 互操作**（§2.12）、**auth 契约单测 62 条**（§2.13）。
-- **不存在**：五 Tab、Router、i18n、network 层、Sentry、core/feature 模块、CI（已写未激活）。
+- **不存在**：五 Tab、Router、i18n、network 层、Sentry、core/feature 模块、**G3 nightly**（G1 已激活，但三 flavor 全量与 release 打包仍无自动防线）。
 
 ## 1. 波次状态
 
@@ -183,7 +183,7 @@ W0 用 `directApk` flavor 避免包名冲突这一点仍然有效。
 4. ~~lint 接入~~ ✅ 见 §2.9（detekt 仍未接）
 5. ~~`sdkmanager` 可用性~~ ✅ 已装 cmdline-tools 12.0（`~/Library/Android/sdk/cmdline-tools/latest`）
 6. ~~API 24 冒烟~~ ✅ 见 §2.3.1
-7. **CI 已写但未激活** —— workflow 文件已进主干，只留手动触发；缺 `PAT_TOKEN` secret，见 §2.10
+7. ~~CI 已写但未激活~~ ✅ **已激活并首次真绿**（2026-08-10），见 §2.10
 8. detekt 未接（lint 已是硬门，detekt 属增量）。
 7. ~~release 产物验证~~ ✅ 已完成，见 §2.7
 
@@ -250,32 +250,109 @@ W1 起每次新增依赖都应看一眼这个测试的 diff。
 `values/styles.xml` 留空壳 style，`values-v35/styles.xml` 放该属性。
 **这是真修复，不是记进 baseline。**
 
-`app/lint-baseline.xml` 记录 **19 条**既有问题（9 条 `GradleDependency`、2 条
-`UseTomlInstead`、2 条 `NewerVersionAvailable`、2 条 `AndroidGradlePluginVersion` 等）。
-**baseline 是技术债台账而非豁免** —— 多数是「有更新版本可用」类提示，与 §3.3
-钉死工具链的决定冲突，清理属后续波次。
+#### ⚠️ baseline 对 app 模块外的文件**不可移植**（2026-08-10 CI 首跑实测订正）
+
+> 原记录称 baseline 有 **19 条**。那个数字只在本机成立 —— CI 上只有 5 条生效。
+
+lint 把 app 模块**外**的文件（`gradle/libs.versions.toml`、
+`gradle/wrapper/gradle-wrapper.properties`）的 location 记成
+`$HOME/Developer/Tipsy-Android/...` 这种**机器相关的绝对路径**，
+CI 的 checkout 在 `/home/runner/work/...`，**一条都匹配不到**。
+
+| 环境 | baseline 过滤 | 新增 | 结果 |
+| --- | --- | --- | --- |
+| 本机（订正前） | 18 | 0 | ✅ 绿 |
+| CI（订正前） | 5 | **13** | ❌ 硬门失败 |
+
+13 + 5 = 18 正好对上 —— 不是新增了问题，是那 13 条在 CI 上失效。
+
+**这类缺陷只有真在 CI 跑一次才会暴露**：本机永远绿，因为路径恰好匹配。
+§2.10 记的「本机模拟整条 1m59s」模拟不了它。
+
+**处理**：那 13 条全是「有新版可用」三类，与 §3.3 **刻意钉死工具链**的决定
+直接冲突（版本是 RN 0.81.4 的兼容事实，不是选型；`mmkv` 与 `coroutines` 更是
+与 RN 侧的**耦合约束**，升了会静默出错）。故在 `app/build.gradle` 显式
+`disable` 掉 `GradleDependency` / `AndroidGradlePluginVersion` /
+`NewerVersionAvailable`，**而不是重新生成一份仍然不可移植的 baseline**。
+
+baseline 重新生成后只剩 **5 条**，全部是 app 模块内的相对路径、可移植：
+`RedundantLabel` / `ChromeOsAbiSupport` / `MergeRootFrame` / 2 条 `UseTomlInstead`。
+**本机与 CI 现在都是「5 条过滤、0 新增」。**
+
+⚠️ **代价（明确写下，避免日后当成没人提醒过）**：真正需要关注的依赖升级
+**包括安全更新**不再由 lint 提醒，改为跟随 RN 侧节奏人工评估。
+若要恢复提醒，应改用「只对 app 模块内依赖生效」的方式，
+**不要把 baseline 退回不可移植状态**。
+
+**baseline 仍是技术债台账而非豁免** —— 剩下 5 条的清理属后续波次。
 
 顺带修掉：`expo-dev-client` 声明了 `org.webkit:android-jsc:+` 这个可选依赖，
 但本工程用 Hermes、`jsc-android` 未安装也无对应仓库，任何需要解析它的任务
 （实测 lint 的 `generate*LintModel`）都会失败。已在根 `build.gradle` 全局排除。
 
-### 2.10 G1 fast gate CI（**已写，未激活**）
+### 2.10 G1 fast gate CI（**已激活**，2026-08-10）
 
 `.github/workflows/android-ci.yml`。与 `tipsy-app` / `tipsy-iOS` 的 `ci.yml` **分开** ——
 那些是 agentic workflow（issue/PR 智能体），本文件是纯构建门禁。
 
-序列：**lint（硬门）→ assemble googlePlayDebug → release manifest → 单测**。
-本机模拟整条 **1m59s**（CI 上未实跑过）。
+序列：**lint（硬门）→ assemble googlePlayDebug → release manifest → 单测
+→ `:tipsy-auth` 桥单测 → `skipped=0` 守卫**。
 
-> ⚠️ **当前只保留 `workflow_dispatch`（手动触发），没有 `pull_request` / `push`。**
-> 本仓还没有 `PAT_TOKEN`，拉不到私有子模块 → `npm ci` / autolinking / assemble / 单测
-> 全都跑不了。自动触发只会让主干挂一个**永久红**的 workflow，比没有 CI 更糟。
-> 启用步骤写在 workflow 文件头：配 secret → 放开 `on:` 里注释的两段 → 手动跑一次确认绿。
->
-> **这意味着 G1 目前不构成任何门禁** —— 合并前的检查仍然靠人工在本地跑
-> `./gradlew :app:lintDirectApkDebug :app:assembleGooglePlayDebug
-> :app:processGooglePlayReleaseMainManifest :app:testGooglePlayDebugUnitTest`。
-> 按方案 §5.4 的纪律，这属于 `NOT RUN`，**不等于通过**。
+**首次真绿**：[run 31373202424](https://github.com/Lightspeed-Intelligence/tipsy-Android/actions/runs/31373202424)
+—— 22 步全过，**36 分钟**（冷缓存）。核实的输出：
+
+```
+tipsy-app pin=a4eb9055d actual=a4eb9055d
+Lint found no new issues (and 5 errors filtered by baseline)
+MergedManifestTest: 5 条，跳过 0 条
+LiveAppSafetyTest: 3 条，跳过 0 条
+```
+
+`pull_request` / `push` 自动触发已生效（开 PR #11 时自动起了一次 run，
+非手动触发）—— **G1 从此构成真门禁**。
+
+> ⚠️ **36 分钟只有一个数据点**，且是冷缓存首跑。后续有 Gradle 缓存应更快，
+> 但**不做承诺**。原记录的「本机模拟 1m59s」不可用作 CI 耗时参考 ——
+> 它模拟的只是 Gradle 那几步，不含 checkout / `npm ci` / NDK 安装。
+
+#### 激活过程抓出三个缺陷（**全是本机绿、CI 红的类型**）
+
+| # | 缺陷 | 症状的迷惑之处 |
+| --- | --- | --- |
+| 1 | `PAT_TOKEN` 存了**空值** | `gh secret set NAME` 无值时靠 TTY 弹提示；非交互环境从空 stdin 读了空串，**且正常退出** |
+| 2 | `git submodule sync` **覆盖** URL → 仍走 SSH | 报 `Permission denied (publickey)`，**看着像凭据没配**，实际凭据正常、只是没被用上 |
+| 3 | lint baseline 用 `$HOME` 绝对路径 | 见 §2.9 订正 |
+
+**#2 的根因值得记住**：`sync` 会把 local config 的 url 覆盖回 `.gitmodules`
+里的值（SSH URL）。W0 原先的顺序是「先 `git config` 设 HTTPS → 再 `sync`」，
+等于自己撤销刚设的值。已本地复现验证：调换顺序后走 HTTPS（用假 token 报的是
+HTTPS 认证失败而非 `publickey`，证明链路确实换了）。
+
+iOS 用全局 `insteadOf` 改写，**不依赖 local config**，所以不受影响 ——
+「与 iOS 同构」这个判断**掩盖了差异**：更窄的做法需要更小心的顺序。
+
+顺带加两条断言：子模块 SHA 必须等于 pin、工作树非空（`package.json` 存在）。
+`git submodule update` 在某些失败模式下会「成功」但留下空目录，
+那样要到 `npm ci` 才炸，**报错离根因很远**。
+
+**这三个都是 W0 遗留**（#2/#3）或配置环节引入（#1），在 CI 真跑之前一直藏着。
+方案 §5.4 的「`NOT RUN` 不等于通过」在这里得到三次实证。
+
+#### `:tipsy-auth` 桥单测此前**完全不在 CI 里**（已补）
+
+那 15 条测试住在 submodule 里，但**它是壳的一部分** —— 契约、registry、
+主线程切换都由本仓的壳消费。其中 `LiveAppSafetyTest` 守的是本项目**最高危**的
+失败模式：模块会被 autolink 进现网三个 RN 包，那里没有壳、不注册 provider，
+此时 `isShellHost()` 必须为 false；若为 true，现网 App 把 auth 交给一个不存在的壳
+→ **直接掉登录**。这条断言不进 CI 等于没有防线。
+
+`skipped=0` 守卫从只覆盖 `MergedManifestTest` 扩成同时覆盖两个 suite，
+并加了 `tests=0` 检查（一条没跑也是假绿）。守卫逻辑已验证在
+「文件缺失 / 有跳过 / 零测试」三种场景下**确实会失败** ——
+一个只会通过的守卫没有价值。
+
+`pull_request` 的 `paths` 含 **`tipsy-app`**：桥模块改动不动本仓任何 path，
+但 pin 前进一定伴随这个文件变化。漏了它会让「只改桥」的 PR 不触发 CI。
 
 **范围取舍**：assemble 只跑单个 flavor，三 flavor 全量与 release 打包留 G3 nightly ——
 PR 门要快。**代价是 flavor 专属与 release 专属问题不由 G1 拦**（§2.8 抓到的 release
@@ -293,7 +370,7 @@ PR 门要快。**代价是 flavor 专属与 release 专属问题不由 G1 拦**�
 
 CI 侧再加一道防线：显式校验 `MergedManifestTest` 的 `skipped=0`，跳过即失败。
 
-**前置条件：本仓需自己配 `PAT_TOKEN` secret（尚未完成，故 CI 未激活）。**
+**前置条件：本仓自己的 `PAT_TOKEN` secret —— ✅ 已配（2026-08-10）。**
 
 ⚠️ **那个 PAT 不在 @WishQi 的个人账号下** —— fine-grained 与 classic 两个列表均为空。
 但 `tipsy-iOS` 的 `eas-build.yml`（唯一真正用它拉子模块的 workflow）**2026-08-07 仍成功运行**，
@@ -312,9 +389,35 @@ workflow 里不可见；内置 `GITHUB_TOKEN` 也只对本仓有权限，读不�
 它是当初为 EAS 建的残留,**不是在用的链路**。iOS 仓的 secrets 里也没有任何 SSH 私钥。
 别误以为 SSH/deploy key 那条路在本环境验证过。
 
-当前做法是**同一 PAT 值在 `tipsy-iOS` 与本仓各存一份**。
-⚠️ **轮换该 PAT 时必须两个仓都改**，漏改一处会让对应仓 CI 在子模块那步失败。
-若 Android 侧后续要加更多 workflow，值得改成 org secret + 授权本仓，只留一处真值。
+#### 凭据现状（2026-08-10 订正，与原记录不同）
+
+> 原记录称「同一 PAT 值在 `tipsy-iOS` 与本仓各存一份，轮换必须两个仓都改」。
+> **这条已不适用。**
+
+本仓的 `PAT_TOKEN` 是**独立签发**的 classic token（只勾 `repo` scope，够拉私有子模块），
+**与 `tipsy-iOS` 的同名 secret 不是同一个值**。
+
+- ✅ **轮换本仓这个不影响 iOS，反之亦然** —— 比共用一个值更清晰、影响面更小
+- org secret 需 `admin:org` scope（当前账号没有，实测 403），故仍走 repo secret
+- 那个「iOS 的 PAT 不属于 @WishQi 个人账号」的旧结论不再是障碍：**不需要去找它的持有者取值**
+
+⚠️ **`gh secret set` 有一个会导致明文泄漏的坑（2026-08-10 真踩过）**：
+
+第一个参数是 secret 的**名字**，值必须经**交互提示或 stdin** 传入。
+把值直接写成第一个参数会创建一个**以 token 明文为名**的 secret ——
+而 **secret 的名字是可读的**（值不可读），等于当场泄漏。
+
+且 `gh secret set NAME` 不带值时靠 **TTY** 弹提示：**非交互环境下它从空 stdin
+读到空串、存进去、并正常退出**（退出码 0、无输出），看着像成功。
+症状是 CI 里 `PAT_TOKEN:` 后面空白。
+
+正确写法：
+```bash
+pbpaste | tr -d '\n' | gh secret set PAT_TOKEN --repo <owner>/<repo>
+```
+`tr -d '\n'` 必要 —— 复制时易带尾随换行，token 混入换行会认证失败且报错不提示原因。
+
+泄漏那次已吊销重签、删除错误条目，并验证旧 token 返回 401。
 
 技术细节：`.gitmodules` 用 SSH URL 而 CI 只有 HTTPS token，故 workflow 不用 checkout 的
 `submodules` 选项，而是手工把 submodule URL 换成带 token 的 HTTPS（只改本地配置，
@@ -327,7 +430,13 @@ commit**，浅拉只能拿到 tip、取不到 pin 的那个 commit，CI 会直�
 
 与 iOS 的一处有意差异：iOS 用 `git config --global ... insteadOf` 全局改写所有
 `git@github.com:` 前缀；本仓只改 `submodule.tipsy-app.url` 一项，范围更窄、不影响
-其他 SSH 操作，行为等价。
+其他 SSH 操作。
+
+⚠️ **但两者不是「行为等价」（原记录如此写，已订正）**：本仓的做法**依赖 local
+config**，而 `git submodule sync` 会把它覆盖回 `.gitmodules` 的 SSH URL ——
+所以**必须先 `sync` 再 `git config`**，顺序颠倒就静默退回 SSH。
+iOS 的 `insteadOf` 不依赖 local config，没有这个顺序约束。
+「与 iOS 同构」的判断曾**掩盖了这个差异**，见 §2.10 缺陷 #2。
 
 另：`cmake` 版本已钉进 `libs.versions.toml`（原先只有 `ndk`）。AGP 默认挑「已装的最高版」，
 本机与 CI 不一致会产生难复现的构建差异。workflow 从 catalog 读取并做空值检查 ——
@@ -503,7 +612,7 @@ JVM 单测会全红。**没有**用 `testOptions.unitTests.returnDefaultValues =
 | Sentry | 🔴 未开始 | — |
 | Widget | 🔴 未开始 | — |
 | OTA | 🔴 未开始 | 隔离方案见 §5.3。W0 已**显式禁用** expo-updates 资源任务（原因见 §2.2.2），W4 接入时需先解决其 projectRoot 推导 |
-| CI | 🔴 不存在 | W0 剩余项 |
+| CI | 🟡 **G1 已激活** | `.github/workflows/android-ci.yml`（§2.10）。**G3 nightly 未建** —— 三 flavor 全量与 release 打包无自动防线 |
 
 ## 4. Surface 验收矩阵
 
