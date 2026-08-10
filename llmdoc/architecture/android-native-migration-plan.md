@@ -323,6 +323,22 @@ reactNativeDir = reactNativeDirFromSource ?: File(
    > **验证方式**（复现 GUI 环境，比开 Studio 快）：
    > `env -i HOME=$HOME USER=$USER PATH="$(launchctl getenv PATH)" JAVA_HOME=<studio-jbr> ./gradlew --no-daemon projects`
    > 要复现「GUI 域也没有 node」的最坏情形，把 `PATH` 换成 `/usr/bin:/bin:/usr/sbin:/sbin`。
+   >
+   > **那段无效代码已删除（2026-08-10）**，换成 `settings.gradle` 里的**前置检查**：
+   > 若当前进程 `$PATH` 里找不到可执行的 `node`，**在 1 秒内失败**并给出可操作步骤
+   > （launchctl 命令带展开后的完整值 + `--stop` + **完全退出 Studio**）。
+   >
+   > 为什么改成「提前失败」而不是继续找兜底：裸 `node` 的调用点在
+   > `tipsy-app/node_modules`（禁止修改）且无覆盖入口，**壳侧没有任何合法手段能修好它**。
+   > 留一段静默失败的 hack 只会让人误以为有兜底，从而看不懂为什么还报错 ——
+   > 失败点会漂移到某个 plugin 内部，报出无上下文的 `Cannot run program "node"`
+   > （本次就是这样重现的：Studio 进程 PATH 是 `/usr/bin:/bin:/usr/sbin:/sbin`）。
+   >
+   > ⚠️ **最容易忽略的一点**：`launchctl setenv` 只影响**此后新启动**的进程。
+   > 已在跑的 Studio 继承的是**它自己启动那一刻**的环境 —— 所以 Sync、
+   > Invalidate Caches、乃至 `./gradlew --stop` 都不够，**必须 ⌘Q 退出 Studio 再打开**。
+   > 判断依据：`ps eww <studio-pid> | tr ' ' '\n' | grep ^PATH=` 看进程**实际**的 PATH，
+   > 而不是看 `launchctl getenv PATH`（后者是「新进程会拿到什么」，两者可能不一致）。
 
 **其余 Gradle 决定**：
 - **Groovy DSL**，全仓不混 `.gradle.kts`。Expo SDK 54 / RN 0.81.4 的 settings/root/app 模板与文档都以 Groovy 为基线，`autolinking_implementation.gradle` 本身就是 Groovy 脚本。**当前脚手架是 `.kts`，需要改写**。
