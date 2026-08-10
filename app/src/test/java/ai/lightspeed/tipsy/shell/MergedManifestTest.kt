@@ -165,6 +165,50 @@ class MergedManifestTest {
     }
 
     /**
+     * ⚠️ **通用社交 scheme 不得出现在 merged manifest 里**（W1-P4，计划 §6.3 审计结论）。
+     *
+     * RN 侧 `app.config.js:147-171` 给这五个 scheme 注册了 VIEW + BROWSABLE 的
+     * intentFilters。壳**刻意不声明**：全仓 25 处 `Linking.openURL` 没有任何一处
+     * 打开它们，注册只意味着「愿意接收入站 intent」——
+     * **收益为零，代价是五个通用 scheme 的入站劫持面**。
+     *
+     * 为什么值得一条断言：manifest merger 会把**依赖**的 intent-filter 合并进来
+     * （§2.8 的 `PreviewActivity` 就是这么进 release 的）。哪天某个 autolinked
+     * 模块带上 `fb://`，普通构建不会报错，只有这里能拦。
+     *
+     * ⚠️ 注意区分：`fb1819240725563515://` 这类**带 client id 的专属 scheme**
+     * 是 Facebook SDK 的正常要求，**不在**禁止范围 —— 只禁通用裸 scheme。
+     */
+    @Test
+    fun `不含通用社交 scheme 的 intent-filter`() {
+        val file = anyManifestOfBuildType("Debug")
+        assumeTrue("未找到任何 debug merged manifest", file != null)
+        val root = parse(file!!)
+
+        val forbidden = setOf("fb", "twitter", "discord", "instagram", "tiktok")
+        val found = mutableListOf<String>()
+
+        listOf("activity", "service", "receiver").forEach { tag ->
+            components(root, tag).forEach { component ->
+                directChildren(component, "intent-filter").forEach { filter ->
+                    directChildren(filter, "data").forEach { data ->
+                        val scheme = data.androidAttr("scheme") ?: return@forEach
+                        if (scheme.lowercase() in forbidden) {
+                            found += "${component.androidName()} → $scheme"
+                        }
+                    }
+                }
+            }
+        }
+
+        assertTrue(
+            "检测到通用社交 scheme 的 intent-filter（intent 劫持面）：$found —— " +
+                "见 W1 计划 §6.3。若确需从社交 App 回跳，用带 client id 的专属 scheme",
+            found.isEmpty(),
+        )
+    }
+
+    /**
      * 权限清单快照。
      *
      * 新权限往往是**依赖引入的**而非有意添加，且直接影响商店审核。
