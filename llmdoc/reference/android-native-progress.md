@@ -4,8 +4,9 @@
 > **G1 CI 已激活**（2026-08-10，`PAT_TOKEN` 已配，首次真绿，见 §2.10）
 >
 > **W1 进行中** —— 细化方案见 [`../architecture/android-w1-plan.md`](../architecture/android-w1-plan.md)。
-> **P0 桥已接通**（§2.11）｜ **P1 auth 契约已完成**（§2.13）｜ **P2 机制已验、迁移链未接**（§2.12）
-> ｜ P3 已决定推迟到上线前 ｜ **P4-P9 未开始**
+> **P0 桥已接通**（§2.11）｜ **P1 auth 契约已完成**（§2.13）｜ **P2 机制已验、兜底推迟**（§2.12）
+> ｜ **P2 剩余 + P3 已决定合并推迟到上线前**（2026-08-10，见 W1 计划 §5.6）
+> ｜ **当前在做 P4/P5/P6**（Router / i18n / network，可并行）｜ P7-P9 未开始
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 

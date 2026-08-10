@@ -42,9 +42,9 @@ P0  tipsy-auth Android 桥骨架（isShellHost() 返回 true）
         ↓
 P1  auth 契约实现（12 个必须方法 + 双 generation + single-flight refresh）
         ↓
-P2  token 迁移（MMKV 直读 → AuthBootstrapSurface 兜底）
-        ↓
-P3  三渠道真机覆盖升级验证  ←── W1 最大的不确定性，尽早做
+P2  token 迁移（MMKV 直读 ✅ 已验 → AuthBootstrapSurface 兜底 ⏸️ 推迟）
+P3  三渠道真机覆盖升级验证                              ⏸️ 推迟
+     └─ **P2 剩余与 P3 合并推迟到上线前**（2026-08-10 决定，见 §5.6）
         ↓
 P4  Router + 返回栈接管（含 scheme 安全审计）
 P5  i18n（Native 唯一 writer + Compose 本地化组件）     ← P4/P5/P6 可并行
@@ -290,6 +290,29 @@ W0 已实测印证:模拟器上装了 `com.tipsyturbo.app` 1.4.4,壳的 debug �
 | Native last-known-good | 候选 Native | schema 前向兼容 |
 | 候选 + embedded JS | 同 binary + OTA N/N-1 | W4 再做 |
 
+### 5.6 P2 剩余也一并推迟（2026-08-10 决定）
+
+**决策**：`AuthBootstrapSurface` + 迁移算法五步**与 P3 合并**，一起留到上线前。
+**决策人**：项目 owner（用户）。**风险 owner 同上。**
+
+**理由**：P2 剩余是「覆盖升级不掉登录」的**实现**，P3 是它**唯一的正确性证据**
+（方案 §6.1）。P3 已推迟且缺三渠道真实产物，此刻写 P2 等于让 W1 停止条件级的
+代码在**无法验证的状态下躺几个月**；且 P4 Router 完成后 `logout()` 的收栈逻辑
+会变，P2 里依赖它的部分可能要回头改。两个一起做，上下文也更集中。
+
+**当前已具备的部分不受影响**：MMKV 直读机制已验（§2.12），`LegacyTokenReader`
+三形态兼容已接进 `getValidToken()` 读链（P1）。所以**同 applicationId 覆盖升级且
+token 在 MMKV 里**的用户，现在就能正常延续登录。
+
+**推迟的代价（明确写下）**：
+- **SecureStore 兜底缺口一直存在** —— MMKV 里没有 token、只在 SecureStore 里的
+  历史用户，升级后会被当作**未登录**。这个缺口**现在已经存在**，不会因为写了
+  代码而消失（没有 fixture 就验不了），但**上线前必须解决**，否则是真实的掉登录。
+- 届时 P2 + P3 一起做，工作量与风险叠加在上线前那个时间窗。
+
+**重启本项的触发条件**：拿到三渠道真实 release 产物 + 匹配签名
+（外部阻塞项 #1）。**建议现在就向发布 owner 提出**，不要等到上线前才发现拿不到。
+
 ---
 
 ## 6. P4：Router + 返回栈
@@ -316,6 +339,24 @@ Intent / Push / Widget / Compose 点击 / RN 桥
 原意是"跳出到社交 App",但**把它们注册成自己的 intent filter 等于声明本应用能打开这些
 scheme → intent 劫持面**。**不要照搬**,逐个审计必要性。
 (风险登记 severity 中。)
+
+#### 审计结论（2026-08-10 实测）：**五个全部不迁**
+
+在 `tipsy-app` 全仓搜 `Linking.openURL` / `canOpenURL`（25 处调用），
+**没有任何一处打开 `fb:` / `twitter:` / `discord:` / `instagram:` / `tiktok:`**。
+实际 openURL 的目标只有：`app-settings:`、APK 下载页、商店 URL、以及若干 http(s)。
+
+**注册 intent filter 与「能否跳出到别的 App」无关** —— 跳出靠的是 `openURL`，
+只要目标 App 声明了自己的 scheme 就能跳。注册成**自己的** filter 只意味着
+「别人发这些 scheme 时本应用愿意接收」，即：
+- 收益：**零**（没有任何代码消费这些 scheme 的入站 intent）
+- 代价：五个通用 scheme 的入站面，任意 App 或网页可构造 `tiktok://…` 拉起本应用
+
+故壳的 manifest **不声明**这五个。只声明 `tipsy://`（app scheme，§6.2 七条路径要用）。
+
+⚠️ 若将来产品确实需要「从社交 App 回跳」，那要的是**各家自己分配的
+带 client id 的专属 scheme**（如 `fb1819240725563515://`，`app.config.js:23,29`
+已有两个），**不是通用的 `fb://`**。这两者性质不同，别混。
 
 ### 6.4 返回栈接管（改 W0 的占位实现）
 

@@ -181,6 +181,16 @@ class ShellTokenStore(
      */
     fun isCurrentToken(token: String): Boolean = currentToken() == token
 
+    /**
+     * 是否**存在** token（不判断有效性、不触发刷新）。
+     *
+     * 给 Router 的 auth gate 用：它只需要知道「要不要先弹登录」，
+     * 不该为了这个判断去发一次网络刷新 —— 那会让每条深链都可能卡在网络上。
+     *
+     * ⚠️ **刻意不暴露 token 本身**。Router 不需要它，多一个出口就多一条泄漏路径。
+     */
+    fun hasToken(): Boolean = currentToken() != null
+
     private fun currentToken(): String? {
         if (!cacheLoaded) {
             synchronized(this) {

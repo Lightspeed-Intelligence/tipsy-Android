@@ -59,6 +59,27 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!--
+              app scheme 深链（W1-P4）。七条路径见 AppRouteParser，
+              逐字对齐 RN 的 linking.config（src/App.tsx:445-465）。
+
+              ⚠️ **刻意不声明 fb / twitter / discord / instagram / tiktok**
+              这五个通用 scheme（RN 侧 app.config.js:147-171 有）。
+              审计结论（W1 计划 §6.3）：全仓 25 处 Linking.openURL 没有任何一处
+              打开它们；注册成自己的 filter 与「能否跳出到社交 App」无关 ——
+              跳出靠 openURL，注册只意味着「愿意接收入站」。
+              收益为零，代价是五个通用 scheme 的入站劫持面。
+
+              若将来需要从社交 App 回跳，要的是各家分配的**带 client id 的专属
+              scheme**（如 fb1819240725563515://），不是通用的 fb://。
+            -->
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="tipsy" />
+            </intent-filter>
         </activity>
     </application>
 
