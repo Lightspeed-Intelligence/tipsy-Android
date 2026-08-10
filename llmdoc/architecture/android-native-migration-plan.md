@@ -967,6 +967,9 @@ git -C tipsy-app diff --name-status <wave-source-sha>..<candidate-sha> -- \
 | **W4** Screen + 系统 | **Screen/Media3** + 其余 12 个 Surface 逐个过矩阵 + Push/deep link/Widget/voice/营销 SDK + OTA 三重隔离 | 业务 + 系统能力 |
 | **W5** 切换 | 全量对等/性能/无障碍/nightly + 三渠道覆盖升级 + staged rollout + 向前恢复演练 + last-known-good 归档 | 发布 |
 
+> **W1 的执行级细化见 [`android-w1-plan.md`](android-w1-plan.md)** —— 任务依赖链、
+> 外部阻塞项、每步的实测约束。本节只给波次边界与判据。
+
 **W0/W1 的时间盒纪律**：这两波是纯前置，**不产出用户可见价值**。它们的目标是"够用就往下走"，不是"做完美"。具体判据：
 - W0 只要三个 flavor 能装、能开 `DebugSurface`（Metro + 离线）就进 W1。**不在 W0 做 CI 分层的 nightly/release gate**——那些等有产物再建。
 - W1 只要 auth 不掉登录、`ChatDetailSurface` 过矩阵、root side-effect 表零 `UNKNOWN` 就进 W2。**不在 W1 做完整的存储 registry 与对等矩阵**——按页面波次增量填。
