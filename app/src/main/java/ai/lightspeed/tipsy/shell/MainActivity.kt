@@ -33,6 +33,12 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        // 桥的 popSurface 出口（W1-P0）。Application 不持 Activity 引用，
+        // 用回调转接；onDestroy 必须清掉，否则泄漏本 Activity。
+        (application as TipsyApplication).onPopSurfaceRequested = { instanceId ->
+            runOnUiThread { popSurface(instanceId) }
+        }
+
         if (savedInstanceState == null) {
             // 原生根：证明壳自己能先渲染，不依赖 RN
             findViewById<ComposeView>(R.id.native_root).setContent {
@@ -57,6 +63,26 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
     override fun invokeDefaultOnBackPressed() {
         @Suppress("DEPRECATION")
         super.onBackPressed()
+    }
+
+    override fun onDestroy() {
+        (application as TipsyApplication).onPopSurfaceRequested = null
+        super.onDestroy()
+    }
+
+    /**
+     * 关闭当前 RN Surface 容器（RN 栈底返回键经桥调到这里）。
+     *
+     * ⚠️ **必须幂等**（ADR-003）：迟到的 popSurface 不得关掉后来打开的容器。
+     * W1-P0 先用「栈里有 Surface 才 pop」这个最小保证；P4 接 Router 时改为
+     * 按 `surfaceInstanceId` 精确匹配当前容器。
+     *
+     * iOS 的闸是**类型判定**，迟到事件弹错了同类型页（后用 closingRef 补）——
+     * Android 从一开始按实例判定，别重复那个 bug。
+     */
+    private fun popSurface(surfaceInstanceId: String?) {
+        if (supportFragmentManager.backStackEntryCount == 0) return
+        supportFragmentManager.popBackStack()
     }
 
     /**

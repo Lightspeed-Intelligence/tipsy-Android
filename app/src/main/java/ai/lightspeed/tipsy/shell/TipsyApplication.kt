@@ -11,8 +11,10 @@ import com.facebook.react.ReactPackage
 import com.facebook.react.common.ReleaseLevel
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint
 import com.facebook.react.defaults.DefaultReactNativeHost
+import ai.lightspeed.tipsy.shell.bridge.ShellAuthProvider
 import expo.modules.ApplicationLifecycleDispatcher
 import expo.modules.ReactNativeHostWrapper
+import expo.modules.tipsyauth.TipsyAuthRegistry
 
 /**
  * 壳 Application。
@@ -24,9 +26,9 @@ import expo.modules.ReactNativeHostWrapper
  * `activity.application as ReactApplication` 取 reactHost，实现了它就能复用
  * 官方的生命周期转发，不必自己实现 onHostResume/Pause/Destroy（方案 ADR-002）。
  *
- * W0 边界：这里刻意不做 auth / 埋点 / 营销 SDK / 推送的初始化。那些属于
- * 方案 §4.2 的 root side-effect 清单，各由所属波次按"单一 owner"契约接入；
- * 提前在这里初始化会造成与 RN 侧双写（iOS 上真实发生过）。
+ * W1-P0 起这里注册 auth 桥 provider（见 [registerAuthBridge]）。
+ * 埋点 / 营销 SDK / 推送仍刻意不做 —— 那些属方案 §4.2 的 root side-effect 清单，
+ * 各由所属波次按"单一 owner"契约接入；提前初始化会与 RN 侧双写（iOS 真实踩过）。
  */
 class TipsyApplication : Application(), ReactApplication {
 
@@ -47,14 +49,53 @@ class TipsyApplication : Application(), ReactApplication {
     )
 
     override val reactHost: ReactHost
+        // ReactNativeHostWrapper.createReactHost → ExpoReactHostFactory 内部有
+        // `if (reactHost == null)` 缓存，所以这个 getter 每次返回同一实例，
+        // 单 Runtime 不变量成立（已核实 ExpoReactHostFactory.kt:85）。
         get() = ReactNativeHostWrapper.createReactHost(applicationContext, reactNativeHost)
+
+    /**
+     * 持 provider 的强引用 —— registry 侧是弱引用，这里不持就会被回收。
+     */
+    private var authProvider: ShellAuthProvider? = null
+
+    /**
+     * 当前承载 Surface 的容器提供的"关闭自己"回调。
+     * 由 [MainActivity] 在 onCreate/onDestroy 设置与清除 ——
+     * Application 不该直接持 Activity 引用（泄漏），所以用可空回调转接。
+     */
+    var onPopSurfaceRequested: ((String?) -> Unit)? = null
 
     override fun onCreate() {
         super.onCreate()
         DefaultNewArchitectureEntryPoint.releaseLevel = ReleaseLevel.STABLE
         loadReactNative(this)
+        registerAuthBridge()
         // Expo 模块的 Application 生命周期分发；autolinked 模块依赖它
         ApplicationLifecycleDispatcher.onApplicationCreate(this)
+    }
+
+    /**
+     * 注册 auth 桥 provider（W1-P0）。
+     *
+     * **时机很关键**：必须早于任何 Surface 的 JS 运行。RN 侧 `isShellAuthHost()`
+     * 会**缓存首次结果**（它在高频 render 路径上被调用，如 ChatPage），
+     * 注册晚了会让 JS 永久认为不在壳内 —— 这类 bug 只在冷启动竞态下出现，极难查。
+     * 放在 `onCreate` 里、`ApplicationLifecycleDispatcher` 之前是最早的可用点。
+     *
+     * provider 在 registry 里是**弱引用**（对齐 iOS 的 `weak var`），
+     * 所以这里必须持一个强引用字段，否则会被回收、`isShellHost()` 悄悄变回 false。
+     */
+    private fun registerAuthBridge() {
+        val provider = ShellAuthProvider(
+            isDebugBuild = BuildConfig.DEBUG,
+            // P5 会换成壳的 L10n store。现在返回 null = 壳无意见，
+            // RN 侧沿用自己的语言判定，不至于被一个假值锁死。
+            languageCodeProvider = { null },
+            onPopSurface = { instanceId -> onPopSurfaceRequested?.invoke(instanceId) },
+        )
+        authProvider = provider
+        TipsyAuthRegistry.register(provider)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {

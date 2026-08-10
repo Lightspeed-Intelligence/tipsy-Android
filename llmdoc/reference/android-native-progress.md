@@ -3,7 +3,8 @@
 > 更新：2026-08-08 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
 > G1 CI 已写但**未激活**（缺 `PAT_TOKEN`，见 §2.10）
 >
-> **下一步：W1** —— 细化方案见 [`../architecture/android-w1-plan.md`](../architecture/android-w1-plan.md)
+> **W1 进行中** —— 细化方案见 [`../architecture/android-w1-plan.md`](../architecture/android-w1-plan.md)；
+> **P0 auth 桥已接通**（`isShellHost()` 实测 true，见 §2.11）
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
@@ -307,6 +308,45 @@ commit**，浅拉只能拿到 tip、取不到 pin 的那个 commit，CI 会直�
 另：`cmake` 版本已钉进 `libs.versions.toml`（原先只有 `ndk`）。AGP 默认挑「已装的最高版」，
 本机与 CI 不一致会产生难复现的构建差异。workflow 从 catalog 读取并做空值检查 ——
 grep 未匹配时 `cut` 输出空串**不报错**，静默装错版本比直接失败更糟。
+
+### 2.11 W1-P0：auth 桥接通（已完成）
+
+**W1 的开关打开了。** RN 侧 `isShellAuthHost()` 返回 true → 那 55 个文件里已存在的
+壳适配分支自动激活（方案 §7.2）。API 24 实测:
+
+```
+bridge probe: {"present":true,"isHost":true,
+               "hasGetValidToken":true,"hasPopSurface":true,"lang":null}
+```
+
+(`lang: null` 是**正确的** —— 语言真值属 P5，此时壳无意见、RN 沿用自己的判定。)
+
+RN 侧 `modules/tipsy-auth/android/`（分支 `feat/tipsy-auth-android`）三层结构与 iOS 同构：
+契约拆四个接口(Auth/Navigation/Lifecycle/Env)、registry(壳注册 + 事件广播)、
+Expo Module DSL(12 个必须方法)。iOS 用 NotificationCenter 广播，Android 无等价物，
+改用进程内 `CopyOnWriteArrayList` 监听器。
+
+**最高危项已用测试钉死**：模块合并后会被 autolink 进**现网三个 RN 包**，那里没有壳、
+不注册 provider。此时 `isShellHost()` 必须为 false、与「模块不存在」等价 ——
+否则现网 App 把 auth 交给不存在的壳会**直接掉登录**。`LiveAppSafetyTest` 专测这条。
+单测 9 条全绿(skipped=0)。
+
+**两条实现纪律**（都是从 iOS 教训来的）：
+1. **未实现项绝不静默 no-op** —— debug 抛 `NotImplementedError`，release 记 error
+   日志并继续。静默 no-op 的典型症状是「点了没反应」，不报错不崩溃，只能靠用户
+   反馈发现(iOS 在 ChatDetail 与 Comments 真实踩过)
+2. **严格区分「返回 null」与「未实现」** —— `getValidToken()` 返回 null 是合法业务态
+   (当前未登录)；`requestLogin()` 未实现是能力缺失，必须可见
+
+**provider 注册时机是个坑**：RN 侧 `isShellAuthHost()` 会**缓存首次结果**(它在高频
+render 路径上被调用)，注册晚于首个 Surface 会让 JS **永久**认为不在壳内 ——
+这类 bug 只在冷启动竞态下出现。故注册放在 `Application.onCreate` 内、生命周期分发之前。
+且壳必须**自持强引用**：registry 侧是弱引用(对齐 iOS 的 `weak var`)，被回收会让
+`isShellHost()` 悄悄变回 false。
+
+顺带核实一处 W0 遗留疑问：`reactHost` getter 每次调 `createReactHost` 看似会新建实例，
+实际 `ExpoReactHostFactory` 内部有 `if (reactHost == null)` 缓存(已核实
+`ExpoReactHostFactory.kt:85`)，**单 Runtime 不变量成立**。
 
 ## 3. 横切能力
 
