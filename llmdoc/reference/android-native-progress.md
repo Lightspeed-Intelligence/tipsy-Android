@@ -92,6 +92,7 @@ RN/Expo 生态多处假设 `Gradle root = <rn-project>/android`，本仓布局�
 | `sdkmanager` | 曾观察到不可用（未装 cmdline-tools）。W0 需实测并提供明确环境检查与 CI 安装路径 |
 | emulator image | 未固定。W0 记录实际可用的 API 24 / API 36 image |
 | Node / npm | ✅ 实测 node `v22.22.3` / npm `10.9.8`；settings.gradle 有四级显式解析（见方案 ADR-004 第 3 条） |
+| 从 Android Studio（Dock/Finder）启动 sync | ✅ 2026-08-10 修复。需**两层**配置，缺一层即失败：① `local.properties` 写 `tipsy.node.executable`（用 fnm 的 `aliases/default` 路径，不是 `which node`）；② launchd GUI 域 PATH 含 node 目录（LaunchAgent 固化，改完须完全重启 Studio）。**两者都不入库，换机器需重做**。详见方案 ADR-004 第 3 条 |
 
 ### 2.4 已经不用做的事（RN 侧已就绪，实测）
 
@@ -456,7 +457,7 @@ JVM 单测会全红。**没有**用 `testOptions.unitTests.returnDefaultValues =
 | 原分支上的内容 | 现在在哪 |
 |---|---|
 | iOS 迁移复盘（时间线 / 十条经验 / 反模式） | 方案 §1.3 归属表、§3.2 各 ADR、§1.2.1 十条经验与反模式、§8.4 列表纪律、§10 风险登记 |
-| Node 可执行文件解析（fnm/nvm 下 GUI 启动 sync 失败） | 方案 ADR-004 第 3 条（含已验证的四级解析优先级与 PATH 时序约束） |
+| Node 可执行文件解析（fnm/nvm 下 GUI 启动 sync 失败） | 方案 ADR-004 第 3 条（四级解析优先级 + launchd GUI 域 PATH 两层，含 2026-08-10 对「PATH 前置」的订正） |
 | 三渠道 / config plugin / 桥模块等硬约束 | 方案 §2（**已在 pin `93d2c5551` 重新核实过源码**，不依赖旧报告） |
 | CNG prebuild 审计报告（基线 `cbd521f02`） | 不再引用。其结论中可核实的部分已重新核实；**RN lint/test/doctor 的具体红项数量待 W0 实跑** |
 

@@ -299,17 +299,30 @@ reactNativeDir = reactNativeDirFromSource ?: File(
 
 > **不采用反射 hack** 去改写 `ExpoGradleHelperExtension` 的私有 `lateinit` 字段缓存：依赖私有字段名、Kotlin backing field、Gradle decorated subclass 与回调时序——脆、且不承诺 configuration cache 兼容。符号链接 + 公开的 `projectRoot` 覆盖是两个稳定支点，优先用它们。若实测仍有解析缺口，先补最小 shim（如非递归的 `tipsy-app/android` 占位软链，对齐 iOS 的 `ios/` shim 做法），再考虑反射，且必须写下删除条件。
 
-3. **Node 可执行文件必须显式解析（已实测，W0 必做）**。上面两个支点都靠 `providers.exec` 跑 `node --print require.resolve(...)`，**Node 因此是本仓库真实的构建输入**（RN Gradle plugin、Expo autolinking、Hermes bundle 全部 shell out 到它）。而 Expo/RN 的调用点都是裸 `"node"`、依赖 `$PATH`：
+3. **Node 可执行文件必须显式解析（已实测，W0 必做；落地方式于 2026-08-10 订正，见本条末）**。上面两个支点都靠 `providers.exec` 跑 `node --print require.resolve(...)`，**Node 因此是本仓库真实的构建输入**（RN Gradle plugin、Expo autolinking、Hermes bundle 全部 shell out 到它）。而 Expo/RN 的调用点都是裸 `"node"`、依赖 `$PATH`：
 
    - fnm / nvm / asdf **只在交互式 shell 注入 PATH**。从 Finder/Dock 启动的 Android Studio、launchd、多数 CI runner 都读不到 → Gradle sync 报 `A problem occurred starting process 'command 'node''`，且报错无任何上下文。
-   - **`AutolinkingCommandBuilder` 硬编码裸 `"node"` 且无覆盖入口**，又位于禁止修改的 `tipsy-app/node_modules` → 光靠显式传参覆盖不了全部调用点。
+   - **Expo 的 settings 插件硬编码裸 `"node"` 且无覆盖入口**（`ExpoAutolinkingSettingsPlugin`、`ExpoAutolinkingSettingsExtension`、`AutolinkingCommandBuilder`），又位于禁止修改的 `tipsy-app/node_modules` → 光靠显式传参覆盖不了全部调用点。
 
-   **落地方式**（已在真实工程验证过：冷 daemon + `env -i` 干净环境下，无 node 的 PATH + 配置项、`TIPSY_NODE_EXECUTABLE` 覆盖、仅 PATH 有 node 三种情形均通过）：
+   **落地方式**——分两层，**缺任何一层 GUI 启动的 sync 都会失败**：
+
+   **第一层：本仓自己的调用点用显式路径**（`settings.gradle` 已实现）
    - 按优先级解析：`TIPSY_NODE_EXECUTABLE` 环境变量（CI）→ `local.properties` 的 `tipsy.node.executable`（开发机，不跟踪）→ 同名 Gradle property（团队默认）→ 回退裸 `"node"` 走 PATH（保持原行为）。
    - 解析结果校验绝对路径 + 可执行位，并在 settings 阶段先跑一次 `node --version` 验证，失败时给出**带解析来源**的可操作报错。
-   - 额外把解析出的 node 目录**前置到 daemon PATH**，兜住裸 `"node"` 的调用点。**这一步必须早于首次 `providers.exec`**——Gradle 在首次 exec 时快照进程环境，之后再改无效。
    - 同时设置 `react.nodeExecutableAndArgs`（默认也是裸 `"node"`，影响 Hermes bundle 与 codegen）。
    - `pluginManagement` 必须是 settings 脚本的第一条语句，所以这段逻辑**不能挪进 applied script 或顶层方法**，只能内联后经 `gradle.extraProperties` republish 给后续构建使用。
+   - 填 `local.properties` 时**不要用 `which node` 的输出**：fnm 给的是 `~/.local/state/fnm_multishells/<pid>_<ts>/bin/node`，带 PID 与时间戳，换 shell 即失效。用 `~/.local/share/fnm/aliases/default/bin/node`（nvm 对应 `~/.nvm/versions/node/<v>/bin/node`，升级 node 后需改）。
+
+   **第二层：node_modules 内的裸 `"node"` 调用点只能靠 PATH**
+   - `ExpoAutolinkingSettingsPlugin.getExpoGradlePluginsFile` 用裸 `"node"` 跑 `providers.exec`（SDK 54 实测），位于禁止修改的 `tipsy-app/node_modules`、无覆盖入口。第一层的显式路径**覆盖不到它**。
+   - 开发机：让 **launchd GUI 域**的 PATH 含 node 目录——Finder/Dock 启动的应用只继承 GUI 域环境，不读 `~/.zshrc`。手工 `launchctl setenv PATH` 重启即丢，须固化成 `RunAtLoad` 的 LaunchAgent。**改完必须完全退出并重启 Android Studio**：进程环境在启动时快照，已在跑的实例改不动。
+   - CI / 命令行：正常的 `$PATH` 即可（shell 环境本来就有 node），无需额外处理。
+
+   > **订正（2026-08-10 实测）**：本条原写「把解析出的 node 目录前置到 daemon PATH 即可兜住裸 `"node"` 的调用点」，**该做法无效**。用 `ProcessEnvironment.maybeSetEnvironmentVariable('PATH', ...)` patch 后，子进程确实继承了新 PATH（`sh -c 'command -v node'` 能找到），**但 Gradle 解析 program name 时不看它** —— 同一次构建内 `providers.exec { commandLine('node','--version') }` 仍抛 `Cannot run program "node": error=2`。`settings.gradle` 里那段代码还包在 `catch (Throwable ignored)` 中，失败时完全静默，因此长期未暴露。真正的修法是上面第二层。原结论中「必须早于首次 `providers.exec`」的时序约束也随之失去意义。
+   >
+   > **验证方式**（复现 GUI 环境，比开 Studio 快）：
+   > `env -i HOME=$HOME USER=$USER PATH="$(launchctl getenv PATH)" JAVA_HOME=<studio-jbr> ./gradlew --no-daemon projects`
+   > 要复现「GUI 域也没有 node」的最坏情形，把 `PATH` 换成 `/usr/bin:/bin:/usr/sbin:/sbin`。
 
 **其余 Gradle 决定**：
 - **Groovy DSL**，全仓不混 `.gradle.kts`。Expo SDK 54 / RN 0.81.4 的 settings/root/app 模板与文档都以 Groovy 为基线，`autolinking_implementation.gradle` 本身就是 Groovy 脚本。**当前脚手架是 `.kts`，需要改写**。
