@@ -597,7 +597,7 @@ RN 侧已就绪:`src/hooks/useShellSurfaceRefocus.ts`(45 行)把 `useFocusEffect
 | 2 | `tipsy-app` 的 PR 权限（加 `tipsy-auth` android 段） | P0 做不了,整个 W1 卡住 | RN 仓 owner |
 | 3 | **Qt 冲突决策**（§9.1 二选一） | root side-effect 表无法零 UNKNOWN | 产品 / analytics owner |
 | 4 | AB Test 的 Android appKey | AB 初始化做不了 | 后端 / 产品 |
-| 5 | `PAT_TOKEN`（遗留自 W0） | G1 CI 仍未激活,W1 期间只能人工跑门禁 | org 内 PAT 持有者 |
+| ~~5~~ | ~~`PAT_TOKEN`（遗留自 W0）~~ | ✅ **已解除**（2026-08-10）：本仓独立签发 token，G1 已激活并首次真绿。**不再需要向 iOS 那个 PAT 的持有者取值** | — |
 
 ## 14. 与 W0 的衔接：现在就成立的前提
 
@@ -607,12 +607,18 @@ W0 已验证、W1 可直接依赖:
 - ✅ API 24 与 API 37 双端可跑
 - ✅ merged manifest 断言(5 条)—— **W1 起每次新增依赖都看一眼它的 diff**
 - ✅ lint 硬门
-- ⚠️ **G1 CI 已写但未激活**(缺 `PAT_TOKEN`)—— W1 期间合并前需**人工**跑:
+- ✅ **G1 CI 已激活**（2026-08-10）：`pull_request` / `push` 自动触发，
+  含 lint 硬门 + assemble + release manifest + 单测 + `:tipsy-auth` 桥单测 + `skipped=0` 守卫。
+  推之前仍建议本地先跑一遍（快得多，省一轮 CI）：
   ```
   ./gradlew :app:lintDirectApkDebug :app:assembleGooglePlayDebug \
-    :app:processGooglePlayReleaseMainManifest :app:testGooglePlayDebugUnitTest
+    :app:processGooglePlayReleaseMainManifest :app:testGooglePlayDebugUnitTest \
+    :tipsy-auth:testDebugUnitTest
   ```
-  按方案 §5.4 纪律,这属 `NOT RUN`,**不等于通过**
+  ⚠️ 但**本地绿不等于 CI 绿** —— 激活时抓到的三个缺陷全是本机绿、CI 红
+  （见进度文档 §2.10）。以 CI 结果为准。
+- ⚠️ **G3 nightly 仍未建**：三 flavor 全量与 release 打包不由 G1 拦，
+  flavor 专属与 release 专属问题目前**没有自动防线**
 
 ## 15. W1 期间要守的既有纪律
 
