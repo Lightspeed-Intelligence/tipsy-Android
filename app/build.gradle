@@ -156,6 +156,12 @@ android {
 }
 
 dependencies {
+    // 直读 RN 侧 MMKV（方案 §2.4 的主迁移路径）。版本与 RN 侧对齐，见 libs.versions.toml
+    implementation libs.mmkv
+
+    // android.jar 的 org.json 是 stub（调用即抛 "not mocked"），JVM 单测需真实实现。
+    testImplementation libs.json
+
     // RN：版本由 autolinking 从 submodule 的 node_modules 解析
     implementation 'com.facebook.react:react-android'
     implementation 'com.facebook.react:hermes-android'

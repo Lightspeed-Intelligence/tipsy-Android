@@ -15,6 +15,17 @@ ndk = "27.1.12297006"
 # CMake 版本钉死：RN 新架构下 :app 与多个模块要跑 CMake，CI 需显式安装同一版本
 # （AGP 默认会挑「已装的最高版」，本机与 CI 不一致会产生难复现的构建差异）。
 cmake = "3.22.1"
+# 必须与 react-native-mmkv 4.1.0 依赖的原生 MMKV **完全一致**，否则壳读不了 RN 写的文件。
+# 注意它用的不是腾讯官方 com.tencent:mmkv，而是 fork io.github.zhongwuzw:mmkv
+# （已核实 node_modules/react-native-mmkv/android/build.gradle:142）。
+# 升 RN 侧 MMKV 时**必须同步这里**，版本漂移的症状是「读不到 token / 静默当作未登录」。
+#
+# ⚠️ **刻意不升级**。lint 的 NewerVersionAvailable 会建议升到 2.4.1 —— 不要采纳：
+# 这个版本号是与 RN 侧的**耦合约束**，不是"越新越好"的普通依赖。
+# 升了它壳就可能读不了 RN 写的 MMKV 文件，而且**不报错**，只表现为用户升级后掉登录。
+# 只有当 tipsy-app 的 react-native-mmkv 也升级时，才同步改这里。
+#noinspection NewerVersionAvailable
+mmkv = "2.2.4"
 
 # ── AndroidX / Compose ──
 # Compose BOM 须与 Kotlin 2.1.20 的 compose compiler 插件兼容。
@@ -31,6 +42,11 @@ androidxJunit = "1.2.1"
 espressoCore = "3.6.1"
 
 [libraries]
+mmkv = { module = "io.github.zhongwuzw:mmkv", version.ref = "mmkv" }
+# JVM 单测用的**真实** org.json 实现。android.jar 里的是抛异常的 stub。
+# ⚠️ 不用 testOptions.unitTests.returnDefaultValues = true 来绕 —— 那会让
+# 所有未 mock 的 Android API 静默返回默认值，是方案 §5.4 点名的「假绿色」。
+json = { module = "org.json:json", version = "20260719" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 androidx-fragment-ktx = { group = "androidx.fragment", name = "fragment-ktx", version.ref = "fragment" }
