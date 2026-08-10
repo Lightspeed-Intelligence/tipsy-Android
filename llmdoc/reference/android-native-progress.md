@@ -141,15 +141,37 @@ RN/Expo 生态多处假设 `Gradle root = <rn-project>/android`，本仓布局�
 
 **结论：minSdk 24 可行**，RN 0.81 + 新架构在 Android 7.0 上正常工作。
 
-### 2.5 模拟器上的现成 fixture（**勿卸载**）
+### 2.5 模拟器上的 fixture —— ⚠️ **不可用作覆盖升级证据**（W1-P1 实测订正）
 
-模拟器已装 `com.tipsyturbo.app` **versionName 1.4.4** 的真实 RN 包，`files/mmkv/` 下有
-`mmkv.default`（`token-storage` 所在）、`chat-list-cache`、`for-you-cache` 等真实数据。
+> **本节此前的记录是错的**，W1 开工核对时发现。原记录称它有 `files/mmkv/` 真实数据、
+> 可作 W1 覆盖升级 fixture —— **两点都不成立**。
 
-**这是 W1 覆盖升级验证（§2.4 迁移算法 + §6.1 矩阵）的现成 fixture**，请勿卸载。
-W0 验证刻意改用 `directApk` flavor（包名 `ai.lightspeed.tipsy` 未被占用）以避免破坏它。
-注意壳的 debug 签名与该包不同，直接覆盖装会报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE` ——
-真实覆盖升级验证需用匹配签名的产物（方案 §6.1 已写明「debug 签名重装不构成证据」）。
+`emulator-5556`（Pixel_10 / API 37）上装有 `com.tipsyturbo.app` versionName **1.4.4**
+（firstInstall 2026-07-29，lastUpdate 2026-08-05），但实测：
+
+| 项 | 实测结果 |
+| --- | --- |
+| **数据目录** | **不存在**。`run-as` 与 shell 均报 `couldn't stat /data/user/0/com.tipsyturbo.app` |
+| 有无 MMKV 数据 | **没有** —— 原记录说的 `mmkv.default` / `chat-list-cache` / `for-you-cache` 均无从读取 |
+| **签名** | **`CN=Android Debug`** —— 是 **debug 签名**，不是现网发布签名 |
+| 有无内嵌 bundle | **无**（`assets/` 里没有 `index.android.bundle`）→ 靠 Metro 加载 |
+| launcher activity | **无**。只声明了 `exp+tipsy-app:` scheme 的 `.MainActivity`，`resolve-activity` 返回 `No activity found`，无法从桌面或 `am start` 正常拉起 |
+| dev-launcher 迹象 | `classes2.dex` / `classes3.dex` 命中 `DevLauncher` 符号 |
+
+**结论：这是一个 Expo dev build（debug 签名 + 无内嵌 bundle + dev-launcher），
+不是现网 release 包，且从未产生用户数据。**
+
+**对 W1 的影响（重要）**：
+1. **P3 三渠道覆盖升级没有现成 fixture** —— 原以为「模拟器上已有现网包可直接用」，
+   实际必须**另行取得三渠道的真实 release 产物 + 匹配签名**。这不改变结论
+   （方案 §6.1 早写明「debug 签名重装不构成证据」），但**把外部阻塞项前置了**：
+   没有真实产物，P3 一步也做不了。
+2. **P2 的 MMKV 直读路径目前无真实数据可验** —— 需要先有一个真登录过的现网包，
+   或由发布 owner 提供一份脱敏的 MMKV 数据样本。
+3. 该 APK 仍可留着（179MB，dev build），但**只能用来看包结构**，
+   不能当升级来源。**不要再把它当 fixture 引用。**
+
+W0 用 `directApk` flavor 避免包名冲突这一点仍然有效。
 
 ### 2.6 W0 剩余项
 

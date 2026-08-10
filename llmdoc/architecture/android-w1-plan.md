@@ -217,13 +217,19 @@ W0 已实测印证:模拟器上装了 `com.tipsyturbo.app` 1.4.4,壳的 debug �
 **➜ 这是 W1 的第一个外部阻塞项:需要向发布 owner 取得三渠道的真实签名材料
 (或由其代跑)。建议 W1 开工第一天就提出,不要等到 P3 才发现拿不到。**
 
-### 5.4 现成 fixture（**勿卸载**）
+### 5.4 ⚠️ 没有现成 fixture（P1 实测订正）
 
-`Pixel_10`(API 37)模拟器上有 `com.tipsyturbo.app` **1.4.4** 的真实 RN 安装,
-`files/mmkv/` 下有 `mmkv.default`(`token-storage` 所在)、`chat-list-cache`、
-`for-you-cache` 等真实数据 —— **W1 覆盖升级验证的现成 fixture,请勿卸载**。
+原以为 `Pixel_10` 上那个 `com.tipsyturbo.app` 1.4.4 可作 fixture。**实测不成立**：
+它是 **Expo dev build**（`CN=Android Debug` 签名、无内嵌 bundle、dex 里有 DevLauncher、
+无 launcher activity），且**数据目录根本不存在**（`run-as` 报 `couldn't stat`），
+没有任何 MMKV 数据。详见进度文档 §2.5 的订正表。
 
-⚠️ 注意 `Api24_Smoke`(API 24)那台**没有**这个 fixture,只有 W0 装的 `ai.lightspeed.tipsy`。
+**所以 P3 必须另行取得三渠道的真实 release 产物 + 匹配签名**，
+且 **P2 的 MMKV 直读路径当前无真实数据可验** —— 需要一个真登录过的现网包，
+或由发布 owner 提供脱敏 MMKV 样本。
+
+这不改变方案结论（§6.1 早写明「debug 签名重装不构成证据」），
+但**把外部阻塞项前置了**：没有真实产物，P3 一步也做不了。
 
 ### 5.5 覆盖升级矩阵（方案 §6.1,每个 distribution 各跑一遍）
 
@@ -537,7 +543,8 @@ RN 侧已就绪:`src/hooks/useShellSurfaceRefocus.ts`(45 行)把 `useFocusEffect
 
 | # | 阻塞项 | 影响 | 需要谁 |
 | --- | --- | --- | --- |
-| 1 | **三渠道真实签名材料** | P3 覆盖升级验证做不了 —— 这是 W1 的核心判据 | 发布 owner |
+| 1 | **三渠道真实 release 产物 + 匹配签名** ⬆️ | P3 覆盖升级验证**一步也做不了**。原以为模拟器上有现成 fixture，实测那是 dev build 且无数据（§5.4），所以本项从「需要签名」升级为「需要完整产物」 | 发布 owner |
+| 1b | **一份真登录过的现网包数据（或脱敏 MMKV 样本）** | P2 的 MMKV 直读路径无真实数据可验，只能靠构造样本自测 | 发布 owner / QA |
 | 2 | `tipsy-app` 的 PR 权限（加 `tipsy-auth` android 段） | P0 做不了,整个 W1 卡住 | RN 仓 owner |
 | 3 | **Qt 冲突决策**（§9.1 二选一） | root side-effect 表无法零 UNKNOWN | 产品 / analytics owner |
 | 4 | AB Test 的 Android appKey | AB 初始化做不了 | 后端 / 产品 |
