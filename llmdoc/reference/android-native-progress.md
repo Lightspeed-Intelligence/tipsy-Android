@@ -348,6 +348,38 @@ render 路径上被调用)，注册晚于首个 Surface 会让 JS **永久**认�
 实际 `ExpoReactHostFactory` 内部有 `if (reactHost == null)` 缓存(已核实
 `ExpoReactHostFactory.kt:85`)，**单 Runtime 不变量成立**。
 
+### 2.12 MMKV 互操作性已验证（W1-P2 机制部分）
+
+**§2.4 迁移路径最大的技术未知项已消除**：壳的 Kotlin 代码能读到 `react-native-mmkv`
+写的数据。API 24 真机 instrumented test **3/3 通过**（skipped=0）。
+
+| 事实 | 值 | 来源 |
+| --- | --- | --- |
+| MMKV 目录 | `filesDir/mmkv` | `HybridMMKVPlatformContext.getBaseDirectory()` |
+| 默认实例 id | `mmkv.default` | `MMKVFactory.nitro.d.ts` 的 `@default` |
+| **原生库** | **`io.github.zhongwuzw:mmkv:2.2.4`** | `react-native-mmkv/android/build.gradle:142` |
+
+⚠️ **原生库是 fork,不是腾讯官方 `com.tencent:mmkv`**（但包名仍是 `com.tencent.mmkv`,
+所以 import 看着像官方的）。版本已钉进 `libs.versions.toml` 并**显式压制
+lint 的 NewerVersionAvailable**（它建议升到 2.4.1）—— 这个版本号是与 RN 侧的
+**耦合约束**,不是"越新越好"的普通依赖。升了它壳可能读不了 RN 的文件,
+**且不报错**,只表现为用户升级后掉登录。
+
+**三种历史形态解析**（裸串 / `{token}` / `{state:{token}}`）单测 10 条 + 真机往返 3 条全绿。
+一个易错边界已覆盖:`JSONObject.optString` 遇 JSON null 返回**字面量 `"null"`**,
+不特判会把它当成一个叫 `null` 的 token 存进去 —— 静默错值,后续请求全 401 且难反推。
+
+**这个验证不能过度解读**（按方案 §5.4 纪律）:
+- ❌ **不**证明能读**真实历史数据** —— 需真登录过的现网包,当前拿不到（§2.5）
+- ❌ **不**构成覆盖升级证据 —— 需真实签名,**已决定推迟到上线前**
+
+它证明的是**机制**。P2 状态是「机制已验证,真实数据待验」,**不是完成**。
+
+**顺带修掉一处「假绿色」诱惑**:`android.jar` 里的 `org.json` 是抛异常的 stub,
+JVM 单测会全红。**没有**用 `testOptions.unitTests.returnDefaultValues = true` 去绕 ——
+那会让所有未 mock 的 Android API 静默返回默认值,正是方案 §5.4 点名的假绿色。
+改为引入真实 `org.json:json` 测试依赖。
+
 ## 3. 横切能力
 
 | 能力 | 状态 | 落地处 |
