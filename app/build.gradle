@@ -197,6 +197,9 @@ dependencies {
     testImplementation libs.json
     // auth 的 single-flight 刷新与 generation 闸门要测并发时序（runTest）
     testImplementation libs.kotlinx.coroutines.test
+    // 网络层要验「三种鉴权模式实际发出了什么 header」—— 只能靠真实 HTTP 往返，
+    // mock OkHttp 接口验不了这个（那只会验到我自己写的 stub）
+    testImplementation libs.okhttp.mockwebserver
 
     // RN：版本由 autolinking 从 submodule 的 node_modules 解析
     implementation 'com.facebook.react:react-android'

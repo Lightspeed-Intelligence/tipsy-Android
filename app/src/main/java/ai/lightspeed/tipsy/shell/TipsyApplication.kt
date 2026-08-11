@@ -17,7 +17,11 @@ import ai.lightspeed.tipsy.shell.auth.MmkvTokenPersistence
 import ai.lightspeed.tipsy.shell.auth.RefreshTokenApi
 import ai.lightspeed.tipsy.shell.auth.ShellTokenStore
 import ai.lightspeed.tipsy.shell.bridge.ShellAuthProvider
+import ai.lightspeed.tipsy.shell.network.ApiClient
+import ai.lightspeed.tipsy.shell.network.ApiErrorGate
+import android.util.Log
 import expo.modules.ApplicationLifecycleDispatcher
+import okhttp3.OkHttpClient
 import expo.modules.ReactNativeHostWrapper
 import expo.modules.tipsyauth.TipsyAuthRegistry
 import kotlinx.coroutines.CoroutineScope
@@ -86,12 +90,25 @@ class TipsyApplication : Application(), ReactApplication {
     lateinit var tokenStore: ShellTokenStore
         private set
 
+    /** 壳侧 API 客户端（W1-P6）。W2 的 Home / Login 用它发请求。 */
+    lateinit var apiClient: ApiClient
+        private set
+
     /**
      * 当前承载 Surface 的容器提供的"关闭自己"回调。
      * 由 [MainActivity] 在 onCreate/onDestroy 设置与清除 ——
      * Application 不该直接持 Activity 引用（泄漏），所以用可空回调转接。
      */
     var onPopSurfaceRequested: ((String?) -> Unit)? = null
+
+    /**
+     * 当前 Activity 的 Router 入口（W1-P6）。同 [onPopSurfaceRequested] 的理由：
+     * Application 不该持 Activity 引用，用可空回调转接，onDestroy 清除。
+     *
+     * ⚠️ 为 null 时（无 Activity 在前台）**必须安全跳过而不是抛** ——
+     * 402 可能在后台请求里触发，那时没有 UI 可导航。
+     */
+    var onNavigateGemsPurchaseRequested: ((Map<String, String>) -> Unit)? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -140,16 +157,72 @@ class TipsyApplication : Application(), ReactApplication {
             // RN 侧沿用自己的语言判定，不至于被一个假值锁死。
             languageCodeProvider = { null },
             onPopSurface = { instanceId -> onPopSurfaceRequested?.invoke(instanceId) },
+            onNavigateGemsPurchase = { params ->
+                val handler = onNavigateGemsPurchaseRequested
+                if (handler == null) {
+                    // 后台请求触发 402 时没有 UI 可导航。记录而非静默丢弃 ——
+                    // 否则排查「充值页没弹」时无从判断是没触发还是没 UI
+                    Log.w(TAG, "402/宝石购买请求到达但无前台 Activity，已跳过")
+                } else {
+                    handler(params)
+                }
+            },
             tokenStore = tokenStore,
             authStateHub = authStateHub,
             scope = appScope,
+            // W1-P6：壳成为 API 地址的真值。RN 侧 `getShellBaseAPIURL()` 会优先用它，
+            // 保证**原生页与 RN Surface 命中同一后端** —— 不一致会让两边看到不同数据
+            // 且都不报错（RN 侧 `constants/api.ts` 已备好这条通道）。
+            apiBaseUrlProvider = { BuildConfig.API_BASE_URL },
         )
         authProvider = provider
         TipsyAuthRegistry.register(provider)
+
+        // 网络层（W1-P6）。**共享 RN 的 OkHttpClient** —— 见 ApiClient 注释：
+        // 各起一套会让连接池/DNS/TLS session 变成两份，且「同一后端两条链路」难查。
+        apiClient = ApiClient(
+            client = sharedOkHttpClient(),
+            baseUrl = BuildConfig.API_BASE_URL,
+            tokenStore = tokenStore,
+            errorGate = ApiErrorGate(
+                // 401/402 的**两个入口汇聚到同一处**：原生页经此，
+                // RN Surface 经桥的 notifyServerAuthRejectedForToken / notifyServerPaymentRequired
+                // 也调到 provider 的同一实现上。
+                onAuthRejected = { token -> provider.notifyServerAuthRejectedForToken(token) },
+                onPaymentRequired = { provider.notifyServerPaymentRequired() },
+                logger = { Log.i(TAG, it) },
+            ),
+            appVersion = BuildConfig.VERSION_NAME,
+            downloadChannel = BuildConfig.DOWNLOAD_CHANNEL,
+            // P7 接壳的 lane store 后换成真值；现在 null = 壳无意见
+            laneProvider = { null },
+        )
+    }
+
+    /**
+     * 取 RN 的 [OkHttpClient]，取不到则新建。
+     *
+     * RN 通过 `OkHttpClientProvider` 暴露它自己的 client。用反射是因为
+     * 直接依赖 `com.facebook.react.modules.network.OkHttpClientProvider` 会把壳
+     * 绑到 RN 的内部 API 上（它在 RN 版本间改过签名）。
+     *
+     * **失败时新建一个而不是抛** —— 共享是优化，不是正确性前提；
+     * 拿不到就退化成两个 client，功能不受影响。
+     */
+    private fun sharedOkHttpClient(): OkHttpClient = runCatching {
+        val cls = Class.forName("com.facebook.react.modules.network.OkHttpClientProvider")
+        cls.getMethod("getOkHttpClient").invoke(null) as OkHttpClient
+    }.getOrElse {
+        Log.w(TAG, "未能取到 RN 的 OkHttpClient（${it.javaClass.simpleName}），壳自建一个")
+        OkHttpClient()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         ApplicationLifecycleDispatcher.onConfigurationChanged(this, newConfig)
+    }
+
+    private companion object {
+        const val TAG = "TipsyApplication"
     }
 }

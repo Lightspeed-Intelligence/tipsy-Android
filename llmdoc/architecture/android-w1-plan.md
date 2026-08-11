@@ -581,9 +581,18 @@ SafeAreaProvider (546) → KeyboardProvider (547) → SWRConfig (548)
 
 ---
 
-## 12. RNSurfaceFragment 要补的四件事
+## 12. RNSurfaceFragment 要补的四件事（**已完成**，2026-08-10）
 
-W0 的 `RNSurfaceFragment.kt` 是 36 行 stub,KDoc 已预先标注 W1 缺口:
+W0 的 `RNSurfaceFragment.kt` 曾是 36 行 stub。四件事均已实现并**在 API 37 真机验证**：
+Surface 挂载正常、首帧占位单次淡出、`onSurfaceReappeared` 实测发射
+（`surface=DebugSurface`，确认是**组件名**而非 instanceId）。
+判定逻辑抽在 `surface/ReappearPolicy.kt`（可单测），契约在 `surface/SurfaceContract.kt`。
+
+⚠️ 一处订正：原文与实现注释都说过「旋转会重建 Fragment」——**不成立**，
+`MainActivity` 的 `configChanges` 已含 `orientation|screenSize`（manifest:52）。
+真正需要 saved state 的是**进程重建**（后台被杀后从最近任务返回）。
+
+原始要求保留如下，供后续波次对照：
 
 ### 12.1 `surfaceInstanceId`（ADR-003）
 

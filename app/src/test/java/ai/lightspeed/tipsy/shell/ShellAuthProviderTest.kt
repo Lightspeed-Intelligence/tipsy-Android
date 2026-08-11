@@ -131,6 +131,50 @@ class ShellAuthProviderTest {
         assertNull(fixture(persisted = null).provider.getValidToken())
     }
 
+    // ── 402 付费墙（W1-P6）─────────────────────────────────────
+
+    /**
+     * ⚠️ **`notifyServerPaymentRequired` 绝不能是 `notImplemented`。**
+     *
+     * 401/402 由 `ApiErrorGate` 汇聚后调到它，而 `notImplemented` 在 debug 下
+     * **会抛 NotImplementedError** —— 那意味着每次收到 402 都让 App 崩。
+     * 这个坑在 P6 接线时真的踩到过（当时该方法还标着「W1-P6 未实现」）。
+     *
+     * 本测试跑在 `isDebug = true` 下，若有人把它改回 notImplemented，这里会红。
+     */
+    @Test
+    fun `402 不得抛异常 必须导航到宝石购买`() = runTest {
+        val f = fixture(persisted = tokenWithExp(now + 3600), isDebug = true)
+
+        f.provider.notifyServerPaymentRequired()
+
+        assertEquals("402 必须触发一次宝石购买导航", 1, f.gemsPurchaseCalls.size)
+    }
+
+    @Test
+    fun `openGemsPurchase 与 402 共用同一出口`() = runTest {
+        val f = fixture(persisted = tokenWithExp(now + 3600), isDebug = true)
+
+        f.provider.openGemsPurchase(mapOf("from" to "chat"))
+        f.provider.notifyServerPaymentRequired()
+
+        assertEquals("两处必须汇到同一出口，否则「未启用」判定会漂移", 2, f.gemsPurchaseCalls.size)
+        assertEquals(mapOf("from" to "chat"), f.gemsPurchaseCalls[0])
+        assertEquals("402 兜底不带参数", emptyMap<String, String>(), f.gemsPurchaseCalls[1])
+    }
+
+    // ── apiBaseURL（W1-P6）────────────────────────────────────
+
+    /**
+     * 壳是 API 地址真值。返回 null 会让 RN 回退构建期地址 ——
+     * 那样原生页与 Surface 可能命中不同后端，且两边都不报错。
+     */
+    @Test
+    fun `apiBaseURL 返回注入的地址`() = runTest {
+        val f = fixture(persisted = null, apiBaseUrl = "https://api.example.com/v1")
+        assertEquals("https://api.example.com/v1", f.provider.apiBaseURL())
+    }
+
     // ── 未实现项必须可见（P0 建立的纪律，P1 不得破坏）───────────
 
     /**
@@ -164,6 +208,7 @@ class ShellAuthProviderTest {
         val popSurfaceCounter: () -> Int,
         val logoutCounter: () -> Int,
         val logs: List<String>,
+        val gemsPurchaseCalls: List<Map<String, String>>,
     ) {
         val popSurfaceCount: Int get() = popSurfaceCounter()
         val logoutCount: Int get() = logoutCounter()
@@ -172,6 +217,7 @@ class ShellAuthProviderTest {
     private fun TestScope.fixture(
         persisted: String?,
         isDebug: Boolean = true,
+        apiBaseUrl: String? = null,
     ): Fixture {
         val persistence = FakePersistence(persisted)
         val generations = Generations()
@@ -194,10 +240,13 @@ class ShellAuthProviderTest {
         })
 
         val logs = mutableListOf<String>()
+        val gemsCalls = mutableListOf<Map<String, String>>()
         val provider = ShellAuthProvider(
             isDebugBuild = isDebug,
             languageCodeProvider = { null },
+            apiBaseUrlProvider = { apiBaseUrl },
             onPopSurface = { popCount++ },
+            onNavigateGemsPurchase = { gemsCalls.add(it) },
             tokenStore = tokenStore,
             authStateHub = hub,
             scope = this,
@@ -207,7 +256,10 @@ class ShellAuthProviderTest {
             // JVM 单测无 Android 主 Looper，真 Dispatchers.Main 会抛
             mainDispatcher = kotlinx.coroutines.Dispatchers.Unconfined,
         )
-        return Fixture(provider, persistence, generations, { popCount }, { logoutCount }, logs)
+        return Fixture(
+            provider, persistence, generations,
+            { popCount }, { logoutCount }, logs, gemsCalls,
+        )
     }
 
     private class FakePersistence(var stored: String?) : ShellTokenStore.TokenPersistence {

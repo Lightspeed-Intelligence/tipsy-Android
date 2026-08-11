@@ -37,8 +37,19 @@ class ShellAuthProvider(
     private val isDebugBuild: Boolean,
     /** 语言真值来源。P5 会换成壳的 L10n store；现在由调用方注入以免这里先假设实现。 */
     private val languageCodeProvider: () -> String?,
+    /**
+     * API 根地址（W1-P6）。壳内**优先于**构建期 `EXPO_PUBLIC_API_URL`，
+     * 保证原生页与 RN Surface 命中同一后端。
+     */
+    private val apiBaseUrlProvider: () -> String? = { null },
     /** 关当前 Surface 容器。由 [ai.lightspeed.tipsy.shell.MainActivity] 注入。 */
     private val onPopSurface: (surfaceInstanceId: String?) -> Unit,
+    /**
+     * 导航到宝石购买页。402 兜底与桥的 `openGemsPurchase` **共用同一出口** ——
+     * 两处各写一份会让「未启用」的判定漂移。
+     * 默认 no-op 仅为测试便利；壳侧注入接 Router 的实现。
+     */
+    private val onNavigateGemsPurchase: (params: Map<String, String>) -> Unit = {},
     /** token 真值（W1-P1）。 */
     private val tokenStore: ShellTokenStore,
     /** 登录态广播（W1-P1，§3.4）。 */
@@ -88,11 +99,15 @@ class ShellAuthProvider(
     override fun currentLanguageCode(): String? = languageCodeProvider()
 
     /**
-     * 返回 null = 壳不覆盖，JS 用构建期 `EXPO_PUBLIC_API_URL`。
-     * 这是**当前正确的行为**：壳还没有自己的环境配置（P6 接入），
-     * 此时谎报一个地址会让原生页与 Surface 命中不同后端。
+     * 壳侧 API 根地址（W1-P6 起是真值）。
+     *
+     * RN 的 `constants/api.ts` 会**优先**用这个值（`resolveBaseAPIURL`），
+     * 拿到 null 才回退构建期 `EXPO_PUBLIC_API_URL`。
+     *
+     * 为什么壳要当真值：原生页与 RN Surface **必须命中同一后端** ——
+     * 不一致会让两边看到不同数据，而且两边都不报错。
      */
-    override fun apiBaseURL(): String? = null
+    override fun apiBaseURL(): String? = apiBaseUrlProvider()
 
     /**
      * 返回 null（而非空串）= 壳无意见，JS 沿用自己的持久值。
@@ -180,11 +195,32 @@ class ShellAuthProvider(
     override fun openUserProfileWithRecommendation(userId: String, contextJSON: String) =
         notImplemented("openUserProfileWithRecommendation", wave = "W1-P4")
 
-    override fun openGemsPurchase(params: Map<String, String>) =
-        notImplemented("openGemsPurchase(keys=${params.keys})", wave = "W4")
+    /**
+     * 打开宝石购买页。
+     *
+     * 交给 Router 而非直接 `notImplemented`：目标 `GemsSubscriptionSurface` 属 W4，
+     * Router 会**明确拒绝并记日志**（§8.3 不做 silent no-op）。
+     * 走 Router 的好处是「未启用」这个状态只在一处判定，W4 启用时不用改这里。
+     */
+    override fun openGemsPurchase(params: Map<String, String>) {
+        onNavigateGemsPurchase(params)
+    }
 
-    override fun notifyServerPaymentRequired() =
-        notImplemented("notifyServerPaymentRequired", wave = "W1-P6")
+    /**
+     * 服务端付费墙（HTTP 402）→ 导航宝石购买页（W1-P6）。
+     *
+     * ⚠️ **不能留 notImplemented**：401/402 由 [ApiErrorGate] 汇聚后调到这里，
+     * 而 `notImplemented` 在 debug 下**会抛** —— 那意味着每次 402 都让 App 崩。
+     * 之前这里标的是「W1-P6」，正是本步。
+     *
+     * 防抖在 [ApiErrorGate]（两个入口共享同一个窗口），这里不再做第二层。
+     *
+     * 目标页 `GemsSubscriptionSurface` 属 W4，所以 Router 现在会**明确拒绝**
+     * 并记日志 —— 不是静默 no-op。
+     */
+    override fun notifyServerPaymentRequired() {
+        onNavigateGemsPurchase(emptyMap())
+    }
 
     // ── SurfaceLifecycleContract ────────────────────────────────
 
