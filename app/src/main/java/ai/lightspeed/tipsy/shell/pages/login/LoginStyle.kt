@@ -67,8 +67,16 @@ object LoginStyle {
     /** 图标与文案间距 8（`:147` button gap）。 */
     const val ICON_TEXT_GAP = 8
 
-    /** 按钮之间默认间距 12（`LoginSocialButtons.tsx` 的 `buttonGap` 默认值）。 */
-    const val BUTTON_GAP = 12
+    /**
+     * ⚠️ **登录页不用这个默认值。**
+     *
+     * `LoginSocialButtons` 的 `buttonGap` 默认是 12，但 `LoginScreen.tsx:458`
+     * 传的是 **`spacing.socialGap`（= `32 * ratio`）** —— 实际间距是 27~32，
+     * 不是 12。照默认值写会让三个按钮明显挤在一起（首版就错在这）。
+     *
+     * 保留常量只为记录「默认值≠实际用值」这个坑。用 [Spacing.socialGap]。
+     */
+    const val BUTTON_GAP_DEFAULT_UNUSED = 12
 
     /** 按钮文案字号 14（`:150`）。 */
     const val TEXT_SIZE_BUTTON = 14
@@ -83,6 +91,58 @@ object LoginStyle {
     const val BACK_BUTTON_WIDTH = 52
     const val BACK_BUTTON_HEIGHT = 32
     const val BACK_BUTTON_RADIUS = 16
+
+    /**
+     * 表单区顶部的**头部行**高 32（`LoginScreen.tsx:673-677` flowHeaderRow）。
+     *
+     * ⚠️ 首屏（未进邮箱流程）时里面是个**占位 View**（`:439` backButtonPlaceholder），
+     * 但**行本身仍占 32 高 + `backBottom` 下边距** —— 也就是社交按钮组在 RN 里
+     * 是被这 32+20 顶下来的。漏掉它会让整组按钮偏上（首版就漏了）。
+     */
+    const val FLOW_HEADER_HEIGHT = 32
+
+    /** 头部行下边距基数：`20 * ratio`（`LoginScreen.tsx:169` backBottom）。 */
+    const val BACK_BOTTOM_BASE = 20f
+
+    // ── 邮箱表单（`LoginEmailForm.tsx:157-200`）──────────────────
+
+    /** 输入框内左右留白 24（`inputCommon.paddingHorizontal`）。 */
+    const val INPUT_HORIZONTAL_PADDING = 24
+
+    /**
+     * 验证码框右侧留白 80（`codeInput.paddingRight`）。
+     *
+     * 给内嵌的「发送 / 重新发送 / 60s」按钮让位。留小了文字会被按钮压住 ——
+     * 而这在短文案（「Send」）下看不出来，只有倒计时或中文「重新发送」才显形。
+     */
+    const val CODE_INPUT_RIGHT_PADDING = 80
+
+    /** 发送按钮距右边缘 24（`sendCodeButton.right`）。 */
+    const val SEND_BUTTON_RIGHT = 24
+
+    /** 邮箱框与验证码行的间距 24（`LoginEmailForm.tsx:47` codeRowGap 默认值，实际未被覆盖）。 */
+    const val CODE_ROW_GAP = 24
+
+    /** 输入框底色 `rgba(255,255,255,0.1)`（`inputCommon.backgroundColor`）。 */
+    val INPUT_FILL = Color(0x1AFFFFFF)
+
+    /** 输入框 placeholder 色 `rgba(255,255,255,0.3)`。 */
+    val INPUT_PLACEHOLDER = Color(0x4DFFFFFF)
+
+    /** 邮箱格式错误文字色 `#F35757`（`emailErrorText.color`）。 */
+    val ERROR_TEXT = Color(0xFFF35757)
+
+    /** 错误文字字号 12、行高 14（`emailErrorText`）。 */
+    const val TEXT_SIZE_ERROR = 12
+    const val LINE_HEIGHT_ERROR = 14
+
+    /** 错误文字相对邮箱框的下移量 24（`emailErrorWrap.bottom: -24`）。 */
+    const val ERROR_TEXT_OFFSET = 24
+
+    // 登录按钮的激活色用已有的 [CONTROL_ACTIVE]（同为 #9C4844），不另立常量。
+    //
+    // ⚠️ 激活判据**不含 loading** —— RN 在请求期间按钮仍是砖红色但不可点。
+    // 若把 loading 也算作未激活，按钮会变灰再变回来，与 RN 观感不同。
 
     // ── 纵向布局（`LoginScreen.tsx:138-172` 的 spacing）─────────
     //

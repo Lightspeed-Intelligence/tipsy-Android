@@ -3,6 +3,7 @@ package ai.lightspeed.tipsy.shell
 import ai.lightspeed.tipsy.shell.i18n.LocalizedText
 import ai.lightspeed.tipsy.shell.i18n.rememberCurrentLanguage
 import ai.lightspeed.tipsy.shell.pages.login.LoginFragment
+import androidx.activity.enableEdgeToEdge
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
 import android.content.Intent
@@ -41,6 +42,16 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
     private lateinit var router: AppRouter
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 内容绘制到状态栏/导航栏之下，对齐 RN 侧的 `statusBarTranslucent`
+        // （`LoginScreen.tsx:372` Modal 属性）。
+        //
+        // ⚠️ 不做的表现：状态栏是**不透明灰条**，而 RN 版那里是页面底色的延伸 ——
+        // 与 RN 并排看第一眼就能看出来（首版实测如此）。
+        //
+        // targetSdk=36 在 Android 15+ 上本就强制 edge-to-edge，但 API<35 的设备
+        // 需要显式调用。壳 minSdk=24，所以必须调 —— 否则新老设备表现不一致。
+        // 各页自行用 inset 做避让（LoginFragment 已处理）。
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 

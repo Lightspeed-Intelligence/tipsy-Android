@@ -37,7 +37,15 @@ object LoginLayout {
         val bottomHeight: Float,
         val keyboardTopGap: Float,
         val keyboardFormGap: Float,
+        /**
+         * 社交按钮之间的间距（`32 * ratio`）。
+         *
+         * ⚠️ **不是** `LoginSocialButtons` 的 `buttonGap` 默认值 12 ——
+         * `LoginScreen.tsx:458` 显式传了 `spacing.socialGap`。
+         */
         val socialGap: Float,
+        /** 表单区头部行的下边距（`20 * ratio`）。 */
+        val backBottom: Float,
         val termsTopGap: Float,
         /** 键盘是否处于 docked 状态 —— 影响是否用弹性留白。 */
         val isKeyboardDocked: Boolean,
@@ -101,6 +109,7 @@ object LoginLayout {
             keyboardTopGap = keyboardTopGap,
             keyboardFormGap = keyboardFormGap,
             socialGap = (LoginStyle.SOCIAL_GAP_BASE * ratio).roundToWhole(),
+            backBottom = (LoginStyle.BACK_BOTTOM_BASE * ratio).roundToWhole(),
             termsTopGap = (LoginStyle.TERMS_TOP_GAP_BASE * ratio).roundToWhole(),
             isKeyboardDocked = isKeyboardDocked,
         )

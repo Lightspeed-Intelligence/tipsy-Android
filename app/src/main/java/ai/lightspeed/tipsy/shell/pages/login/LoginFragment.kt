@@ -1,17 +1,37 @@
 package ai.lightspeed.tipsy.shell.pages.login
 
 import ai.lightspeed.tipsy.shell.BuildConfig
+import ai.lightspeed.tipsy.shell.TipsyApplication
+import ai.lightspeed.tipsy.shell.auth.Jwt
+import ai.lightspeed.tipsy.shell.i18n.L10n
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Toast
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.ime
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.doOnAttach
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 
 /**
  * 原生登录页的 Fragment 宿主（方案 ADR-002：Fragment + [ComposeView]）。
@@ -27,6 +47,72 @@ import androidx.fragment.app.Fragment
  */
 class LoginFragment : Fragment() {
 
+    /**
+     * 邮箱登录的编排器。用 [viewModels] 而非字段 —— 要跨配置变更存活。
+     *
+     * 手写 Factory 是因为本工程刻意不引 DI（ADR-005：W1/W2 不引 Hilt）。
+     */
+    private val viewModel: EmailLoginViewModel by viewModels {
+        val app = requireActivity().application as TipsyApplication
+        object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                EmailLoginViewModel(
+                    api = EmailLoginApi(
+                        baseUrl = BuildConfig.API_BASE_URL,
+                        appVersion = BuildConfig.VERSION_NAME,
+                        downloadChannel = BuildConfig.DOWNLOAD_CHANNEL,
+                        deviceIdProvider = {
+                            // ANDROID_ID 对齐 RN 的 DeviceInfo.getUniqueId()
+                            Settings.Secure.getString(
+                                requireContext().contentResolver,
+                                Settings.Secure.ANDROID_ID,
+                            ).orEmpty()
+                        },
+                        aesKey = BuildConfig.DEVICE_ID_AES_KEY,
+                    ),
+                    // 壳是语言的唯一 writer（W1-P5），取当前值即可
+                    langCodeProvider = { L10n.current },
+                    onLoginSucceeded = { result -> onLoginSucceeded(app, result) },
+                ) as T
+        }
+    }
+
+    /**
+     * 登录成功的落地动作。
+     *
+     * 两步，顺序不能反：
+     * 1. [ShellTokenStore.onLoggedIn] —— 它内部会先 `generations.bumpAuth()`
+     *    再持久化。**不要自己再 bump**，重复递增会把在飞的合法响应也丢掉。
+     * 2. [AuthStateHub.notifyDidLogin] —— 通知壳内常驻页。userId 从 JWT 的
+     *    `sub` 取；这个调用点在 main 上此前**没有任何生产实现**（只有测试在调），
+     *    正是登录链缺的那一环。
+     *
+     * ## 本轮到此为止（范围边界）
+     *
+     * RN 登录后还会 `POST /user/info` 拉用户信息、按 `language_code` 切语言、
+     * 并按 `basicRulesCompleted`/`age`/`onboardingStatus` 决定是否进引导流程
+     * （权威判定在 `tipsy-app/src/surfaces/onboardingStage.ts`，那边有单测）。
+     * 那套引导由 RN 的 `OnboardingSurface` 承接，壳侧的衔接点
+     * （`ShellAuthProvider.notifyOnboardingCompleted`）当前标记为 **W4 未实现**。
+     *
+     * 所以**新用户走完这里只是拿到了 token**，不会自动进年龄验证 ——
+     * 这是已知的分期边界，不是漏实现。
+     */
+    private fun onLoginSucceeded(app: TipsyApplication, result: EmailLoginApi.LoginResult) {
+        app.tokenStore.onLoggedIn(result.token)
+        app.authStateHub.notifyDidLogin(Jwt.subject(result.token))
+        Log.i(
+            TAG,
+            "邮箱登录成功（isNewUser=${result.isNewUser} " +
+                "linkedAccounts=${result.linkedAccountCount}）",
+        )
+        // linkedAccountCount > 1 时 RN 会弹账号合并弹窗，但**仍照存 token**
+        // （useUserActon.ts:178-182 开弹窗后没有 return）。壳内该弹窗未实现，
+        // 属 W4 范围 —— 登录本身已成立，不阻断。
+        parentFragmentManager.popBackStack()
+    }
+
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
@@ -41,29 +127,112 @@ class LoginFragment : Fragment() {
         var insetTop = 0f
         var insetBottom = 0f
 
+        fun publishForTest() {
+            lastInsetTopForTest = insetTop
+            lastInsetBottomForTest = insetBottom
+        }
+
         fun render() {
             composeView.setContent {
                 MaterialTheme {
+                    // ⚠️ 邮箱流程的状态**必须放在 Compose / ViewModel 里**，
+                    // 不能像 inset 那样放 Fragment 字段 + render() 刷新：
+                    // render() 会 setContent 重建整棵组合树，用户每敲一个字
+                    // 都会**丢焦点、收键盘**。
+                    val emailFlowOpen = rememberSaveable { mutableStateOf(false) }
+                    val state by viewModel.state.collectAsState()
+                    val errorMessage by viewModel.errorMessage.collectAsState()
+                    val focusTick by viewModel.focusCodeRequest.collectAsState()
+                    val codeFocus = remember { FocusRequester() }
+                    val context = LocalContext.current
+
+                    // 发码成功后聚焦验证码框（RN: requestAnimationFrame + ref.focus）
+                    LaunchedEffect(focusTick) {
+                        if (focusTick > 0) {
+                            // 首帧尚未布局完时 requestFocus 会抛，故容错
+                            runCatching { codeFocus.requestFocus() }
+                        }
+                    }
+
+                    // 错误提示走 Toast（对齐 RN 的 Toast.show，非表单内联）
+                    // 后端 msg 已是可展示文案，直接用；兜底串是 i18n key，
+                    // 走 L10n 翻译后再显示（RN 的 t('Something went wrong')）。
+                    LaunchedEffect(errorMessage) {
+                        errorMessage?.let { msg ->
+                            val text = if (msg == FALLBACK_ERROR_KEY) {
+                                L10n.t(FALLBACK_ERROR_KEY)
+                            } else {
+                                msg
+                            }
+                            Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
+                            viewModel.consumeError()
+                        }
+                    }
+
+                    // 键盘高度：驱动 footer 显隐与上方留白收缩。
+                    // 用 ime inset 而非自己监听，Compose 会在动画期间连续给值。
+                    val keyboardHeightDp = WindowInsets.ime
+                        .asPaddingValues()
+                        .calculateBottomPadding()
+                        .value
+
                     LoginScreen(
                         downloadChannel = BuildConfig.DOWNLOAD_CHANNEL,
                         onGoogleClick = ::onGoogleClick,
                         onAppleClick = ::onAppleClick,
-                        onEmailClick = ::onEmailClick,
+                        onEmailClick = { emailFlowOpen.value = true },
                         insetTopDp = insetTop,
                         insetBottomDp = insetBottom,
+                        keyboardHeightDp = keyboardHeightDp,
+                        emailFlowOpen = emailFlowOpen.value,
+                        emailState = state,
+                        onBackFromEmail = {
+                            emailFlowOpen.value = false
+                            viewModel.onExitEmailFlow()
+                        },
+                        onEmailChange = viewModel::onEmailChange,
+                        onCodeChange = viewModel::onCodeChange,
+                        onSendCode = viewModel::sendCode,
+                        onSubmitLogin = viewModel::submitLogin,
+                        codeFocusRequester = codeFocus,
                     )
                 }
             }
         }
 
-        ViewCompat.setOnApplyWindowInsetsListener(composeView) { view, insets ->
+        ViewCompat.setOnApplyWindowInsetsListener(composeView) { _, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             val density = resources.displayMetrics.density
             insetTop = bars.top / density
             insetBottom = bars.bottom / density
+            publishForTest()
             render()
             // 不消费 —— 上层容器可能也要用（如 Surface 容器的键盘避让）
             insets
+        }
+
+        // ⚠️ inset 必须用 rootWindowInsets 兜底读一次，不能只依赖监听器。
+        //
+        // 窗口的 inset 派发在 Activity 起来时就发生过了。本 Fragment 的视图是
+        // **之后**才 attach 的，`setOnApplyWindowInsetsListener` 装上时那次派发
+        // 已经过去 —— 实测监听器**一次都没触发**（加日志确认：`onCreateView 进入`
+        // 打了，inset 那行没打）。
+        //
+        // 表现：条款文字压在导航栏下面（底部 padding 恒为 0），**没有任何报错**。
+        //
+        // 试过 `addOnAttachStateChangeListener` + `requestApplyInsets`，无效 ——
+        // 装监听器时 view 往往已经 attach 完了，回调不会再来。
+        // 可靠做法是 attach 后直接读 `rootWindowInsets`；监听器只负责后续变化
+        // （旋屏、键盘、导航栏模式切换）。
+        composeView.doOnAttach { view ->
+            ViewCompat.getRootWindowInsets(view)?.let { insets ->
+                val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+                val density = resources.displayMetrics.density
+                insetTop = bars.top / density
+                insetBottom = bars.bottom / density
+                publishForTest()
+                render()
+            }
         }
 
         render()
@@ -113,6 +282,21 @@ class LoginFragment : Fragment() {
     private fun onEmailClick() {
         Log.i(TAG, "邮箱登录入口被点击 —— 表单页待实现")
     }
+
+    /**
+     * 最近一次到达的 inset（dp），**仅供 [LoginInsetTest] 断言「inset 是否到达」**。
+     *
+     * 生产代码不读它 —— 布局值走 [LoginScreen] 的参数。留这两个字段是因为
+     * inset 失效是**静默**的（不崩不报错），没有可观测出口就只能靠人眼比对
+     * 真机截图发现。初始值 0 正是失效时的状态，所以测试断言 `> 0`。
+     */
+    @Volatile
+    var lastInsetTopForTest: Float = 0f
+        private set
+
+    @Volatile
+    var lastInsetBottomForTest: Float = 0f
+        private set
 
     companion object {
         private const val TAG = "LoginFragment"

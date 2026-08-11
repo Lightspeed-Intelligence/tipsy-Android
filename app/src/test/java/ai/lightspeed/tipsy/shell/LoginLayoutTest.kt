@@ -110,6 +110,62 @@ class LoginLayoutTest {
         assertTrue(degenerate.logoSize > 0f)
     }
 
+    // ── 首版三处样式 bug 的回归断言 ────────────────────────
+    //
+    // 这三条都是「真机与 RN 并排看才发现」的偏差。写成断言是为了不再回退 ——
+    // 样式错了不报错，只是两端不一样，而没人会同时装两个版本去比。
+
+    /**
+     * 社交按钮间距是 `32 * ratio`，**不是** `LoginSocialButtons` 的默认值 12。
+     * `LoginScreen.tsx:458` 显式传了 `spacing.socialGap`。
+     */
+    @Test
+    fun `社交按钮间距按 32 乘 ratio 而非默认 12`() {
+        assertEquals(32f, designSpec.socialGap, 0.5f)
+        // 小屏 clamp 到 0.85 → 27
+        val small = LoginLayout.compute(560f, 24f, 0f)
+        assertEquals(27f, small.socialGap, 0.5f)
+        // 任何屏下都不该退化成 12
+        for (h in listOf(560f, 683f, 731f, 812f, 900f, 2000f)) {
+            val gap = LoginLayout.compute(h, 24f, 24f).socialGap
+            assertTrue("socialGap 退化成默认值 12 了（h=$h）", gap > 20f)
+        }
+    }
+
+    /** 表单区头部行的下边距 `20 * ratio`（首版漏了整个头部行）。 */
+    @Test
+    fun `头部行下边距按 20 乘 ratio`() {
+        assertEquals(20f, designSpec.backBottom, 0.5f)
+        assertEquals(17f, LoginLayout.compute(560f, 24f, 0f).backBottom, 0.5f)
+    }
+
+    /**
+     * 表单区内容会**超过** `formHeight` —— 所以布局必须用 `heightIn(min=)`
+     * 而不是固定 `height`，否则最后一个按钮被压掉一截。
+     *
+     * 这条断言把「内容比容器高」这个反直觉的事实钉住：有人看到
+     * `formHeight` 会以为那是上限。
+     */
+    @Test
+    fun `表单区内容高超过 formHeight —— 不能固定高度`() {
+        for (h in listOf(683f, 731f, 812f)) {
+            val sp = LoginLayout.compute(h, 24f, 24f)
+            // 头部行 32 + backBottom + 三按钮 3*48 + 两间距
+            val contentHeight = 32f + sp.backBottom + 3 * 48f + 2 * sp.socialGap
+            assertTrue(
+                "h=$h 时内容 $contentHeight 应超过 formHeight ${sp.formHeight} " +
+                    "（若不再成立，说明 RN 侧改了参数，需重新核对布局约束）",
+                contentHeight > sp.formHeight,
+            )
+        }
+    }
+
+    /** 条款容器的 marginTop `24 * ratio`（首版漏了）。 */
+    @Test
+    fun `条款上间距按 24 乘 ratio`() {
+        assertEquals(24f, designSpec.termsTopGap, 0.5f)
+    }
+
     // ── 渠道分流（RN `constants/common.ts:18-19`）───────────
 
     @Test
