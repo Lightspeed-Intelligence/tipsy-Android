@@ -3,10 +3,11 @@
 > Kotlin/Compose 原生壳，以 integrated brownfield 方式托管 `tipsy-app`（Expo React Native，
 > git submodule）。核心页面逐步原生化，其余以 RN Surface 运行。
 >
-> **当前状态：未开工**（仅 Android Studio 模板脚手架）。状态一律以
-> [android-native-progress.md](reference/android-native-progress.md) 为准。
+> **当前状态：W0 完成，W1 只剩 P9**（仍是零业务代码）。状态一律以
+> [android-native-progress.md](reference/android-native-progress.md) 为准 ——
+> **本文不记状态快照**，重复的「当前进度」是 iOS 侧真实发生过的漂移源。
 
-**目标技术栈：** Kotlin, Compose Material 3, OkHttp + Retrofit + kotlinx.serialization,
+**目标技术栈：** Kotlin, Compose Material 3, OkHttp（**已决定不引 Retrofit**，见进度文档 §2.14）,
 MMKV, Coroutines/StateFlow, Media3 ExoPlayer, Coil, Expo `ReactHost`（RN 宿主）。
 
 **架构：** Fragment 宿主 + ComposeView（原生页）/ ReactFragment（RN Surface）；单 React
@@ -48,8 +49,12 @@ RN 侧文档见 `tipsy-app/llmdoc/`；iOS 壳的同构实践见 `../Tipsy-iOS/ll
 
 ## 硬性纪律
 
-- **禁止在本仓直接改 `tipsy-app/` 内部文件**。RN 侧改动走 tipsy-app 自己的 PR 流程，
-  合入后回本仓 bump submodule pin。本仓 PR 中的 submodule 变更只允许是指针 bump。
+- **RN 侧改动提交到 `tipsy-app` 的 `feat/android-native` 分支**（2026-08-11 owner 决定：
+  Android 迁移相关的 RN 改动**不走 PR**，直接提交该分支）。本仓 PR 中的 submodule
+  变更仍**只允许是指针 bump** —— 改动本身要在 `tipsy-app` 的历史里可追溯，
+  不能以「本仓顺手改了 submodule 工作树」的形式存在。
+  ⚠️ 该分支**未合进 `main`/`release`**，靠子模块指针引用；bump pin 前确认目标 commit
+  **已推到远端**，否则 CI 拉不到（`--depth 1` 也拉不到，见进度文档 §2.10）。
 - **`index.surfaces.js` 是 iOS 壳与 Android 壳共用入口**，改动需双壳回归。
 - 状态只写在进度文档一处，不在别处复制快照。
 - 不继承 RN 侧的弱化质量配置（`lintOptions.abortOnError false`、`passWithNoTests`）。
