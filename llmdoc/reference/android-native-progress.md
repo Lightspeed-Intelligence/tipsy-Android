@@ -1043,6 +1043,38 @@ app 单测 **49 条**覆盖本页（ViewModel 编排 / envelope 契约 / 状态�
 尚不存在）。RN 侧 `onAuthStateChanged` 目前**只有类型声明、无 JS 订阅方**，所以
 登录只发 `authStateHub`、未发 `TipsyAuthRegistry`；接 Surface 前需补齐对称性。
 
+### 2.21 CI 挂死：`runTest` 里嵌 `runBlocking`（2026-08-11 修复）
+
+`ApiClientTest.store 返回后恰好过期 REQUIRED 仍不得起飞` 会**永久死锁**，
+表现为 G1 Fast Gate 在「单元测试」步骤耗到 **job 60 分钟超时被 cancel**，
+后续「桥单测」与「skipped=0 校验」两步直接 skipped。
+
+PR #16 的 G1 记录是 `fail 1h0m15s`，PR #17 首跑是 `cancelled 1h0m15s`
+—— **同一个签名**。该 PR 描述里也写明「未执行组合验证」，所以这条是带着红 CI
+合进 main 的，不是本次合并引入。
+
+机制：`fixture` 传 `scope = this`（TestScope），该用例的 token 落在 refresh
+窗口内（`exp = now+1`、`requestNow = now+2`），于是 `getValidToken()` 走到
+`refreshSingleFlight`，那里 `scope.async` 把 refresh 排到**虚拟时间调度器**上，
+随后 `deferred.await()` 等它。而外层 `assertThrows { runBlocking { ... } }` 已经
+占住唯一的 test 线程 —— 调度器永远拿不到执行机会。
+
+同文件另有九处 `runBlocking` 侥幸不死锁：它们的 token 无效或不在 refresh 窗口内，
+`getValidToken()` 在真正 suspend 前就 return 了。**别以为那个写法是安全的。**
+
+修法：直接在 `runTest` 协程里 `try/catch` 调 suspend 函数，不嵌 `runBlocking`
+（本仓未依赖 kotlin-test，故不用 `assertFailsWith`）。
+
+⚠️ **这个坑的二次伤害是「报告看起来是绿的」**：测试 task 挂死时不产生新报告，
+`build/reports/tests/**/index.html` 还是上一次成功运行的内容。排查期间据此读到
+过「303 条全绿」，而那是挂死前的旧产物 —— 真实数字是 **336**。
+判据：**先看报告 mtime，再看数字**；挂死的 task 没有 mtime 更新。
+
+修复后实测：`:app:test{DirectApk,GooglePlay}DebugUnitTest --rerun-tasks`
+→ 各 **336 条**、failures=0、ignored=0，全程 2m35s（此前是无限挂）；
+`:tipsy-auth:testDebugUnitTest --rerun-tasks` → 15 条、ignored=0，
+`LiveAppSafetyTest` 已执行；`:app:lintDirectApkDebug` 过。
+
 ## 3. 横切能力
 
 | 能力 | 状态 | 落地处 |
