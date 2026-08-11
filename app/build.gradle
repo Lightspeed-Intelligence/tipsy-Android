@@ -28,10 +28,22 @@ react {
     )
     bundleCommand = 'export:embed'
 
-    // W0 严格隔离期：只打零业务依赖的自检入口，用于二分「挂载层问题 vs
-    // 业务 import 链问题」。业务 native module 经 capability gate 接回后，
-    // 由所属 packet 切到 index.surfaces.js（方案 §5.2）。
-    entryFile = file('../tipsy-app/index.surfaces.debug.js')
+    // W1-CLOSEOUT-2：切到业务入口（方案 §5.2 说的「由所属 packet 切回」）。
+    //
+    // 在此之前打的是 index.surfaces.debug.js —— 它**只注册 DebugSurface**，
+    // 所以任何指向业务 Surface 的路由都会去挂一个包里不存在的组件。
+    //
+    // ⚠️ **必须与 TipsyApplication.getJSMainModuleName() 同时改**。
+    // 那个是 Metro 直连时的入口，本项是离线内嵌包的入口 —— 两处不一致会出现
+    // 「Metro 加载业务包、离线包却是自检包」的错配，且 debug 下完全正常，
+    // 只有 release 或关掉 Metro 时才暴露。
+    //
+    // 切换的代价（真机验证时要专门看）：index.surfaces.js 顶层会跑 sentry init、
+    // i18n 初始化，以及 hydrateTags / hydrateCharacterBadgeConfigs /
+    // hydrateAvatarDecorationConfigs 三个网络引导。**这三个内部都静默捕获失败** ——
+    // 失败不报错，只表现为标签行/角色徽章/头像框空掉（全新安装必现，
+    // 升级安装因 MMKV 残留会被掩蔽）。
+    entryFile = file('../tipsy-app/index.surfaces.js')
     bundleAssetName = 'index.android.bundle'
 
     // Hermes 由 gradle.properties 的 hermesEnabled 控制，不是 react {} 的属性

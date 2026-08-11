@@ -869,6 +869,78 @@ Qt 接上前只在 debug 打日志。⚠️ **这一处刻意不遵循「未实�
 **已告知的代价**：W2/W3 那 32.6k 行迁移期间远端崩溃证据缺位，只能靠 logcat
 与本机复现。**Sentry 的价值恰在迁移过程中最高**，而不是迁完之后。
 
+### 2.18 W1-CLOSEOUT-2：Surface 上线前置（已完成，2026-08-11）
+
+P9 的三层前置。**单测 17 条**（连同既有共 **228 条**，skipped=0）。
+
+#### ⚠️ 比 initial props 形状更靠前的一层：组件不在包里
+
+`app/build.gradle` 的 `entryFile` 原先指向 `index.surfaces.debug.js`，而那个文件
+**只注册 `DebugSurface`**（`:59`）。所以任何指向业务 Surface 的路由都会去挂一个
+**包里不存在的组件**。这是 W0 刻意的隔离（方案 §5.2「由所属 packet 切回」），
+到这一步才该切。
+
+已切到 `index.surfaces.js`，**两处同时改**：`app/build.gradle` 的 `entryFile`
+（离线内嵌包）与 `TipsyApplication.getJSMainModuleName()`（Metro 直连）。
+⚠️ 只改一处会出现「Metro 加载业务包、离线包却是自检包」的错配，
+**debug 下看不出来**（Metro 那份是对的），只有 release 或关掉 Metro 才暴露。
+
+实测切换后 bundle 从 27MB / 426 asset 起步，13 个业务 Surface 的组件名与业务入口
+独有标记（`index.surfaces.js evaluated` / `align i18n to shell language`）都在包里。
+
+⚠️ **风险面随之变大**：`index.surfaces.js` 顶层会跑 sentry init、i18n 初始化，
+以及 `hydrateTags` / `hydrateCharacterBadgeConfigs` / `hydrateAvatarDecorationConfigs`
+三个网络引导。**这三个内部都静默捕获失败** —— 失败不报错，只表现为标签行 /
+角色徽章 / 头像框空掉（全新安装必现，升级安装因 MMKV 残留会被掩蔽）。
+真机验收时要专门看这三条。
+
+#### initial props 从嵌套 `route` 改为**平铺**
+
+原实现把业务参数塞进嵌套的 `route` Bundle，而 RN 侧 **13 个 Surface 无一读
+`props.route`**（全仓搜零命中）。它们一律读平铺的顶层 props：
+
+| Surface | 必需 props（实测） |
+| --- | --- |
+| `ChatDetailSurface` | `characterId`（**非可选**，`:75`） |
+| `CommentsSurface` | `targetType` + `targetId`（`:16-24`） |
+| `SettingsSurface` | `initialScreen?` |
+| `NotificationSurface` | `tab?` |
+
+iOS 的 `makeInitialProperties()` 产出的正是平铺形状。**嵌套形状会让
+`characterId` 恒为 `undefined`**，而 RN 侧不报错，只走「无参进入」兜底 ——
+表现为「点某个角色却进了上次的会话」。
+
+`CONTRACT_VERSION` **未递增**：嵌套形状从未被任何 bundle 消费过，
+这是修正一个从未生效的字段布局，不是契约变更。
+
+新增 `SurfaceProps`（route → 业务 props 映射）。**刻意返回 `Map` 而非 `Bundle`** ——
+`Bundle` 在 JVM 单测里是抛异常的 stub，而这层映射正是最该被测的部分
+（key 拼错、漏必填参数，两边都不报错）。撞名守卫也抽成不依赖 Bundle 的
+`assertNoShellKeyClash`，**撞名直接抛**而不是静默覆盖。
+
+#### `SurfaceDependencyChecklist`（P9 第一个交付物）
+
+`ChatDetailSurface` 的 18 项微根 + 5 个微栈目标，每项标注**缺失后果** ——
+缺项的共同症状是「点了没反应」（事件进 store 无人渲染，不报错不崩溃）。
+
+配套测试**双向断言**「清单 ⊆ RN 源码」与「RN 源码 ⊆ 清单」——
+只有前者时，RN 侧新增一个 `PortalHost` 清单仍会全绿，那是虚假的安心感。
+另有一条钉死 `SurfaceToastHost` 必须在具名 `PortalHost` 群之前（顺序反了
+表现为「弹窗被 toast 盖住」，测试很难抓）。
+
+⚠️ 核对时发现一处**双端不一致**：`ChatDetailSurface.tsx:628` 是
+`PortalHost name="MayBallSplashPV"`，而 `App.tsx:478` 是 `"SplashPV"`。
+全仓搜下来**两个名字都没有对应的 `Portal hostName` 消费方**，
+且 `components/animations/SplashPV.tsx` 根本不用 Portal —— 看起来两侧都是休眠遗留。
+**但这是推断，不是实测结论**：真机验收若发现活动开屏不弹，先查这里。
+**别"顺手统一"名字** —— 改 `index.surfaces.js` 系文件需要双壳回归。
+
+#### 仍未做（明确边界）
+
+- ChatDetail **未**放回生产白名单 —— 等 §9.1 矩阵填满（与并行的 PR #16 一致）
+- 真机验收未跑：本包所有验证都是单测 + bundle 内容核对，按 §5.4 纪律
+  「Surface 能否真的跑起来」当前状态是 `NOT RUN`
+
 ## 3. 横切能力
 
 | 能力 | 状态 | 落地处 |

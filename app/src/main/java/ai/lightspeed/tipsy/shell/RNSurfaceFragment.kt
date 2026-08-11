@@ -178,12 +178,14 @@ class RNSurfaceFragment : ReactFragment() {
         private const val FADE_OUT_MS = 180L
 
         /**
-         * @param route 深链/导航参数，会放进 initial props 的 `route`。
-         * @param languageCode 壳的语言意见；null = 无意见（P5 前恒为 null）。
+         * @param routeParams 业务参数，**平铺**进 initial props 的顶层 ——
+         *   13 个 Surface 一律读平铺 props，塞进 `route` 子 Bundle 它们读不到
+         *   （详见 [SurfaceContract] 类注释）。
+         * @param languageCode 壳的语言意见；null = 无意见。
          */
         fun newInstance(
             componentName: String,
-            route: Bundle? = null,
+            routeParams: Map<String, String> = emptyMap(),
             languageCode: String? = null,
             environment: String = if (BuildConfig.DEBUG) "development" else "production",
             distribution: String = BuildConfig.DOWNLOAD_CHANNEL,
@@ -195,7 +197,7 @@ class RNSurfaceFragment : ReactFragment() {
                 languageCode = languageCode,
                 environment = environment,
                 distribution = distribution,
-                route = route,
+                routeParams = routeParams,
             )
 
             // ReactFragment 经 Builder 设置组件名与 launchOptions
