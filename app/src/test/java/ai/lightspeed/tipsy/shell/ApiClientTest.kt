@@ -29,6 +29,8 @@ import org.junit.Test
 class ApiClientTest {
 
     private lateinit var server: MockWebServer
+    private val now = 1_700_000_000L
+    private val validToken = tokenWithExp(now + 3_600)
 
     @Before
     fun setUp() {
@@ -46,11 +48,11 @@ class ApiClientTest {
     @Test
     fun `REQUIRED 模式带 token`() = runTest {
         server.enqueue(ok())
-        val f = fixture(token = "tok-abc")
+        val f = fixture(token = validToken)
 
         f.client.get("user/info", authMode = AuthMode.REQUIRED)
 
-        assertEquals("tok-abc", server.takeRequest().getHeader("token"))
+        assertEquals(validToken, server.takeRequest().getHeader("token"))
     }
 
     /**
@@ -63,13 +65,13 @@ class ApiClientTest {
     @Test
     fun `OPPORTUNISTIC 模式有 token 时必须带上`() = runTest {
         server.enqueue(ok())
-        val f = fixture(token = "tok-abc")
+        val f = fixture(token = validToken)
 
         f.client.get("search/character_search", authMode = AuthMode.OPPORTUNISTIC)
 
         assertEquals(
             "OPPORTUNISTIC 有 token 必须带 —— iOS 漏了这条导致搜索历史恒空",
-            "tok-abc",
+            validToken,
             server.takeRequest().getHeader("token"),
         )
     }
@@ -89,7 +91,7 @@ class ApiClientTest {
     @Test
     fun `NONE 模式即使有 token 也不带`() = runTest {
         server.enqueue(ok())
-        val f = fixture(token = "tok-abc")
+        val f = fixture(token = validToken)
 
         f.client.get("public/config", authMode = AuthMode.NONE)
 
@@ -110,12 +112,84 @@ class ApiClientTest {
         assertEquals("请求根本不该发出", 0, server.requestCount)
     }
 
+    @Test
+    fun `REQUIRED 过期或不可解析 token 都不发请求`() = runTest {
+        val unusableTokens = listOf(tokenWithExp(now - 1), "not-a-jwt")
+
+        unusableTokens.forEach { token ->
+            val f = fixture(token = token)
+            assertThrows(ApiException.Unauthenticated::class.java) {
+                kotlinx.coroutines.runBlocking {
+                    f.client.get("user/info", authMode = AuthMode.REQUIRED)
+                }
+            }
+        }
+
+        assertEquals("不可用 token 绝不得上网", 0, server.requestCount)
+    }
+
+    @Test
+    fun `OPPORTUNISTIC 过期或不可解析 token 省略 header 但照常发送`() = runTest {
+        val unusableTokens = listOf(tokenWithExp(now - 1), "not-a-jwt")
+
+        unusableTokens.forEach { token ->
+            server.enqueue(ok())
+            fixture(token = token).client.get("public/config", authMode = AuthMode.OPPORTUNISTIC)
+            assertNull(server.takeRequest().getHeader("token"))
+        }
+
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun `取 token 后换号 REQUIRED 不得发送旧账号 token`() = runTest {
+        val accountA = tokenWithExp(now + 3_600, sub = "account-a")
+        val accountB = tokenWithExp(now + 3_600, sub = "account-b")
+        val f = fixture(token = accountA, switchToTokenOnValidation = accountB)
+
+        assertThrows(ApiException.Unauthenticated::class.java) {
+            kotlinx.coroutines.runBlocking {
+                f.client.get("user/info", authMode = AuthMode.REQUIRED)
+            }
+        }
+
+        assertEquals("候选 token 已非当前会话，请求不得发出", 0, server.requestCount)
+    }
+
+    @Test
+    fun `取 token 后换号 OPPORTUNISTIC 不得携带旧账号 token`() = runTest {
+        server.enqueue(ok())
+        val accountA = tokenWithExp(now + 3_600, sub = "account-a")
+        val accountB = tokenWithExp(now + 3_600, sub = "account-b")
+        val f = fixture(token = accountA, switchToTokenOnValidation = accountB)
+
+        f.client.get("public/config", authMode = AuthMode.OPPORTUNISTIC)
+
+        assertNull(server.takeRequest().getHeader("token"))
+    }
+
+    @Test
+    fun `store 返回后恰好过期 REQUIRED 仍不得起飞`() = runTest {
+        val f = fixture(
+            token = tokenWithExp(now + 1),
+            requestNow = now + 2,
+        )
+
+        assertThrows(ApiException.Unauthenticated::class.java) {
+            kotlinx.coroutines.runBlocking {
+                f.client.get("user/info", authMode = AuthMode.REQUIRED)
+            }
+        }
+
+        assertEquals("真正建请求前必须二次检查过期窗口", 0, server.requestCount)
+    }
+
     // ── 固定 header ───────────────────────────────────────────
 
     @Test
     fun `固定 header 齐全`() = runTest {
         server.enqueue(ok())
-        val f = fixture(token = "t")
+        val f = fixture(token = validToken)
 
         f.client.get("x", authMode = AuthMode.REQUIRED)
 
@@ -129,7 +203,7 @@ class ApiClientTest {
     @Test
     fun `非白名单 host 不带 lane header`() = runTest {
         server.enqueue(ok())
-        val f = fixture(token = "t", lane = "my-lane")
+        val f = fixture(token = validToken, lane = "my-lane")
 
         f.client.get("x", authMode = AuthMode.REQUIRED)
 
@@ -144,7 +218,7 @@ class ApiClientTest {
     @Test
     fun `成功响应返回 envelope`() = runTest {
         server.enqueue(ok("""{"code":0,"data":{"id":7}}"""))
-        val f = fixture(token = "t")
+        val f = fixture(token = validToken)
 
         val e = f.client.get("x", authMode = AuthMode.REQUIRED)
         assertTrue(e.isSuccess)
@@ -155,7 +229,7 @@ class ApiClientTest {
     @Test
     fun `HTTP 200 加业务错误码抛可分辨的业务异常`() = runTest {
         server.enqueue(ok("""{"code":6,"msg":"not enough gems"}"""))
-        val f = fixture(token = "t")
+        val f = fixture(token = validToken)
 
         val ex = assertThrows(ApiException.Business::class.java) {
             kotlinx.coroutines.runBlocking { f.client.get("x", authMode = AuthMode.REQUIRED) }
@@ -169,12 +243,13 @@ class ApiClientTest {
     @Test
     fun `401 交给 gate 且带上实际使用的 token`() = runTest {
         server.enqueue(MockResponse().setResponseCode(401))
-        val f = fixture(token = "tok-xyz")
+        val f = fixture(token = validToken)
 
         assertThrows(ApiException.Http::class.java) {
             kotlinx.coroutines.runBlocking { f.client.get("x", authMode = AuthMode.REQUIRED) }
         }
-        assertEquals("必须传实际用的 token，供归属判定", listOf("tok-xyz"), f.authRejected)
+        assertEquals("必须传实际用的 token，供归属判定", listOf(validToken), f.authRejected)
+        assertEquals("对齐 live RN：401 只上报并抛错，不自动重试响应", 1, server.requestCount)
     }
 
     /**
@@ -195,7 +270,7 @@ class ApiClientTest {
     @Test
     fun `402 交给 gate`() = runTest {
         server.enqueue(MockResponse().setResponseCode(402))
-        val f = fixture(token = "t")
+        val f = fixture(token = validToken)
 
         assertThrows(ApiException.Http::class.java) {
             kotlinx.coroutines.runBlocking { f.client.get("x", authMode = AuthMode.REQUIRED) }
@@ -208,7 +283,7 @@ class ApiClientTest {
     @Test
     fun `5xx 抛 Http 异常`() = runTest {
         server.enqueue(MockResponse().setResponseCode(500))
-        val f = fixture(token = "t")
+        val f = fixture(token = validToken)
 
         val ex = assertThrows(ApiException.Http::class.java) {
             kotlinx.coroutines.runBlocking { f.client.get("x", authMode = AuthMode.REQUIRED) }
@@ -219,7 +294,7 @@ class ApiClientTest {
     @Test
     fun `畸形响应抛 Malformed 而不是假成功`() = runTest {
         server.enqueue(ok("not json at all"))
-        val f = fixture(token = "t")
+        val f = fixture(token = validToken)
 
         assertThrows(ApiException.Malformed::class.java) {
             kotlinx.coroutines.runBlocking { f.client.get("x", authMode = AuthMode.REQUIRED) }
@@ -231,7 +306,7 @@ class ApiClientTest {
     @Test
     fun `POST 发送 JSON body`() = runTest {
         server.enqueue(ok())
-        val f = fixture(token = "t")
+        val f = fixture(token = validToken)
 
         f.client.post("chat/send", """{"msg":"hi"}""", authMode = AuthMode.REQUIRED)
 
@@ -244,7 +319,7 @@ class ApiClientTest {
     @Test
     fun `GET query 参数被正确编码`() = runTest {
         server.enqueue(ok())
-        val f = fixture(token = "t")
+        val f = fixture(token = validToken)
 
         f.client.get("search", mapOf("q" to "a b&c"), authMode = AuthMode.REQUIRED)
 
@@ -262,9 +337,15 @@ class ApiClientTest {
         val paymentRequired: () -> Int,
     )
 
-    private fun TestScope.fixture(token: String?, lane: String? = null): Fixture {
+    private fun TestScope.fixture(
+        token: String?,
+        lane: String? = null,
+        switchToTokenOnValidation: String? = null,
+        requestNow: Long = now,
+    ): Fixture {
         val rejected = mutableListOf<String>()
         var payment = 0
+        var switchedAccount = false
 
         val store = ShellTokenStore(
             persistence = object : ShellTokenStore.TokenPersistence {
@@ -274,9 +355,8 @@ class ApiClientTest {
             refreshApi = { error("本测试不触发刷新") },
             generations = Generations(),
             scope = this,
-            // 固定时钟 + 无 exp 的 token：让 isExpiringSoon 走「无 exp → true」分支会触发刷新，
-            // 所以这里用一个远期 exp 的真 JWT 形态，确保不走刷新
-            nowSeconds = { 1_700_000_000L },
+            // token store 使用固定时钟；各测试传真 JWT，避免结果随运行日期变化。
+            nowSeconds = { now },
         )
 
         val gate = ApiErrorGate(
@@ -293,8 +373,46 @@ class ApiClientTest {
                 appVersion = "1.4.5",
                 downloadChannel = "APK",
                 laneProvider = { lane },
+                nowSeconds = {
+                    if (!switchedAccount) {
+                        switchToTokenOnValidation?.let(store::onLoggedIn)
+                        switchedAccount = true
+                    }
+                    requestNow
+                },
             ),
             rejected,
         ) { payment }
+    }
+
+    private fun tokenWithExp(exp: Long, sub: String = "u1"): String {
+        val payload = JSONObject().put("exp", exp).put("sub", sub)
+        return "${encode("""{"alg":"HS256"}""")}.${encode(payload.toString())}.sig"
+    }
+
+    private fun encode(json: String): String {
+        val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        val bytes = json.toByteArray(Charsets.UTF_8)
+        val result = StringBuilder()
+        var index = 0
+        while (index < bytes.size) {
+            val b0 = bytes[index].toInt() and 0xFF
+            val b1 = if (index + 1 < bytes.size) bytes[index + 1].toInt() and 0xFF else -1
+            val b2 = if (index + 2 < bytes.size) bytes[index + 2].toInt() and 0xFF else -1
+            result.append(alphabet[b0 shr 2])
+            if (b1 < 0) {
+                result.append(alphabet[(b0 and 0x03) shl 4])
+            } else {
+                result.append(alphabet[((b0 and 0x03) shl 4) or (b1 shr 4)])
+                if (b2 < 0) {
+                    result.append(alphabet[(b1 and 0x0F) shl 2])
+                } else {
+                    result.append(alphabet[((b1 and 0x0F) shl 2) or (b2 shr 6)])
+                    result.append(alphabet[b2 and 0x3F])
+                }
+            }
+            index += 3
+        }
+        return result.toString()
     }
 }

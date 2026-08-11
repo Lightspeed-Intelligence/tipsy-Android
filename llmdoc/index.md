@@ -3,11 +3,11 @@
 > Kotlin/Compose 原生壳，以 integrated brownfield 方式托管 `tipsy-app`（Expo React Native，
 > git submodule）。核心页面逐步原生化，其余以 RN Surface 运行。
 >
-> **当前状态：W0 完成，W1 只剩 P9**（仍是零业务代码）。状态一律以
-> [android-native-progress.md](reference/android-native-progress.md) 为准 ——
-> **本文不记状态快照**，重复的「当前进度」是 iOS 侧真实发生过的漂移源。
+> **当前状态只看** [android-native-progress.md](reference/android-native-progress.md)。
+> 本索引不复制状态快照，避免与唯一进度真值漂移。
 
-**目标技术栈：** Kotlin, Compose Material 3, OkHttp（**已决定不引 Retrofit**，见进度文档 §2.14）,
+**目标技术栈：** Kotlin, Compose Material 3, OkHttp + 显式 envelope/标量容错层
+（**已决定不引 Retrofit**，见进度文档 §2.14），
 MMKV, Coroutines/StateFlow, Media3 ExoPlayer, Coil, Expo `ReactHost`（RN 宿主）。
 
 **架构：** Fragment 宿主 + ComposeView（原生页）/ ReactFragment（RN Surface）；单 React
@@ -22,6 +22,7 @@ RN 侧文档见 `tipsy-app/llmdoc/`；iOS 壳的同构实践见 `../Tipsy-iOS/ll
 | 文档 | 描述 |
 | --- | --- |
 | [android-native-migration-plan.md](architecture/android-native-migration-plan.md) | **迁移技术方案**：架构决策（5 个 ADR）、Android 四条硬约束、跨界契约、构建/渠道/OTA、波次计划、风险登记 |
+| [android-w1-closeout-ready.md](architecture/android-w1-closeout-ready.md) | **当前 closeout 工作包**：W1 auth/network correctness 的边界、验收、验证与停止条件 |
 
 ## 参考
 

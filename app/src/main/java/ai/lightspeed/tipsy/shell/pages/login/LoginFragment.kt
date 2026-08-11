@@ -4,6 +4,7 @@ import ai.lightspeed.tipsy.shell.BuildConfig
 import ai.lightspeed.tipsy.shell.TipsyApplication
 import ai.lightspeed.tipsy.shell.auth.Jwt
 import ai.lightspeed.tipsy.shell.i18n.L10n
+import android.annotation.SuppressLint
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
@@ -63,11 +64,23 @@ class LoginFragment : Fragment() {
                         appVersion = BuildConfig.VERSION_NAME,
                         downloadChannel = BuildConfig.DOWNLOAD_CHANNEL,
                         deviceIdProvider = {
-                            // ANDROID_ID 对齐 RN 的 DeviceInfo.getUniqueId()
-                            Settings.Secure.getString(
+                            // ANDROID_ID 对齐 RN 的 `DeviceInfo.getUniqueId()`
+                            // （`react-native-device-info` 在 Android 上返回的正是
+                            // Settings.Secure.ANDROID_ID）。
+                            //
+                            // ⚠️ lint 的 HardwareIds 在这里**必须**抑制而非绕开：
+                            // 这个值加密后作为 `X-Client-ID` 送给后端风控，两端必须
+                            // 算出同一个 ID。换成随机 UUID 或 install id 会让后端
+                            // **静默拒绝发码**（且不提示与设备 ID 有关）。
+                            //
+                            // 用途仅限风控头，不做广告标识、不落库、不上报第三方，
+                            // 因此不属于 HardwareIds 要防的隐私滥用场景。
+                            @SuppressLint("HardwareIds")
+                            val androidId = Settings.Secure.getString(
                                 requireContext().contentResolver,
                                 Settings.Secure.ANDROID_ID,
                             ).orEmpty()
+                            androidId
                         },
                         aesKey = BuildConfig.DEVICE_ID_AES_KEY,
                     ),
@@ -156,7 +169,11 @@ class LoginFragment : Fragment() {
 
                     // 错误提示走 Toast（对齐 RN 的 Toast.show，非表单内联）
                     // 后端 msg 已是可展示文案，直接用；兜底串是 i18n key，
-                    // 走 L10n 翻译后再显示（RN 的 t('Something went wrong')）。
+                    // 走 L10n 翻译后再显示。
+                    //
+                    // 这里用 L10n.t 而非 LocalizedText 是有意的：Toast 是一次性副作用，
+                    // 不参与重组（语言切换后已弹出的 toast 本就不该改字）。组合内的
+                    // 静态文案仍必须用 LocalizedText。
                     LaunchedEffect(errorMessage) {
                         errorMessage?.let { msg ->
                             val text = if (msg == FALLBACK_ERROR_KEY) {

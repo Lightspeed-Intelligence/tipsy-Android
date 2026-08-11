@@ -2,12 +2,10 @@
 
 > 派生自 `android-native-migration-plan.md`（下称「方案」）。本文只做 W1 的**执行级**细化，
 > 不重复方案的论证。方案是真值，本文与之冲突时以方案为准。
-> 更新：2026-08-10 ｜ 状态：**执行中**
+> 契约更新：2026-08-11 ｜ 状态只看唯一进度真值
 >
 > **进度只看**[`../reference/android-native-progress.md`](../reference/android-native-progress.md)
 > （本文不记状态快照——重复的「当前进度」是 iOS 侧真实发生过的漂移源）。
-> 截至最后更新：P0 ✅ / P1 ✅ / P2 一半 / P3 已推迟 / P4 ✅ / P5 ✅ / P6 ✅ /
-> **P7 · P8 已决定推迟到业务迁移后**（2026-08-11）/ P9 未开始。
 
 ## 0. W1 的目标与不做什么
 
@@ -51,23 +49,25 @@ P4  Router + 返回栈接管（含 scheme 安全审计）
 P5  i18n（Native 唯一 writer + Compose 本地化组件）     ← P4/P5/P6 可并行
 P6  network 三鉴权模式 + 统一 envelope/容错反序列化
         ↓
-P7  root side-effect 清单逐行填证据（含 Qt 冲突决策）
-P8  Sentry 原生实例
+P7  root side-effect 清单逐行填证据（Qt 接线已决策推迟，见 §9）
+P8  Sentry 原生实例（已决策推迟，见 §9 / §10）
         ↓
 P9  ChatDetailSurface gate（SurfaceDependencyChecklist + §9.1 矩阵一行）
 ```
 
 **排序理由**:P3 放在前四分之一,因为它是 W1 唯一可能**推翻整个迁移路径**的环节
 (方案 §6.1:"不要把它留到最后 —— 它是 §2.4 迁移算法唯一的正确性证据")。
-P9 放最后,因为它依赖 P0-P8 全部就位才有意义。
+P9 放最后，因为它依赖 P0-P6、未推迟的 root side-effect 证据和 Surface closeout
+先收口；P7 Qt / P8 Sentry 已由 owner 显式接受风险并推迟，不能再写成“必须先实现”。
 
 ---
 
 ## 2. P0：tipsy-auth Android 桥骨架
 
-### 2.1 要改 `tipsy-app`（本仓无权限,需单独 PR）
+### 2.1 `tipsy-app` Android 桥（已落地；保留原始要求作契约）
 
-`modules/tipsy-auth/` 现状**只有 iOS**:
+W1 开始时 `modules/tipsy-auth/` 只有 iOS；当前 pin 已有 Android 模块与 provider
+注册模式。下面保留当时要求，供后续桥变更检查兼容性：
 
 ```
 expo-module.config.json   → {"platforms":["apple"],"apple":{"modules":["TipsyAuthModule"]}}
@@ -75,7 +75,7 @@ index.ts / src/index.ts   → TS 契约（两侧共用）
 ios/TipsyAuthModule.swift → 513 行，Android 侧的实现参照
 ```
 
-W1 要加:
+落地内容：
 - `expo-module.config.json` 增 `android` 段与 `platforms` 增 `"android"`
 - `modules/tipsy-auth/android/` Kotlin 模块 + provider 注册模式
 
@@ -446,7 +446,7 @@ RN 经 initial props + `onLanguageChanged` 同步。
 
 | 模式 | 语义 | RN 对应 |
 | --- | --- | --- |
-| `REQUIRED` | 必带 token;缺失立即 auth error;401 → 一次 single-flight refresh + 重试 | `axiosAuth` |
+| `REQUIRED` | 请求前取有效 token；临过期 single-flight refresh；缺失/已过期立即 auth error；服务端 401 → token-aware auth reject，**不做 response retry** | `axiosAuth` |
 | `OPPORTUNISTIC` | **有 token 就带,没有也照发** | `axiosPublic` |
 | `NONE` | 永不带用户 token | 无 RN 对应,仅给明确禁止携带身份的端点 |
 
@@ -636,12 +636,16 @@ SafeAreaProvider (546) → KeyboardProvider (547) → SWRConfig (548)
 
 ---
 
-## 12. RNSurfaceFragment 要补的四件事（**已完成**，2026-08-10）
+## 12. RNSurfaceFragment 四项机制（主体已落地，真实实例关闭链待收口）
 
-W0 的 `RNSurfaceFragment.kt` 曾是 36 行 stub。四件事均已实现并**在 API 37 真机验证**：
+W0 的 `RNSurfaceFragment.kt` 曾是 36 行 stub。UUID、占位、reappear 与 props builder
+均已落地，并曾在 API 37 验证 DebugSurface 挂载、首帧占位与 reappear：
 Surface 挂载正常、首帧占位单次淡出、`onSurfaceReappeared` 实测发射
 （`surface=DebugSurface`，确认是**组件名**而非 instanceId）。
 判定逻辑抽在 `surface/ReappearPolicy.kt`（可单测），契约在 `surface/SurfaceContract.kt`。
+
+但真实 RN `popSurface()` 仍无 instanceId，Android bridge 固定把 `null` 交给 Activity，
+会绕过实例比对。故 §12.1 尚未闭环；在 W1 closeout 修复前不得标整体完成。
 
 ⚠️ 一处订正：原文与实现注释都说过「旋转会重建 Fragment」——**不成立**，
 `MainActivity` 的 `configChanges` 已含 `orientation|screenSize`（manifest:52）。
@@ -693,14 +697,14 @@ RN 侧已就绪:`src/hooks/useShellSurfaceRefocus.ts`(45 行)把 `useFocusEffect
 
 ---
 
-## 13. 外部阻塞项（**建议 W1 第一天就提出**）
+## 13. 外部依赖与解除状态
 
 | # | 阻塞项 | 影响 | 需要谁 |
 | --- | --- | --- | --- |
-| 1 | **三渠道真实 release 产物 + 匹配签名** ⬆️ | P3 覆盖升级验证**一步也做不了**。原以为模拟器上有现成 fixture，实测那是 dev build 且无数据（§5.4），所以本项从「需要签名」升级为「需要完整产物」 | 发布 owner |
-| 1b | **一份真登录过的现网包数据（或脱敏 MMKV 样本）** | P2 的 MMKV 直读路径无真实数据可验，只能靠构造样本自测 | 发布 owner / QA |
-| 2 | `tipsy-app` 的 PR 权限（加 `tipsy-auth` android 段） | P0 做不了,整个 W1 卡住 | RN 仓 owner |
-| 3 | **Qt 冲突决策**（§9.1 二选一） | root side-effect 表无法零 UNKNOWN | 产品 / analytics owner |
+| 1 | **三渠道真实 release 产物 + 匹配签名** ⏸️ | P3 覆盖升级验证仍依赖它；已决定与 P2 剩余合并推迟到上线前 | 发布 owner |
+| 1b | **一份真登录过的现网包数据（或脱敏 MMKV 样本）** ⏸️ | P2 真实数据验证仍依赖它；同上推迟 | 发布 owner / QA |
+| ~~2~~ | ~~`tipsy-app` 的 Android 桥落地权限~~ | ✅ **已解除**：Android 模块已在当前 submodule pin，可追溯于 `feat/android-native` | — |
+| ~~3~~ | ~~Qt 原“二选一”冲突决策~~ | ✅ **原前提已推翻并由 owner 决策推迟**（§9.1）；真实现状是 Qt 尚未初始化 | — |
 | 4 | AB Test 的 Android appKey | AB 初始化做不了 | 后端 / 产品 |
 | ~~5~~ | ~~`PAT_TOKEN`（遗留自 W0）~~ | ✅ **已解除**（2026-08-10）：本仓独立签发 token，G1 已激活并首次真绿。**不再需要向 iOS 那个 PAT 的持有者取值** | — |
 

@@ -18,12 +18,13 @@ import org.json.JSONObject
  *
  * 两个原因，都不是"图省事"：
  *
- * 1. **需要 per-request 的 `X-Client-ID` 风控头**，而 [ai.lightspeed.tipsy.shell.network.ApiClient]
- *    的 `post()` 没有自定义 header 参数。给它加参数会撞正在评审的 PR #16
- *    （那个 PR 重写了 ApiClient/ApiErrorGate/ShellTokenStore）。
- * 2. **它们是 auth 的前置**，与 [ai.lightspeed.tipsy.shell.auth.RefreshTokenApi]
- *    同理：不能依赖任何"带 token 的拦截器"。RN 侧这两个端点走的也是**裸 axios**，
- *    没有拦截器、不共享统一错误处理。
+ * 1. **它们是 auth 的前置**，与 [ai.lightspeed.tipsy.shell.auth.RefreshTokenApi]
+ *    同理：不能依赖任何"带 token 的拦截器"，否则形成「取 token → 登录 → 取 token」
+ *    的循环。RN 侧这两个端点走的也是**裸 axios**，没有拦截器、不共享统一错误处理。
+ *    ⚠️ 做「统一网络收口」类重构时别把这两个端点并进 `ApiClient`（同 §4.5 对
+ *    `/auth/refresh_token` 的纪律）。
+ * 2. **需要 per-request 的 `X-Client-ID` 风控头**，而
+ *    [ai.lightspeed.tipsy.shell.network.ApiClient] 的 `post()` 没有自定义 header 参数。
  *
  * 所以照 `RefreshTokenApi` 的先例独立实现（那个文件的注释 :13-19 立了这个先例）。
  *

@@ -82,12 +82,20 @@ class TipsyApplication : Application(), ReactApplication {
 
     /**
      * 进程级作用域。`SupervisorJob` 让单个失败的子任务不连带取消其他 ——
-     * auth 相关的 fire-and-forget（如 401 触发登出）不能因为别处的异常被取消。
+     * 桥的 fire-and-forget（当前为 402 导航）不能因为别处的异常被取消。
      *
      * 刻意**不**在 provider 内部新建 scope：那样登出会随调用方作用域被取消，
      * 表现为"401 了但没登出"，且只在特定时序下发生。
      */
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /**
+     * token refresh 的进程级作用域。refresh HTTP 自身会在 [RefreshTokenApi] 内切到 IO；
+     * 回到这里后必须在 Main.immediate 完成 token 状态迁移与 loggedOut 分发，因为
+     * [authStateHub] 的 Router/未来常驻 UI observer 都是主线程状态。若复用上面的
+     * Default scope，refresh 自动失效会从后台线程直接改 Router，形成数据竞争。
+     */
+    private val tokenScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     /**
      * 壳内登录态广播（W1-P1，§3.4）。W2 的五 Tab 直接订阅它 ——
@@ -102,6 +110,12 @@ class TipsyApplication : Application(), ReactApplication {
     /** 壳侧 API 客户端（W1-P6）。W2 的 Home / Login 用它发请求。 */
     lateinit var apiClient: ApiClient
         private set
+
+    /**
+     * 401/402 的进程级唯一漏斗。[apiClient] 与 RN 桥 provider 共用此实例，
+     * 因此 Native/RN 同时报错也只消费一个防抖窗口。
+     */
+    private lateinit var apiErrorGate: ApiErrorGate
 
     /**
      * RN 侧 MMKV 的只读入口（W1-P5 用它读账号语言）。
@@ -207,16 +221,29 @@ class TipsyApplication : Application(), ReactApplication {
                 downloadChannel = BuildConfig.DOWNLOAD_CHANNEL,
             ),
             generations = generations,
-            scope = appScope,
+            scope = tokenScope,
             listener = object : ShellTokenStore.Listener {
                 override fun onTokenCleared() {
-                    // 通知 RN 侧已 hydrate 的 store，以及壳内常驻页
+                    // tokenStore 的唯一 clear 事件同时驱动两个消费端。
+                    // provider.logout 不再单独 notify hub，否则主动登出会广播两次；
+                    // refresh 失败自动清 token 也会经此到达壳内常驻页。生产 refresh
+                    // 由 tokenScope 保证回到 Main.immediate，不能把 Router observer 发在 Default。
                     TipsyAuthRegistry.notifyAuthStateChanged("loggedOut")
+                    authStateHub.notifyDidLogout()
                 }
             },
         )
 
-        val provider = ShellAuthProvider(
+        // 先创建唯一 gate，再同时注入 provider 与 ApiClient。gate 的终端
+        // 回调捕获 provider，但只会在完成赋值/注册后的真实网络事件中运行。
+        lateinit var provider: ShellAuthProvider
+        apiErrorGate = ApiErrorGate(
+            onAuthRejected = { token -> provider.handleServerAuthRejectedForToken(token) },
+            onPaymentRequired = { provider.handleServerPaymentRequired() },
+            logger = { Log.i(TAG, it) },
+        )
+
+        provider = ShellAuthProvider(
             isDebugBuild = BuildConfig.DEBUG,
             // W1-P5：壳成为语言的唯一 writer。`index.surfaces.js:45-49` 在 runtime
             // 启动时读它对齐 i18next，运行中的变化经 onLanguageChanged 事件接力。
@@ -233,7 +260,7 @@ class TipsyApplication : Application(), ReactApplication {
                 }
             },
             tokenStore = tokenStore,
-            authStateHub = authStateHub,
+            apiErrorGate = apiErrorGate,
             scope = appScope,
             // W1-P6：壳成为 API 地址的真值。RN 侧 `getShellBaseAPIURL()` 会优先用它，
             // 保证**原生页与 RN Surface 命中同一后端** —— 不一致会让两边看到不同数据
@@ -249,14 +276,7 @@ class TipsyApplication : Application(), ReactApplication {
             client = sharedOkHttpClient(),
             baseUrl = BuildConfig.API_BASE_URL,
             tokenStore = tokenStore,
-            errorGate = ApiErrorGate(
-                // 401/402 的**两个入口汇聚到同一处**：原生页经此，
-                // RN Surface 经桥的 notifyServerAuthRejectedForToken / notifyServerPaymentRequired
-                // 也调到 provider 的同一实现上。
-                onAuthRejected = { token -> provider.notifyServerAuthRejectedForToken(token) },
-                onPaymentRequired = { provider.notifyServerPaymentRequired() },
-                logger = { Log.i(TAG, it) },
-            ),
+            errorGate = apiErrorGate,
             appVersion = BuildConfig.VERSION_NAME,
             downloadChannel = BuildConfig.DOWNLOAD_CHANNEL,
             // P7 接壳的 lane store 后换成真值；现在 null = 壳无意见

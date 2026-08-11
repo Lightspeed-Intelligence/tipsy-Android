@@ -88,9 +88,13 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
             authStateHub = app.authStateHub,
             logger = { Log.i(TAG, it) },
         )
-        // W1 只启用 ChatDetail（P9 的 gate 对象）。其余目标随波次开 ——
-        // §8.3：未过 §9.1 矩阵的 Surface 不得接生产入口。
-        router.markEnabled(AppRoute.ChatDetail::class.java)
+        // RN 入口已切到 index.surfaces.js（本包 §2.19），业务 Surface 组件**在包里**。
+        // 但 AppRouter 仍用 ProductionRoutePolicy 的空白名单：能挂 ≠ 已验收，
+        // ChatDetail 在完成 W1-P9 / §9.1 矩阵前刻意不进生产白名单。
+        // 命中该路由时 Router 走 rejectNotEnabled 记录明确拒绝。
+        //
+        // ⚠️ 白名单是编译期常量（ProductionRoutePolicy），不再有运行时 markEnabled。
+        // 启用某个路由要集中改那里并同步矩阵测试。
 
         if (savedInstanceState == null) {
             // 原生根：证明壳自己能先渲染，不依赖 RN
@@ -161,7 +165,7 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
             when (route) {
                 is AppRoute.ChatDetail -> openSurface("ChatDetailSurface")
                 // 其余目标尚未启用，Router 的 enabledRoutes 会先拦下 ——
-                // 走到这里说明有人 markEnabled 了却没加分支，属实现错误，必须可见。
+                // 走到这里说明有人启用了路由却没加分支，属实现错误，必须可见。
                 else -> error("路由已启用但缺少导航实现：${route.javaClass.simpleName}")
             }
         }

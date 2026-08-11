@@ -1,7 +1,7 @@
 package ai.lightspeed.tipsy.shell.bridge
 
-import ai.lightspeed.tipsy.shell.auth.AuthStateHub
 import ai.lightspeed.tipsy.shell.auth.ShellTokenStore
+import ai.lightspeed.tipsy.shell.network.ApiErrorGate
 import android.util.Log
 import expo.modules.tipsyauth.TipsyAuthProvider
 import kotlinx.coroutines.CoroutineDispatcher
@@ -17,8 +17,8 @@ import kotlinx.coroutines.withContext
  * ## 当前边界（W1-P1 已接通）
  *
  * auth 生命周期（取 token / 刷新 / 登出 / 401 归属判定）已委派 [ShellTokenStore]。
- * 仍未实现的：**登录 UI**（W2 原生 Login 页）、**导航**（P4 Router）、
- * **语言真值**（P5）、**402 付费墙**（P6）。
+ * P5 已由壳的 L10n 提供语言真值。仍未实现的：**登录 UI**（W2 原生 Login 页）
+ * 与部分**导航目标**。402 已进共享 gate；宝石页未启用时由 Router 明确拒绝。
  *
  * ⚠️ token 的**历史数据迁移**（MMKV 三形态兼容读已就位，SecureStore 兜底未做）
  * 属 P2 —— 覆盖升级设备上 SecureStore 里的 token 目前读不出来，
@@ -35,7 +35,7 @@ import kotlinx.coroutines.withContext
  */
 class ShellAuthProvider(
     private val isDebugBuild: Boolean,
-    /** 语言真值来源。P5 会换成壳的 L10n store；现在由调用方注入以免这里先假设实现。 */
+    /** 语言真值来源；生产装配注入壳的 `L10n.current`，测试可替换。 */
     private val languageCodeProvider: () -> String?,
     /**
      * API 根地址（W1-P6）。壳内**优先于**构建期 `EXPO_PUBLIC_API_URL`，
@@ -52,10 +52,14 @@ class ShellAuthProvider(
     private val onNavigateGemsPurchase: (params: Map<String, String>) -> Unit = {},
     /** token 真值（W1-P1）。 */
     private val tokenStore: ShellTokenStore,
-    /** 登录态广播（W1-P1，§3.4）。 */
-    private val authStateHub: AuthStateHub,
     /**
-     * 承载非 suspend 桥方法里的 fire-and-forget 工作（如无参 authRejected 触发登出）。
+     * 进程级 401/402 唯一漏斗。Native [ai.lightspeed.tipsy.shell.network.ApiClient]
+     * 与 RN 桥入口必须注入**同一实例**，否则两边会各自防抖。
+     */
+    private val apiErrorGate: ApiErrorGate,
+    /**
+     * 承载非 suspend 桥方法里的 fire-and-forget 工作（当前是 paymentRequired
+     * 进入 suspend 漏斗）。
      * 由壳注入 Application 级 scope —— **不要在这里新建**，否则登出会随
      * 调用方作用域被取消，表现为"401 了但没登出"。
      */
@@ -129,40 +133,38 @@ class ShellAuthProvider(
         notImplemented("requestLogin(reason=$reason)", wave = "W2（原生 Login 页）")
 
     /**
-     * 完整语义（W1 计划 §3.5）：失效 auth generation → 废弃在飞 refresh →
-     * 清 token → **收敛返回栈** → 发**一次** loggedOut。
+     * 当前语义：失效 auth generation / 废弃 refresh / 清 token / 广播一次 / 收栈。
+     * 返回栈收敛由 [onPopSurface] 承担（W1 只有单层 Surface 容器）。
      *
-     * 返回栈收敛由 [onPopSurface] 承担（W1 只有单层 Surface 容器）；
-     * P4 接 Router 后改为收敛整个栈。
+     * W1 计划 §3.5 的最终顺序写的是 `clear → pop → emit`；当前唯一 listener 在 clear
+     * 临界区同步 emit，所以调用顺序仍是 `clear → emit → pop`。现有 listener 只做有界
+     * 状态分发，且整段在主线程，不构成本包跨账号 blocker；精确顺序仍需后续收口。
      */
     override suspend fun logout() {
-        tokenStore.clearToken()
         // ⚠️ `logout()` 在契约里**不是** @MainThread（它主要做存储清理），但收栈动的是
         // FragmentManager —— 必须自己切主线程。桥的 onMain 只覆盖标了 @MainThread
         // 的方法，不会替这里做。
         // 漏掉的表现：从 appScope（Dispatchers.Default）触发的登出抛
         // CalledFromWrongThreadException，而 JS 直接调 logout() 的路径又恰好没事 ——
         // 典型的"只有某条路径崩"。
-        withContext(mainDispatcher) { onPopSurface(null) }
-        authStateHub.notifyDidLogout()
+        withContext(mainDispatcher) {
+            // 默认 notifyListener=true。TipsyApplication 的唯一 listener 同时通知
+            // RN Registry 与壳内 AuthStateHub；这里不再另发一次。
+            // 清理与收栈在同一主线程顺序段，不给 UI 登录动作留夹入窗口。
+            tokenStore.clearToken()
+            onPopSurface(null)
+        }
     }
 
     /**
      * 仅清 token（删号等场景），**不收栈、不发 loggedOut** ——
      * 与 [logout] 的区别在这里：调用方（如 DeleteAccountSurface）自己控制后续导航。
      */
-    override suspend fun clearToken() = tokenStore.clearToken()
+    override suspend fun clearToken() = tokenStore.clearToken(notifyListener = false)
 
-    /**
-     * 无参版本：**只在拿不到具体 token 时使用**。
-     *
-     * ⚠️ 它无法判断被拒 token 是否仍是当前 token，所以会**无条件登出** ——
-     * 旧账号迟到的 401 会误登出新账号。RN 侧已优先调带 token 的版本，
-     * 这里保留只为兼容老 bundle（OTA 把老 JS 推给新 binary 的情形）。
-     */
+    /** 无参 401 无法证明会话归属，必须像 Native 的 `401(null)` 一样可诊断地忽略。 */
     override fun notifyServerAuthRejected() {
-        logger.log(Logger.Level.WARN, "收到无参 authRejected —— 无法校验 token 归属，按当前会话登出")
-        scope.launch { logout() }
+        logger.log(Logger.Level.WARN, "收到无参 authRejected —— 无法校验 token 归属，已忽略")
     }
 
     /**
@@ -174,12 +176,25 @@ class ShellAuthProvider(
      * 这里**刻意不打印 authToken**（token 不进 log）。
      */
     override suspend fun notifyServerAuthRejectedForToken(authToken: String) {
-        if (!tokenStore.isCurrentToken(authToken)) {
-            logger.log(Logger.Level.INFO, "忽略过期会话的 authRejected（被拒 token 已非当前 token）")
-            return
-        }
-        logout()
+        apiErrorGate.onUnauthorized(authToken)
     }
+
+    /**
+     * [ApiErrorGate] 通过防抖后的终端处理。与上面的桥入口分开，
+     * 是为了避免“provider → gate → provider 入口”递归。
+     */
+    internal suspend fun handleServerAuthRejectedForToken(authToken: String): Boolean =
+        withContext(mainDispatcher) {
+            // 归属校验与清理在 tokenStore 内原子完成，且与收栈共处主线程顺序段。
+            // 若等 token 锁时 B 已登录，原子比较会返回 false；若清 A 成功，
+            // 从返回 true 到同步 pop 之间，主线程的 B 登录动作无法夹入。
+            if (!tokenStore.clearTokenIfCurrent(authToken)) {
+                logger.log(Logger.Level.INFO, "忽略过期会话的 authRejected（被拒 token 已非当前 token）")
+                return@withContext false
+            }
+            onPopSurface(null)
+            true
+        }
 
     // ── SurfaceNavigationContract ───────────────────────────────
 
@@ -219,7 +234,14 @@ class ShellAuthProvider(
      * 并记日志 —— 不是静默 no-op。
      */
     override fun notifyServerPaymentRequired() {
-        onNavigateGemsPurchase(emptyMap())
+        scope.launch { apiErrorGate.onPaymentRequired() }
+    }
+
+    /** [ApiErrorGate] 通过防抖后的 402 终端处理。 */
+    internal suspend fun handleServerPaymentRequired() {
+        // Native ApiClient 在 Dispatchers.IO 解析响应，因此 gate 的回调不能
+        // 假设自己来自桥的主线程。Router/FragmentManager 统一在这里切主线程。
+        withContext(mainDispatcher) { onNavigateGemsPurchase(emptyMap()) }
     }
 
     // ── SurfaceLifecycleContract ────────────────────────────────
