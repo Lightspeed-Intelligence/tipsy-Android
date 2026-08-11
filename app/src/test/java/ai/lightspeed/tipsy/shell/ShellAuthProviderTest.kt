@@ -375,7 +375,8 @@ class ShellAuthProviderTest {
         isDebug: Boolean = true,
         apiBaseUrl: String? = null,
         nowProvider: () -> Long = { now },
-        refreshApi: ShellTokenStore.RefreshApi = { error("本测试不应触发刷新") },
+        refreshApi: ShellTokenStore.RefreshApi =
+            ShellTokenStore.RefreshApi { _ -> error("本测试不应触发刷新") },
         mainDispatcher: CoroutineDispatcher = kotlinx.coroutines.Dispatchers.Unconfined,
         onTokenClearedHook: () -> Unit = {},
         onPopSurfaceHook: () -> Unit = {},
