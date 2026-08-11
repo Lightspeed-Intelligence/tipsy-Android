@@ -1,7 +1,12 @@
 package ai.lightspeed.tipsy.shell
 
 import ai.lightspeed.tipsy.shell.network.ApiErrorGate
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -64,15 +69,115 @@ class ApiErrorGateTest {
     }
 
     @Test
+    fun `并发 401 只有一个进入终端处理`() = runTest {
+        val firstEntered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val callbackEntries = AtomicInteger(0)
+        val gate = ApiErrorGate(
+            onAuthRejected = {
+                callbackEntries.incrementAndGet()
+                firstEntered.complete(Unit)
+                release.await()
+                true
+            },
+            onPaymentRequired = {},
+            nowMillis = { 1000L },
+        )
+
+        coroutineScope {
+            launch { gate.onUnauthorized("tok-1") }
+            firstEntered.await()
+            launch { gate.onUnauthorized("tok-1") }
+            yield()
+            assertEquals("第二个并发事件必须停在 gate 外", 1, callbackEntries.get())
+            release.complete(Unit)
+        }
+
+        assertEquals("同 token 最终只执行一次终端副作用", 1, callbackEntries.get())
+    }
+
+    /**
+     * A 账号迟到的 401 可以进入归属校验，但终端返回 false 后不得
+     * 占用防抖窗口；否则紧接着 B 当前账号的真实 401 会被吞掉。
+     */
+    @Test
+    fun `stale token 不占用当前会话的 401 防抖窗口`() = runTest {
+        val current = "current-secret-token"
+        val stale = "stale-secret-token"
+        val handled = mutableListOf<String>()
+        val logs = mutableListOf<String>()
+        val gate = ApiErrorGate(
+            onAuthRejected = { token ->
+                if (token != current) {
+                    false
+                } else {
+                    handled.add(token)
+                    true
+                }
+            },
+            onPaymentRequired = {},
+            nowMillis = { 1000L },
+            logger = logs::add,
+        )
+
+        gate.onUnauthorized(stale)
+        gate.onUnauthorized(current)
+
+        assertEquals(listOf(current), handled)
+        assertTrue("gate 日志不得泄露 token", logs.none { stale in it || current in it })
+    }
+
+    @Test
+    fun `A 已处理的 401 窗口不得挡住新登录 B 的 401`() = runTest {
+        val accountA = "account-a-secret-token"
+        val accountB = "account-b-secret-token"
+        val handled = mutableListOf<String>()
+        val gate = ApiErrorGate(
+            onAuthRejected = {
+                handled.add(it)
+                true
+            },
+            onPaymentRequired = {},
+            nowMillis = { 1000L },
+        )
+
+        gate.onUnauthorized(accountA)
+        gate.onUnauthorized(accountB)
+
+        assertEquals("防抖只去重同一 token 的错误浪潮", listOf(accountA, accountB), handled)
+    }
+
+    @Test
     fun `窗口过后的 401 重新处理`() = runTest {
         var now = 1000L
         val f = fixture(nowProvider = { now })
 
         f.gate.onUnauthorized("tok-1")
         now += 4000  // 超过 3s 窗口
-        f.gate.onUnauthorized("tok-2")
+        f.gate.onUnauthorized("tok-1")
 
         assertEquals("真实的第二次 401 不该被吞", 2, f.authRejected.size)
+    }
+
+    @Test
+    fun `防抖窗口从终端副作用完成后开始`() = runTest {
+        var now = 1_000L
+        var handled = 0
+        val gate = ApiErrorGate(
+            onAuthRejected = {
+                handled++
+                now = 5_000L // 模拟等待主线程期间耗时
+                true
+            },
+            onPaymentRequired = {},
+            nowMillis = { now },
+        )
+
+        gate.onUnauthorized("tok-1")
+        now = 5_500L
+        gate.onUnauthorized("tok-1")
+
+        assertEquals("处理完成后 500ms 仍应位于窗口内", 1, handled)
     }
 
     /**
@@ -94,10 +199,22 @@ class ApiErrorGateTest {
 
     @Test
     fun `首次调用不被防抖挡住`() = runTest {
-        // now 从 0 开始时，若实现写成 `now - 0 < window` 会把第一次也挡掉
+        // now 从 0 开始时，未处理状态必须用 null 表示，不能拿 0 当哨兵值。
         val f = fixture(nowProvider = { 0L })
         f.gate.onUnauthorized("tok-1")
-        assertEquals("第一次必须放过（lastHandledAt 初始为 0）", 1, f.authRejected.size)
+        assertEquals("第一次必须放过", 1, f.authRejected.size)
+    }
+
+    @Test
+    fun `时钟从 0 开始时第二次仍要防抖`() = runTest {
+        var now = 0L
+        val f = fixture(nowProvider = { now })
+
+        f.gate.onUnauthorized("tok-1")
+        now = 1L
+        f.gate.onUnauthorized("tok-1")
+
+        assertEquals(1, f.authRejected.size)
     }
 
     // ── helpers ───────────────────────────────────────────────
@@ -110,7 +227,7 @@ class ApiErrorGateTest {
         val paymentRequired: Int get() = paymentRequiredCounter()
     }
 
-    private fun fixture(nowProvider: () -> Long = { System.currentTimeMillis() }): Fixture {
+    private fun fixture(nowProvider: () -> Long = { System.nanoTime() / 1_000_000L }): Fixture {
         val rejected = mutableListOf<String>()
         var payment = 0
         val gate = ApiErrorGate(

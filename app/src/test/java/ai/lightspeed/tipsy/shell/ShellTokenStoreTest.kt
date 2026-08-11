@@ -4,8 +4,13 @@ import ai.lightspeed.tipsy.shell.auth.Generations
 import ai.lightspeed.tipsy.shell.auth.ShellTokenStore
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -20,6 +25,7 @@ import org.junit.Test
  * 不会报错、只会产生错的数据：token 写进错的账号、用户看到别人的内容。
  * iOS 侧的 generation 机制就是为此存在（W1 计划 §3.3）。
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class ShellTokenStoreTest {
 
     private val now = 1_700_000_000L
@@ -54,16 +60,18 @@ class ShellTokenStoreTest {
 
     /**
      * 已过期 token **不走刷新**（[ai.lightspeed.tipsy.shell.auth.Jwt.isExpiringSoon]
-     * 对已过期返回 false，照搬 RN）。它会被原样返回，拿去发请求得 401。
-     * 这是现网既有行为，测试在此固定它，防止有人"顺手改成主动刷新"。
+     * 对已过期返回 false，照搬 RN）。但壳桥承诺返回可直接发送的值，所以这里返回
+     * null；持久值保留，且不主动 refresh。
      */
     @Test
-    fun `已过期 token 原样返回 不触发刷新`() = runTest {
+    fun `已过期 token 返回 null 保留持久值且不触发刷新`() = runTest {
         val expired = tokenWithExp(now - 10)
         val api = CountingApi { "should-not-be-called" }
-        val store = store(persisted = expired, api = api)
+        val persistence = FakePersistence(expired)
+        val store = store(persistence = persistence, api = api)
 
-        assertEquals(expired, store.getValidToken())
+        assertNull(store.getValidToken())
+        assertEquals("读取失败不等于显式登出，不在这里强制清持久值", expired, persistence.stored)
         assertEquals("已过期不走刷新路径（RN 同）", 0, api.callCount.get())
     }
 
@@ -110,13 +118,20 @@ class ShellTokenStoreTest {
         assertNull("已失效的 token 不能留在存储里", persistence.stored)
     }
 
-    /** 解析不了的 token：`isExpiringSoon=false` → 按"未临过期"原样返回（RN 同）。 */
+    /** 解析不了的 token 不 refresh，也不得通过“有效 token”桥契约返回。 */
     @Test
-    fun `无法解析的 token 原样返回 不触发刷新`() = runTest {
+    fun `无法解析的 token 返回 null 不触发刷新`() = runTest {
         val api = CountingApi { error("should not refresh") }
         val store = store(persisted = "not-a-jwt", api = api)
-        assertEquals("not-a-jwt", store.getValidToken())
+        assertNull(store.getValidToken())
         assertEquals(0, api.callCount.get())
+    }
+
+    @Test
+    fun `Router 本地登录判定只接受未过期且可解析 token`() = runTest {
+        assertTrue(store(persisted = tokenWithExp(now + 3600)).hasToken())
+        assertTrue(!store(persisted = tokenWithExp(now - 1)).hasToken())
+        assertTrue(!store(persisted = "not-a-jwt").hasToken())
     }
 
     @Test
@@ -124,6 +139,43 @@ class ShellTokenStoreTest {
         val old = tokenWithExp(now + 120)
         val store = store(persisted = old, api = CountingApi { "" })
         assertEquals(old, store.getValidToken())
+    }
+
+    @Test
+    fun `刷新返回畸形或过期 token 时保留仍有效旧 token且不覆盖持久值`() = runTest {
+        val old = tokenWithExp(now + 120)
+        val invalidRefreshResults = listOf("not-a-jwt", tokenWithExp(now - 1))
+
+        invalidRefreshResults.forEach { invalid ->
+            val persistence = FakePersistence(old)
+            val store = store(persistence = persistence, api = CountingApi { invalid })
+            assertEquals(old, store.getValidToken())
+            assertEquals("服务端无效新值不得覆盖可用旧 token", old, persistence.stored)
+        }
+    }
+
+    @Test
+    fun `刷新期间过期且返回空 token 清掉并通知一次`() = runTest {
+        var clock = now
+        var cleared = 0
+        val persistence = FakePersistence(tokenWithExp(now + 5))
+        val store = store(
+            persistence = persistence,
+            api = CountingApi {
+                clock = now + 10
+                ""
+            },
+            listener = object : ShellTokenStore.Listener {
+                override fun onTokenCleared() {
+                    cleared++
+                }
+            },
+            nowSeconds = { clock },
+        )
+
+        assertNull("空 refresh token 必须走与异常相同的失败回退", store.getValidToken())
+        assertNull(persistence.stored)
+        assertEquals("失效只广播一次", 1, cleared)
     }
 
     // ── single-flight ─────────────────────────────────────────
@@ -146,11 +198,40 @@ class ShellTokenStoreTest {
         val store = store(persisted = tokenWithExp(now + 120), api = api)
 
         val jobs = (1..10).map { async { store.getValidToken() } }
+        runCurrent()
+        assertEquals("放行前应已发出且仅发出一个 refresh", 1, api.callCount.get())
         gate.complete(Unit)
         val results = jobs.awaitAll()
 
         assertEquals("10 个并发调用必须只发一次刷新", 1, api.callCount.get())
         assertTrue("所有调用方都应拿到新 token", results.all { it == newToken })
+    }
+
+    @Test
+    fun `一个 waiter 取消不得清掉仍在飞的共享 refresh`() = runTest {
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val newToken = tokenWithExp(now + 3600)
+        val api = CountingApi {
+            started.complete(Unit)
+            release.await()
+            newToken
+        }
+        val store = store(persisted = tokenWithExp(now + 120), api = api)
+
+        val cancelledWaiter = async { store.getValidToken() }
+        started.await()
+        val survivingWaiter = async { store.getValidToken() }
+        runCurrent()
+
+        cancelledWaiter.cancelAndJoin()
+        val laterWaiter = async { store.getValidToken() }
+        runCurrent()
+
+        assertEquals("取消一个调用方后仍必须保持 single-flight", 1, api.callCount.get())
+        release.complete(Unit)
+        assertEquals(newToken, survivingWaiter.await())
+        assertEquals(newToken, laterWaiter.await())
     }
 
     @Test
@@ -167,6 +248,58 @@ class ShellTokenStoreTest {
     // ── generation 闸门 ───────────────────────────────────────
 
     /**
+     * generation 必须在创建 refresh job **之前**与 A token 一起捕获。
+     * 若放进异步 job 内部，job 尚未调度时登录 B，会错误地捕获 B generation，
+     * 随后把 refresh 返回的 A token 写到 B 会话。
+     */
+    @Test
+    fun `A refresh job 尚未调度时登录 B 结果不得覆盖 B`() = runTest {
+        val tokenA = tokenWithExp(now + 120, subject = "A")
+        val refreshedA = tokenWithExp(now + 3600, subject = "A")
+        val tokenB = tokenWithExp(now + 3600, subject = "B")
+        val persistence = FakePersistence(tokenA)
+        val store = store(
+            persistence = persistence,
+            api = CountingApi { refreshedA },
+        )
+
+        val refreshA = async(start = CoroutineStart.UNDISPATCHED) { store.getValidToken() }
+        store.onLoggedIn(tokenB)
+
+        assertNull("A 的 job 必须携带创建前捕获的旧 generation", refreshA.await())
+        assertEquals("异步启动时序不得让 A 覆盖 B", tokenB, persistence.stored)
+    }
+
+    @Test
+    fun `迟到 A 等到锁后不得覆盖 B 的 single-flight slot`() = runTest {
+        val refreshMutex = Mutex(locked = true)
+        val tokenA = tokenWithExp(now + 120, subject = "A")
+        val tokenB = tokenWithExp(now + 120, subject = "B")
+        val refreshedB = tokenWithExp(now + 3600, subject = "B")
+        val persistence = FakePersistence(tokenA)
+        val api = CountingApi { refreshedB }
+        val store = store(
+            persistence = persistence,
+            api = api,
+            refreshMutex = refreshMutex,
+        )
+
+        val lateA = async { store.getValidToken() }
+        runCurrent() // A 已捕获 snapshot，停在 refreshMutex
+        store.onLoggedIn(tokenB)
+        val currentB = async { store.getValidToken() }
+        runCurrent() // B 排在同一把锁后
+
+        refreshMutex.unlock()
+        runCurrent()
+
+        assertNull("A 取得锁后必须重验并退出，不能建立旧会话 flight", lateA.await())
+        assertEquals(refreshedB, currentB.await())
+        assertEquals("只允许 B 发一次 refresh", 1, api.callCount.get())
+        assertEquals(refreshedB, persistence.stored)
+    }
+
+    /**
      * 刷新期间发生登出 → 新 token **丢弃**，不写进 store。
      *
      * 不做这个校验的后果：用户登出后，一个在飞的刷新把旧账号的新 token 写回，
@@ -174,24 +307,201 @@ class ShellTokenStoreTest {
      */
     @Test
     fun `刷新期间登出 新 token 不得写入`() = runTest {
-        val gate = CompletableDeferred<Unit>()
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
         val generations = Generations()
         val persistence = FakePersistence(tokenWithExp(now + 120))
         val store = store(
             persistence = persistence,
             api = CountingApi {
-                gate.await()
+                started.complete(Unit)
+                release.await()
                 tokenWithExp(now + 3600)
             },
             generations = generations,
         )
 
         val job = async { store.getValidToken() }
+        started.await() // 确认 A 的 refresh 已真正发出，避免测试在异步任务启动前就登出
         store.clearToken() // 登出：自增 auth generation
-        gate.complete(Unit)
+        release.complete(Unit)
 
         assertNull("generation 已变，刷新结果必须丢弃", job.await())
         assertNull("登出后 store 必须是空的", persistence.stored)
+    }
+
+    @Test
+    fun `A 刷新期间登录 B 成功结果不得覆盖 B`() = runTest {
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val tokenA = tokenWithExp(now + 120, subject = "A")
+        val refreshedA = tokenWithExp(now + 3600, subject = "A")
+        val tokenB = tokenWithExp(now + 3600, subject = "B")
+        val persistence = FakePersistence(tokenA)
+        val store = store(
+            persistence = persistence,
+            api = CountingApi {
+                started.complete(Unit)
+                release.await()
+                refreshedA
+            },
+        )
+
+        val refreshA = async { store.getValidToken() }
+        started.await()
+        store.onLoggedIn(tokenB)
+        release.complete(Unit)
+
+        assertNull("A 的迟到 refresh 结果不得交给调用方", refreshA.await())
+        assertEquals("A 的新 token 不得覆盖已登录的 B", tokenB, persistence.stored)
+    }
+
+    @Test
+    fun `A 刷新异常但仍未过期 B 已登录时不得返回 A`() = runTest {
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val tokenA = tokenWithExp(now + 120, subject = "A")
+        val tokenB = tokenWithExp(now + 3600, subject = "B")
+        val persistence = FakePersistence(tokenA)
+        val store = store(
+            persistence = persistence,
+            api = CountingApi {
+                started.complete(Unit)
+                release.await()
+                error("network down")
+            },
+        )
+
+        val refreshA = async { store.getValidToken() }
+        started.await()
+        store.onLoggedIn(tokenB)
+        release.complete(Unit)
+
+        assertNull("generation 已变，失败回退也不得返回 A token", refreshA.await())
+        assertEquals("失败回退不得改写 B", tokenB, persistence.stored)
+    }
+
+    @Test
+    fun `A 刷新异常且已过期 B 已登录时不得清掉 B`() = runTest {
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var clock = now
+        var cleared = 0
+        val tokenA = tokenWithExp(now + 5, subject = "A")
+        val tokenB = tokenWithExp(now + 3600, subject = "B")
+        val persistence = FakePersistence(tokenA)
+        val store = store(
+            persistence = persistence,
+            api = CountingApi {
+                started.complete(Unit)
+                release.await()
+                error("network down")
+            },
+            listener = object : ShellTokenStore.Listener {
+                override fun onTokenCleared() {
+                    cleared++
+                }
+            },
+            nowSeconds = { clock },
+        )
+
+        val refreshA = async { store.getValidToken() }
+        started.await()
+        store.onLoggedIn(tokenB)
+        clock = now + 10 // A 在 refresh 期间过期
+        release.complete(Unit)
+
+        assertNull("generation 已变，A 的失败结果必须完整丢弃", refreshA.await())
+        assertEquals("A 过期不能触发 clearInternal 清掉 B", tokenB, persistence.stored)
+        assertEquals("B 已登录时不得广播 token cleared", 0, cleared)
+    }
+
+    @Test
+    fun `A 刷新返回空 token B 已登录时不得回退 A`() = runTest {
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val tokenA = tokenWithExp(now + 120, subject = "A")
+        val tokenB = tokenWithExp(now + 3600, subject = "B")
+        val persistence = FakePersistence(tokenA)
+        val store = store(
+            persistence = persistence,
+            api = CountingApi {
+                started.complete(Unit)
+                release.await()
+                ""
+            },
+        )
+
+        val refreshA = async { store.getValidToken() }
+        started.await()
+        store.onLoggedIn(tokenB)
+        release.complete(Unit)
+
+        assertNull("空 token 分支也必须先过 generation 闸门", refreshA.await())
+        assertEquals("空响应不得影响 B", tokenB, persistence.stored)
+    }
+
+    @Test
+    fun `A 刷新异常但仍未过期 登出后不得返回 A`() = runTest {
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var cleared = 0
+        val persistence = FakePersistence(tokenWithExp(now + 120, subject = "A"))
+        val store = store(
+            persistence = persistence,
+            api = CountingApi {
+                started.complete(Unit)
+                release.await()
+                error("network down")
+            },
+            listener = object : ShellTokenStore.Listener {
+                override fun onTokenCleared() {
+                    cleared++
+                }
+            },
+        )
+
+        val refreshA = async { store.getValidToken() }
+        started.await()
+        store.clearToken()
+        release.complete(Unit)
+
+        assertNull("登出后失败回退不得复活 A token", refreshA.await())
+        assertNull(persistence.stored)
+        assertEquals("登出只应通知一次", 1, cleared)
+    }
+
+    @Test
+    fun `A 刷新异常且已过期 登出后不得重复清除通知`() = runTest {
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var clock = now
+        var cleared = 0
+        val persistence = FakePersistence(tokenWithExp(now + 5, subject = "A"))
+        val store = store(
+            persistence = persistence,
+            api = CountingApi {
+                started.complete(Unit)
+                release.await()
+                error("network down")
+            },
+            listener = object : ShellTokenStore.Listener {
+                override fun onTokenCleared() {
+                    cleared++
+                }
+            },
+            nowSeconds = { clock },
+        )
+
+        val refreshA = async { store.getValidToken() }
+        started.await()
+        store.clearToken()
+        clock = now + 10 // A 在 refresh 期间过期
+        release.complete(Unit)
+
+        assertNull(refreshA.await())
+        assertNull(persistence.stored)
+        assertEquals("旧 refresh 不得再次 clearInternal 并重复广播", 1, cleared)
     }
 
     @Test
@@ -238,10 +548,49 @@ class ShellTokenStoreTest {
         assertTrue(!store.isCurrentToken(token))
     }
 
+    @Test
+    fun `旧 token 的条件清除不得影响当前账号`() = runTest {
+        val tokenA = tokenWithExp(now + 3600, subject = "A")
+        val tokenB = tokenWithExp(now + 3600, subject = "B")
+        var cleared = 0
+        val persistence = FakePersistence(tokenB)
+        val store = store(
+            persistence = persistence,
+            listener = object : ShellTokenStore.Listener {
+                override fun onTokenCleared() {
+                    cleared++
+                }
+            },
+        )
+
+        assertTrue("A 已不是当前会话，条件清除必须返回 false", !store.clearTokenIfCurrent(tokenA))
+        assertEquals(tokenB, persistence.stored)
+        assertEquals("旧 401 不得广播 loggedOut", 0, cleared)
+    }
+
+    @Test
+    fun `当前 token 的条件清除原子完成并通知一次`() = runTest {
+        val token = tokenWithExp(now + 3600)
+        var cleared = 0
+        val persistence = FakePersistence(token)
+        val store = store(
+            persistence = persistence,
+            listener = object : ShellTokenStore.Listener {
+                override fun onTokenCleared() {
+                    cleared++
+                }
+            },
+        )
+
+        assertTrue(store.clearTokenIfCurrent(token))
+        assertNull(persistence.stored)
+        assertEquals(1, cleared)
+    }
+
     // ── listener ──────────────────────────────────────────────
 
     @Test
-    fun `清 token 时通知 listener`() = runTest {
+    fun `clearToken 默认通知 listener`() = runTest {
         var cleared = 0
         val store = store(
             persisted = tokenWithExp(now + 3600),
@@ -255,6 +604,29 @@ class ShellTokenStoreTest {
         assertEquals("登出必须**恰好**通知一次（§3.5）", 1, cleared)
     }
 
+    @Test
+    fun `clearToken 可只清值而不通知 listener`() = runTest {
+        var cleared = 0
+        val generations = Generations()
+        val persistence = FakePersistence(tokenWithExp(now + 3600))
+        val before = generations.auth
+        val store = store(
+            persistence = persistence,
+            generations = generations,
+            listener = object : ShellTokenStore.Listener {
+                override fun onTokenCleared() {
+                    cleared++
+                }
+            },
+        )
+
+        store.clearToken(notifyListener = false)
+
+        assertNull("不通知仍必须清 token", persistence.stored)
+        assertTrue("不通知仍必须失效 auth generation", generations.auth > before)
+        assertEquals("桥 clearToken 不得广播 loggedOut", 0, cleared)
+    }
+
     // ── helpers ───────────────────────────────────────────────
 
     private fun kotlinx.coroutines.test.TestScope.store(
@@ -263,6 +635,8 @@ class ShellTokenStoreTest {
         api: ShellTokenStore.RefreshApi = CountingApi { error("unexpected refresh") },
         generations: Generations = Generations(),
         listener: ShellTokenStore.Listener = ShellTokenStore.Listener.NOOP,
+        nowSeconds: () -> Long = { now },
+        refreshMutex: Mutex = Mutex(),
     ) = ShellTokenStore(
         persistence = persistence,
         refreshApi = api,
@@ -271,7 +645,8 @@ class ShellTokenStoreTest {
         listener = listener,
         // 固定时钟：token 判定全是时间相关的，用真实时钟会让这些测试
         // 随运行日期变化（构造的 exp 相对"今天"早已过期）
-        nowSeconds = { now },
+        nowSeconds = nowSeconds,
+        refreshMutex = refreshMutex,
     )
 
     private class FakePersistence(var stored: String?) : ShellTokenStore.TokenPersistence {
@@ -291,8 +666,8 @@ class ShellTokenStoreTest {
         }
     }
 
-    private fun tokenWithExp(exp: Long): String {
-        val payload = JSONObject().put("exp", exp).put("sub", "u1")
+    private fun tokenWithExp(exp: Long, subject: String = "u1"): String {
+        val payload = JSONObject().put("exp", exp).put("sub", subject)
         return "${encode("""{"alg":"HS256"}""")}.${encode(payload.toString())}.sig"
     }
 

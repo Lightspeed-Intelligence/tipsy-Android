@@ -76,9 +76,11 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
             authStateHub = app.authStateHub,
             logger = { Log.i(TAG, it) },
         )
-        // W1 只启用 ChatDetail（P9 的 gate 对象）。其余目标随波次开 ——
-        // §8.3：未过 §9.1 矩阵的 Surface 不得接生产入口。
-        router.markEnabled(AppRoute.ChatDetail::class.java)
+        // 当前 RN 入口仍是只注册 DebugSurface 的 index.surfaces.debug.js。
+        // AppRouter 默认使用 ProductionRoutePolicy；ChatDetail 在完成 W1-P9 / §9.1
+        // 矩阵前刻意不进生产白名单：
+        // 命中该路由时 Router 会走 rejectNotEnabled 记录明确拒绝，
+        // 而不是把未注册的 ChatDetailSurface 交给 React Native 挂载。
 
         if (savedInstanceState == null) {
             // 原生根：证明壳自己能先渲染，不依赖 RN
@@ -146,7 +148,7 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
             when (route) {
                 is AppRoute.ChatDetail -> openSurface("ChatDetailSurface")
                 // 其余目标尚未启用，Router 的 enabledRoutes 会先拦下 ——
-                // 走到这里说明有人 markEnabled 了却没加分支，属实现错误，必须可见。
+                // 走到这里说明有人启用了路由却没加分支，属实现错误，必须可见。
                 else -> error("路由已启用但缺少导航实现：${route.javaClass.simpleName}")
             }
         }

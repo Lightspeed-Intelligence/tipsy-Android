@@ -2,6 +2,12 @@ package ai.lightspeed.tipsy.shell.router
 
 import ai.lightspeed.tipsy.shell.auth.AuthStateHub
 
+/** 当前 binary 的生产路由白名单；未过验收矩阵的目标一律不进入。 */
+object ProductionRoutePolicy {
+    /** P9 / §9.1 前没有业务路由可进生产；启用必须集中改这里并更新矩阵测试。 */
+    val enabledRouteTypes: Set<Class<out AppRoute>> = emptySet()
+}
+
 /**
  * 壳的**单一导航入口**（W1-P4，方案 §4.7）。
  *
@@ -29,6 +35,7 @@ class AppRouter(
     private val isLoggedIn: () -> Boolean,
     private val authStateHub: AuthStateHub,
     private val logger: (String) -> Unit = {},
+    enabledRouteTypes: Set<Class<out AppRoute>> = ProductionRoutePolicy.enabledRouteTypes,
 ) {
 
     /** 真正执行导航的一侧（由 Activity 实现）。Router 只做决策，不碰 UI。 */
@@ -52,10 +59,10 @@ class AppRouter(
      * §8.3 纪律：**未过 §9.1 矩阵的 Surface 不得接生产入口**，且路由到未启用目标
      * 必须给明确错误或安全兜底、**不做 silent no-op**。
      *
-     * W1 只有 `ChatDetail`（P9 的 gate 对象）与 `UserProfile`（原生他人主页）
-     * 有可能启用；其余随波次开。这里**默认拒绝**，加目标时必须显式列出。
+     * 生产默认来自 [ProductionRoutePolicy]。构造时复制成不可变快照，运行中不得
+     * “临时放开”；新增目标必须随版本显式更新 policy 与验收矩阵。
      */
-    private val enabledRoutes = mutableSetOf<Class<out AppRoute>>()
+    private val enabledRoutes = enabledRouteTypes.toSet()
 
     /** 待登录后执行的路由。**最多一条** —— 后来的覆盖先前的（用户最新意图优先）。 */
     private var pendingRoute: PendingRoute? = null
@@ -83,10 +90,6 @@ class AppRouter(
 
     init {
         authStateHub.addObserver(loginObserver)
-    }
-
-    fun markEnabled(vararg routeTypes: Class<out AppRoute>) {
-        enabledRoutes.addAll(routeTypes)
     }
 
     /** 解析并处理一条外部 URI。返回是否识别（不代表已导航 —— 可能在排队）。 */

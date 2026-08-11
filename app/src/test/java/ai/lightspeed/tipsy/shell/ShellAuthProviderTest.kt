@@ -4,7 +4,12 @@ import ai.lightspeed.tipsy.shell.auth.AuthStateHub
 import ai.lightspeed.tipsy.shell.auth.Generations
 import ai.lightspeed.tipsy.shell.auth.ShellTokenStore
 import ai.lightspeed.tipsy.shell.bridge.ShellAuthProvider
+import ai.lightspeed.tipsy.shell.network.ApiErrorGate
+import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -18,6 +23,7 @@ import org.junit.Test
  * 重点是**401 归属判定**与**登出的完整语义** —— 这两处写错都会产生
  * 「用户莫名被踢下线」，而且日志里看不出原因。
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class ShellAuthProviderTest {
 
     private val now = 1_700_000_000L
@@ -44,7 +50,8 @@ class ShellAuthProviderTest {
             newToken,
             fixture.persistence.stored,
         )
-        assertEquals("不得广播登出", 0, fixture.logoutCount)
+        assertEquals("不得向 RN 广播登出", 0, fixture.rnLogoutCount)
+        assertEquals("不得向壳内广播登出", 0, fixture.logoutCount)
         assertTrue(
             "忽略要**可诊断** —— 静默忽略会让排查时无从判断桥有没有收到 401",
             fixture.logs.any { it.contains("忽略过期会话") },
@@ -81,7 +88,23 @@ class ShellAuthProviderTest {
         fixture.provider.notifyServerAuthRejectedForToken(current)
 
         assertNull("当前会话被服务端拒绝 → 必须清 token", fixture.persistence.stored)
-        assertEquals("必须广播一次登出", 1, fixture.logoutCount)
+        assertEquals("RN Registry 必须收到一次登出", 1, fixture.rnLogoutCount)
+        assertEquals("壳内常驻页必须收到一次登出", 1, fixture.logoutCount)
+        assertEquals("401 登出必须收栈一次", 1, fixture.popSurfaceCount)
+    }
+
+    @Test
+    fun `无参 401 无法证明归属不得登出当前账号`() = runTest {
+        val current = tokenWithExp(now + 3600)
+        val fixture = fixture(persisted = current)
+
+        fixture.provider.notifyServerAuthRejected()
+
+        assertEquals(current, fixture.persistence.stored)
+        assertEquals(0, fixture.rnLogoutCount)
+        assertEquals(0, fixture.logoutCount)
+        assertEquals(0, fixture.popSurfaceCount)
+        assertTrue(fixture.logs.any { it.contains("无法校验 token 归属，已忽略") })
     }
 
     // ── logout 完整语义（§3.5）─────────────────────────────────
@@ -99,7 +122,8 @@ class ShellAuthProviderTest {
 
         assertNull("不清 token → 下次启动直接进旧账号", fixture.persistence.stored)
         assertEquals("不收栈 → 登出后仍停在需要登录的页面上", 1, fixture.popSurfaceCount)
-        assertEquals("必须**恰好**一次 —— 多次会让每个常驻页重复清理", 1, fixture.logoutCount)
+        assertEquals("RN loggedOut 必须**恰好**一次", 1, fixture.rnLogoutCount)
+        assertEquals("壳内 loggedOut 必须**恰好**一次", 1, fixture.logoutCount)
         assertTrue("不失效 generation → 在飞响应会把旧账号数据写回", fixture.generations.auth > genBefore)
     }
 
@@ -116,6 +140,28 @@ class ShellAuthProviderTest {
 
         assertNull("token 仍要清", fixture.persistence.stored)
         assertEquals("clearToken 不该收栈", 0, fixture.popSurfaceCount)
+        assertEquals("clearToken 不得通知 RN loggedOut", 0, fixture.rnLogoutCount)
+        assertEquals("clearToken 不得通知壳内 loggedOut", 0, fixture.logoutCount)
+    }
+
+    @Test
+    fun `刷新失败且旧 token 已失效时自动登出两端各通知一次`() = runTest {
+        var clock = now
+        val expiring = tokenWithExp(now + 60)
+        val fixture = fixture(
+            persisted = expiring,
+            nowProvider = { clock },
+            refreshApi = {
+                clock = now + 120
+                throw IllegalStateException("刷新失败")
+            },
+        )
+
+        assertNull(fixture.provider.getValidToken())
+
+        assertEquals("token-store listener/RN Registry 只通知一次", 1, fixture.rnLogoutCount)
+        assertEquals("AuthStateHub 只通知一次", 1, fixture.logoutCount)
+        assertEquals("自动失效不经 provider.logout，不应收栈", 0, fixture.popSurfaceCount)
     }
 
     // ── getValidToken ────────────────────────────────────────
@@ -129,6 +175,14 @@ class ShellAuthProviderTest {
     @Test
     fun `未登录时返回 null 这是合法业务态`() = runTest {
         assertNull(fixture(persisted = null).provider.getValidToken())
+    }
+
+    @Test
+    fun `桥不得把过期或畸形 token 交给 WebView 等直接消费者`() = runTest {
+        val invalid = listOf(tokenWithExp(now - 1), "not-a-jwt")
+        invalid.forEach { token ->
+            assertNull(fixture(persisted = token).provider.getValidToken())
+        }
     }
 
     // ── 402 付费墙（W1-P6）─────────────────────────────────────
@@ -147,6 +201,7 @@ class ShellAuthProviderTest {
         val f = fixture(persisted = tokenWithExp(now + 3600), isDebug = true)
 
         f.provider.notifyServerPaymentRequired()
+        runCurrent()
 
         assertEquals("402 必须触发一次宝石购买导航", 1, f.gemsPurchaseCalls.size)
     }
@@ -157,10 +212,108 @@ class ShellAuthProviderTest {
 
         f.provider.openGemsPurchase(mapOf("from" to "chat"))
         f.provider.notifyServerPaymentRequired()
+        runCurrent()
 
         assertEquals("两处必须汇到同一出口，否则「未启用」判定会漂移", 2, f.gemsPurchaseCalls.size)
         assertEquals(mapOf("from" to "chat"), f.gemsPurchaseCalls[0])
         assertEquals("402 兜底不带参数", emptyMap<String, String>(), f.gemsPurchaseCalls[1])
+    }
+
+    // ── Native / RN 共享进程级 gate ─────────────────────────
+
+    @Test
+    fun `Native 与 RN bridge 的 401 共用同一防抖窗口`() = runTest {
+        val current = tokenWithExp(now + 3600)
+        val f = fixture(persisted = current)
+
+        // 模拟 Native ApiClient 直接进 gate，紧接着 RN 经 provider 进同一 gate。
+        f.gate.onUnauthorized(current)
+        f.provider.notifyServerAuthRejectedForToken(current)
+
+        assertEquals("RN loggedOut 不得重复", 1, f.rnLogoutCount)
+        assertEquals("壳内 loggedOut 不得重复", 1, f.logoutCount)
+        assertEquals("只收栈一次", 1, f.popSurfaceCount)
+    }
+
+    @Test
+    fun `A stale 401 不得吞掉同窗口内 B 的真实 401`() = runTest {
+        val accountA = tokenWithExp(now + 3600, sub = "account-a")
+        val accountB = tokenWithExp(now + 3600, sub = "account-b")
+        val f = fixture(persisted = accountB)
+
+        f.gate.onUnauthorized(accountA)
+        f.provider.notifyServerAuthRejectedForToken(accountB)
+
+        assertNull("B 的真实 401 仍必须登出 B", f.persistence.stored)
+        assertEquals(1, f.rnLogoutCount)
+        assertEquals(1, f.logoutCount)
+        f.logs.forEach { line ->
+            assertTrue("gate/provider 日志不得泄露 A token", accountA !in line)
+            assertTrue("gate/provider 日志不得泄露 B token", accountB !in line)
+        }
+    }
+
+    @Test
+    fun `Native 与 RN bridge 的 402 共用同一防抖窗口`() = runTest {
+        val f = fixture(persisted = tokenWithExp(now + 3600))
+
+        f.gate.onPaymentRequired()
+        f.provider.notifyServerPaymentRequired()
+        runCurrent()
+
+        assertEquals("宝石购买导航只触发一次", 1, f.gemsPurchaseCalls.size)
+    }
+
+    @Test
+    fun `Native 402 终端必须切到注入的主线程 dispatcher`() = runTest {
+        val main = RecordingDispatcher()
+        val f = fixture(
+            persisted = tokenWithExp(now + 3600),
+            mainDispatcher = main,
+        )
+
+        // 直接调 gate 模拟 ApiClient 从 Dispatchers.IO 进入，不经桥的 @MainThread。
+        f.gate.onPaymentRequired()
+
+        assertTrue("进 Router 前必须显式切 mainDispatcher", main.dispatchCount > 0)
+        assertEquals(1, f.gemsPurchaseCalls.size)
+    }
+
+    @Test
+    fun `401 原子清理与收栈必须在同一主线程顺序段`() = runTest {
+        val main = RecordingDispatcher()
+        var clearOnMain = false
+        var popOnMain = false
+        val current = tokenWithExp(now + 3600)
+        val f = fixture(
+            persisted = current,
+            mainDispatcher = main,
+            onTokenClearedHook = { clearOnMain = main.isDispatching },
+            onPopSurfaceHook = { popOnMain = main.isDispatching },
+        )
+
+        f.gate.onUnauthorized(current)
+
+        assertTrue("token 清理/listener 应在 mainDispatcher 顺序段", clearOnMain)
+        assertTrue("收栈应紧接着在同一 mainDispatcher 顺序段", popOnMain)
+    }
+
+    @Test
+    fun `logout 清理与收栈必须在同一主线程顺序段`() = runTest {
+        val main = RecordingDispatcher()
+        var clearOnMain = false
+        var popOnMain = false
+        val f = fixture(
+            persisted = tokenWithExp(now + 3600),
+            mainDispatcher = main,
+            onTokenClearedHook = { clearOnMain = main.isDispatching },
+            onPopSurfaceHook = { popOnMain = main.isDispatching },
+        )
+
+        f.provider.logout()
+
+        assertTrue(clearOnMain)
+        assertTrue(popOnMain)
     }
 
     // ── apiBaseURL（W1-P6）────────────────────────────────────
@@ -209,28 +362,31 @@ class ShellAuthProviderTest {
         val logoutCounter: () -> Int,
         val logs: List<String>,
         val gemsPurchaseCalls: List<Map<String, String>>,
+        val gate: ApiErrorGate,
+        val rnLogoutCounter: () -> Int,
     ) {
         val popSurfaceCount: Int get() = popSurfaceCounter()
         val logoutCount: Int get() = logoutCounter()
+        val rnLogoutCount: Int get() = rnLogoutCounter()
     }
 
     private fun TestScope.fixture(
         persisted: String?,
         isDebug: Boolean = true,
         apiBaseUrl: String? = null,
+        nowProvider: () -> Long = { now },
+        refreshApi: ShellTokenStore.RefreshApi =
+            ShellTokenStore.RefreshApi { _ -> error("本测试不应触发刷新") },
+        mainDispatcher: CoroutineDispatcher = kotlinx.coroutines.Dispatchers.Unconfined,
+        onTokenClearedHook: () -> Unit = {},
+        onPopSurfaceHook: () -> Unit = {},
     ): Fixture {
         val persistence = FakePersistence(persisted)
         val generations = Generations()
         var popCount = 0
         var logoutCount = 0
+        var rnLogoutCount = 0
 
-        val tokenStore = ShellTokenStore(
-            persistence = persistence,
-            refreshApi = { error("本测试不应触发刷新") },
-            generations = generations,
-            scope = this,
-            nowSeconds = { now },
-        )
         val hub = AuthStateHub()
         hub.addObserver(object : AuthStateHub.Observer {
             override fun onDidLogin(userId: String?) = Unit
@@ -239,26 +395,51 @@ class ShellAuthProviderTest {
             }
         })
 
+        val tokenStore = ShellTokenStore(
+            persistence = persistence,
+            refreshApi = refreshApi,
+            generations = generations,
+            scope = this,
+            listener = object : ShellTokenStore.Listener {
+                override fun onTokenCleared() {
+                    rnLogoutCount++
+                    hub.notifyDidLogout()
+                    onTokenClearedHook()
+                }
+            },
+            nowSeconds = nowProvider,
+        )
+
         val logs = mutableListOf<String>()
         val gemsCalls = mutableListOf<Map<String, String>>()
-        val provider = ShellAuthProvider(
+        lateinit var provider: ShellAuthProvider
+        val gate = ApiErrorGate(
+            onAuthRejected = { provider.handleServerAuthRejectedForToken(it) },
+            onPaymentRequired = { provider.handleServerPaymentRequired() },
+            nowMillis = { 1_000L },
+            logger = { logs.add("GATE:$it") },
+        )
+        provider = ShellAuthProvider(
             isDebugBuild = isDebug,
             languageCodeProvider = { null },
             apiBaseUrlProvider = { apiBaseUrl },
-            onPopSurface = { popCount++ },
+            onPopSurface = {
+                popCount++
+                onPopSurfaceHook()
+            },
             onNavigateGemsPurchase = { gemsCalls.add(it) },
             tokenStore = tokenStore,
-            authStateHub = hub,
+            apiErrorGate = gate,
             scope = this,
             // android.util.Log 在 JVM 是「调用即抛」的 stub，故注入测试用实现。
             // 见 ShellAuthProvider.logger 的说明（不用 returnDefaultValues 绕）。
             logger = { level, message -> logs.add("$level:$message") },
             // JVM 单测无 Android 主 Looper，真 Dispatchers.Main 会抛
-            mainDispatcher = kotlinx.coroutines.Dispatchers.Unconfined,
+            mainDispatcher = mainDispatcher,
         )
         return Fixture(
             provider, persistence, generations,
-            { popCount }, { logoutCount }, logs, gemsCalls,
+            { popCount }, { logoutCount }, logs, gemsCalls, gate, { rnLogoutCount },
         )
     }
 
@@ -266,6 +447,23 @@ class ShellAuthProviderTest {
         override fun read(): String? = stored
         override fun write(token: String?) {
             stored = token
+        }
+    }
+
+    private class RecordingDispatcher : CoroutineDispatcher() {
+        var dispatchCount: Int = 0
+            private set
+        var isDispatching: Boolean = false
+            private set
+
+        override fun dispatch(context: CoroutineContext, block: Runnable) {
+            dispatchCount++
+            isDispatching = true
+            try {
+                block.run()
+            } finally {
+                isDispatching = false
+            }
         }
     }
 

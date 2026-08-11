@@ -1,5 +1,9 @@
 package ai.lightspeed.tipsy.shell.network
 
+import java.security.MessageDigest
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
 /**
  * 401 / 402 的**唯一**汇聚点（W1-P6，方案 §4.5）。
  *
@@ -25,18 +29,35 @@ package ai.lightspeed.tipsy.shell.network
  * 用 [debounceWindowMs] 内只处理一次来断开这个环。
  */
 class ApiErrorGate(
-    private val onAuthRejected: suspend (authToken: String) -> Unit,
+    /**
+     * 返回 true 表示该 token 仍属当前会话且已执行全局处理；
+     * false 表示迟到的旧会话事件，不得占用当前会话的防抖窗口。
+     */
+    private val onAuthRejected: suspend (authToken: String) -> Boolean,
     private val onPaymentRequired: suspend () -> Unit,
-    private val nowMillis: () -> Long = { System.currentTimeMillis() },
+    /** 单调时钟；墙钟回拨不能把防抖窗口意外拉长数小时。 */
+    private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000L },
     private val debounceWindowMs: Long = DEFAULT_DEBOUNCE_MS,
     private val logger: (String) -> Unit = {},
 ) {
 
-    /** 防抖轨。**两类各自独立** —— 合用一个窗口会让 401 之后紧跟的 402 被吞掉。 */
-    private enum class Kind { AUTH_REJECTED, PAYMENT_REQUIRED }
+    /**
+     * 两类各自独立的锁与时钟。合用一轨会让 401 之后紧跟的 402 被吞；
+     * auth 回调是 suspend，不能在 JVM `synchronized` 块里等它完成。
+     */
+    private val authMutex = Mutex()
+    private val paymentMutex = Mutex()
+    private var lastAuthWindow: AuthWindow? = null
+    private var lastPaymentHandledAt: Long? = null
 
-    private val lastHandledAt = mutableMapOf<Kind, Long>()
-    private val lock = Any()
+    /**
+     * 401 窗口按 token 区分：A 的已处理事件不得挡住紧接着登录的 B。
+     * 只保留 SHA-256 指纹，不在 gate 中延长原始 token 的生命周期。
+     */
+    private data class AuthWindow(
+        val tokenFingerprint: ByteArray,
+        val handledAt: Long,
+    )
 
     /**
      * 处理一次 401。
@@ -52,29 +73,62 @@ class ApiErrorGate(
             logger("收到 401 但请求未带 token，忽略（无法判断会话归属）")
             return
         }
-        if (!shouldProceed(Kind.AUTH_REJECTED)) return
-        // 刻意不打印 token
-        logger("处理 401：交由壳的 auth 兜底")
-        onAuthRejected(authToken)
+        authMutex.withLock {
+            val now = nowMillis()
+            val fingerprint = fingerprint(authToken)
+            if (isAuthDebounced(lastAuthWindow, fingerprint, now)) return
+
+            // 刻意不打印 token
+            logger("处理 401：交由壳的 auth 兜底")
+            if (onAuthRejected(authToken)) {
+                // 窗口从副作用完成后开始；主线程若恰好卡顿，不能在处理完成前就过期。
+                lastAuthWindow = AuthWindow(fingerprint, nowMillis())
+            } else {
+                // 旧 token 迟到的 401 不能把新账号的真实 401 挡在窗口外。
+                logger("忽略未归属当前会话的 401，不启动防抖窗口")
+            }
+        }
     }
 
     /** 处理一次 402（付费墙）。 */
     suspend fun onPaymentRequired() {
-        if (!shouldProceed(Kind.PAYMENT_REQUIRED)) return
-        logger("处理 402：导航宝石购买页")
-        onPaymentRequired.invoke()
+        paymentMutex.withLock {
+            val now = nowMillis()
+            if (isDebounced(lastPaymentHandledAt, now, "PAYMENT_REQUIRED")) return
+            logger("处理 402：导航宝石购买页")
+            onPaymentRequired.invoke()
+            lastPaymentHandledAt = nowMillis()
+        }
     }
 
-    private fun shouldProceed(kind: Kind): Boolean = synchronized(lock) {
-        val now = nowMillis()
-        val last = lastHandledAt[kind] ?: 0L
-        if (last != 0L && now - last < debounceWindowMs) {
+    private fun isDebounced(last: Long?, now: Long, kind: String): Boolean {
+        if (last != null && now - last < debounceWindowMs) {
             logger("$kind 在防抖窗口内（${now - last}ms < $debounceWindowMs ms），跳过")
-            return false
+            return true
         }
-        lastHandledAt[kind] = now
+        return false
+    }
+
+    private fun isAuthDebounced(
+        last: AuthWindow?,
+        fingerprint: ByteArray,
+        now: Long,
+    ): Boolean {
+        if (last == null || now - last.handledAt >= debounceWindowMs) return false
+
+        // 只去重同一会话，不让 A 的窗口吞掉 B。
+        val sameSession = last.tokenFingerprint.contentEquals(fingerprint)
+        if (!sameSession) return false
+
+        logger(
+            "AUTH_REJECTED 在防抖窗口内（${now - last.handledAt}ms < " +
+                "$debounceWindowMs ms），跳过",
+        )
         return true
     }
+
+    private fun fingerprint(token: String): ByteArray =
+        MessageDigest.getInstance("SHA-256").digest(token.toByteArray(Charsets.UTF_8))
 
     private companion object {
         /**

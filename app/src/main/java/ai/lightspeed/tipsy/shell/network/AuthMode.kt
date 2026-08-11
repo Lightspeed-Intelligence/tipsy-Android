@@ -9,7 +9,7 @@ package ai.lightspeed.tipsy.shell.network
  *
  * | 模式 | RN 对应 | 无 token 时 |
  * | --- | --- | --- |
- * | [REQUIRED] | `axiosAuth` | **不发请求**，请求登录 UI |
+ * | [REQUIRED] | `axiosAuth` | **不发请求**，抛未认证错误（RN 上层请求登录 UI） |
  * | [OPPORTUNISTIC] | `axiosPublic` | **照发**，只是不带 token |
  * | [NONE] | 无（壳侧新增） | 照发，且**从不**带 token |
  *
@@ -28,7 +28,8 @@ package ai.lightspeed.tipsy.shell.network
  */
 enum class AuthMode {
     /**
-     * 必须已登录。无有效 token 时**不发请求**，直接失败并请求登录 UI。
+     * 必须已登录。无有效 token 时**不发请求**，直接返回未认证错误；
+     * 上层据此请求登录 UI。
      *
      * 对齐 RN `axiosAuth`：取不到有效 token 时 reject 并 `requestLogin('axios-auth')`
      * （`axios.ts:148-188`）。
