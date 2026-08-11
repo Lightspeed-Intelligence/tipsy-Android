@@ -1,5 +1,7 @@
 package ai.lightspeed.tipsy.shell
 
+import ai.lightspeed.tipsy.shell.i18n.LocalizedText
+import ai.lightspeed.tipsy.shell.i18n.rememberCurrentLanguage
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
 import android.content.Intent
@@ -14,6 +16,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
@@ -51,6 +54,19 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
         app.onNavigateGemsPurchaseRequested = { params ->
             runOnUiThread {
                 router.handle(AppRoute.GemsPurchase(params), AppRouter.Source.BRIDGE)
+            }
+        }
+
+        // 语言可能在 RN Surface 里被改（语言设置页刻意留在 RN，方案 §8.1），
+        // 而桥契约**没有 JS→壳 的语言通知方法**（已核实 tipsy-auth 只有壳→JS 的
+        // onLanguageChanged）—— 所以壳在 Surface 容器出栈后自己重读。
+        //
+        // 用 back stack listener 而不是在 popSurface() 里调：返回键有**两条**路径
+        // （桥的 popSurface / 系统返回键直接走 FragmentManager），只挂前者会让
+        // 「按系统返回键退出设置页」这条路漏掉语言更新。listener 覆盖两者。
+        supportFragmentManager.addOnBackStackChangedListener {
+            if (supportFragmentManager.backStackEntryCount == 0) {
+                app.refreshAccountLanguage()
             }
         }
 
@@ -206,6 +222,7 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
 
 @Composable
 private fun ShellHomeScreen(onOpenSurface: () -> Unit) {
+    val language by rememberCurrentLanguage()
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
             modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -216,10 +233,18 @@ private fun ShellHomeScreen(onOpenSurface: () -> Unit) {
                 text = "Tipsy Android Shell",
                 style = MaterialTheme.typography.headlineSmall,
             )
-            Text(
-                text = "W0：原生根已渲染（未接业务能力）",
-                style = MaterialTheme.typography.bodyMedium,
+            // W1-P5 起原生页文案走 LocalizedText（自订阅语言变化）。
+            // **不要写 Text(L10n.t(key))** —— 那样 Compose 不知道读了可变状态，
+            // 语言切换后已组合的文本不重组，表现为「切了语言当前页没变」。
+            LocalizedText(
+                key = "Loading",
                 modifier = Modifier.padding(top = 8.dp),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = "lang=$language",
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 4.dp),
             )
             Button(onClick = onOpenSurface, modifier = Modifier.padding(top = 24.dp)) {
                 Text("挂载 DebugSurface")

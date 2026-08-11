@@ -17,8 +17,8 @@ import kotlinx.coroutines.withContext
  * ## 当前边界（W1-P1 已接通）
  *
  * auth 生命周期（取 token / 刷新 / 登出 / 401 归属判定）已委派 [ShellTokenStore]。
- * 仍未实现的：**登录 UI**（W2 原生 Login 页）、部分**导航目标**、
- * **语言真值**（P5）。402 已进共享 gate；宝石页未启用时由 Router 明确拒绝。
+ * P5 已由壳的 L10n 提供语言真值。仍未实现的：**登录 UI**（W2 原生 Login 页）
+ * 与部分**导航目标**。402 已进共享 gate；宝石页未启用时由 Router 明确拒绝。
  *
  * ⚠️ token 的**历史数据迁移**（MMKV 三形态兼容读已就位，SecureStore 兜底未做）
  * 属 P2 —— 覆盖升级设备上 SecureStore 里的 token 目前读不出来，
@@ -35,7 +35,7 @@ import kotlinx.coroutines.withContext
  */
 class ShellAuthProvider(
     private val isDebugBuild: Boolean,
-    /** 语言真值来源。P5 会换成壳的 L10n store；现在由调用方注入以免这里先假设实现。 */
+    /** 语言真值来源；生产装配注入壳的 `L10n.current`，测试可替换。 */
     private val languageCodeProvider: () -> String?,
     /**
      * API 根地址（W1-P6）。壳内**优先于**构建期 `EXPO_PUBLIC_API_URL`，

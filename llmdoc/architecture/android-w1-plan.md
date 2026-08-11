@@ -49,23 +49,25 @@ P4  Router + 返回栈接管（含 scheme 安全审计）
 P5  i18n（Native 唯一 writer + Compose 本地化组件）     ← P4/P5/P6 可并行
 P6  network 三鉴权模式 + 统一 envelope/容错反序列化
         ↓
-P7  root side-effect 清单逐行填证据（含 Qt 冲突决策）
-P8  Sentry 原生实例
+P7  root side-effect 清单逐行填证据（Qt 接线已决策推迟，见 §9）
+P8  Sentry 原生实例（已决策推迟，见 §9 / §10）
         ↓
 P9  ChatDetailSurface gate（SurfaceDependencyChecklist + §9.1 矩阵一行）
 ```
 
 **排序理由**:P3 放在前四分之一,因为它是 W1 唯一可能**推翻整个迁移路径**的环节
 (方案 §6.1:"不要把它留到最后 —— 它是 §2.4 迁移算法唯一的正确性证据")。
-P9 放最后,因为它依赖 P0-P8 全部就位才有意义。
+P9 放最后，因为它依赖 P0-P6、未推迟的 root side-effect 证据和 Surface closeout
+先收口；P7 Qt / P8 Sentry 已由 owner 显式接受风险并推迟，不能再写成“必须先实现”。
 
 ---
 
 ## 2. P0：tipsy-auth Android 桥骨架
 
-### 2.1 要改 `tipsy-app`（本仓无权限,需单独 PR）
+### 2.1 `tipsy-app` Android 桥（已落地；保留原始要求作契约）
 
-`modules/tipsy-auth/` 现状**只有 iOS**:
+W1 开始时 `modules/tipsy-auth/` 只有 iOS；当前 pin 已有 Android 模块与 provider
+注册模式。下面保留当时要求，供后续桥变更检查兼容性：
 
 ```
 expo-module.config.json   → {"platforms":["apple"],"apple":{"modules":["TipsyAuthModule"]}}
@@ -73,7 +75,7 @@ index.ts / src/index.ts   → TS 契约（两侧共用）
 ios/TipsyAuthModule.swift → 513 行，Android 侧的实现参照
 ```
 
-W1 要加:
+落地内容：
 - `expo-module.config.json` 增 `android` 段与 `platforms` 增 `"android"`
 - `modules/tipsy-auth/android/` Kotlin 模块 + provider 注册模式
 
@@ -378,7 +380,10 @@ self → Profile Tab;others → 原生他人主页。
 
 ---
 
-## 7. P5：i18n
+## 7. P5：i18n（**已完成**，2026-08-11 —— 进度见进度文档 §2.16）
+
+> ⚠️ **本节原文有一处记漏，实现时发现**：`normalizeLanguageCode` 不是一条规则，
+> 而是**两条**。见下方 §7.2 的订正。
 
 ### 7.1 四套集合不能混（每项实测）
 
@@ -389,12 +394,23 @@ self → Profile Tab;others → 原生他人主页。
 | `SUPPORTED_LANGUAGES` 客户端码 | **26** | `zh` 有 import 但不在 supported 里 |
 | 设置页可选列表 | 服务端 `/supported_languages` | **≠** 以上任何一个 |
 
-### 7.2 `normalizeLanguageCode` 必须逐行对齐
+### 7.2 语言解析必须逐行对齐 —— ⚠️ **有两条规则，不是一条**（2026-08-11 订正）
 
-规则(`i18n-index.ts:64-75`):精确匹配 → 主语言码匹配(`es-CR`→`es`)→
-所有 `zh` 变体 → `zh-tw` → 兜底 `en`。
+> **本节原文只写了 `normalizeLanguageCode` 一个函数。** 实现 P5 时发现
+> `i18n-index.ts` 里有**两条**对同一输入给不同答案的规则。方案 §4.8 同样只记了一条。
 
-**包括「简体 `zh` 映射到 `zh-tw`」这个产品决策** —— 看着像 bug,是决策,照抄。
+| 场景 | RN 出处 | 规则 | 简体 `zh` 的结果 |
+| --- | --- | --- | --- |
+| 账号语言 / 任意语言码 | `normalizeLanguageCode`（`:64-75`） | 精确匹配 → 主码匹配（`es-CR`→`es`）→ `zh` 系一律 `zh-tw` → 兜底 `en` | **`zh-tw`** |
+| 启动读**设备 locale** | `defaultLanguage`（`:118-135`） | 简体 `zh`（非 `zh-hant`/`zh-tw`/`zh-hk`）→ `en`，其余走上一条 | **`en`** |
+
+即：账号 `language_code` 存 `zh` 的用户看**繁体**，而设备语言是简体中文的新用户看
+**英文**。**两条都是产品决策，看着像 bug，照抄。**
+
+**只实现一条的后果**：简体设备用户会看到繁体中文 —— 而这在英文环境测试里
+**完全看不出来**，与 §7.4 记的 iOS 教训同类。iOS 的 `L10n.swift:56-79` 拆成
+`normalizeLanguageCode()` 与 `deviceDefaultLanguage()` 两个函数，Android 同构，
+并有一条**对照测试**（同一输入断言两条规则给不同答案）钉死这个差异。
 
 ### 7.3 实现要求
 
@@ -466,7 +482,32 @@ Android 要求:**在统一序列化层做容错**,不在业务模型里散落 `A
 
 ---
 
-## 9. P7：root side-effect 清单（W1 交付物：零 UNKNOWN）
+## 9. P7：root side-effect 清单（**已收窄**，2026-08-11）
+
+> ## ⚠️ 决策记录（2026-08-11）
+>
+> **决策**：Qt 埋点接线与 Sentry 原生实例（§10）**推迟到业务代码迁移完成后**。
+> **决策人**：项目 owner（用户）。**风险 owner 同上。**
+>
+> **进入 W2 的判据不受影响**：「零 `UNKNOWN`」中的**已决策推迟不等于 UNKNOWN**，
+> 按 §5.6 的格式（决策人 / 风险 owner / 代价 / 重启触发条件）写下即可。
+> 故本节收窄为「填表 + 记两条决策」。
+>
+> **两项推迟成本不对称**：Sentry 是单点安装，推迟干净；**Qt 的埋点调用点会散在
+> W2/W3 每个原生业务页里** —— 现在不定调用点写法，迁完再补就是回头改几十个页面。
+> **对冲**：W2 第一个业务页开工前必须建一个薄 `Analytics` facade（业务页照常调用，
+> Qt 接上前只在 debug 打日志）。⚠️ 这一处**刻意不遵循**「未实现项 debug 抛异常」
+> 的纪律 —— 埋点每次事件都抛会让 debug 不可用。
+>
+> **代价**：W2/W3 迁移期间远端崩溃证据缺位，只能靠 logcat 与本机复现。
+> Sentry 的价值恰在迁移**过程中**最高。
+>
+> ⚠️ **两处是已存在的静默洞，不是「还没做的功能」**（实测详情见进度文档 §2.17）：
+> Qt 的 `preInit` 在壳里**一次都不会调**（壳无 `ReactActivity`，该 listener 只由
+> `ReactActivityDelegateWrapper` 分发）；Sentry 的 JS 事件交给了一个**从未 init**
+> 的原生 SDK。**§9.1 的「二选一」前提因此不成立**，见下。
+
+### 9.0 原始要求（保留，供重启本项时参考）
 
 方案 §4.2 的表逐行填「已验证」证据。W1 归属的行:
 
@@ -481,14 +522,24 @@ Android 要求:**在统一序列化层做容错**,不在业务模型里散落 `A
 | **splash 隐藏** | Native | ⚠️ Android 12~13 后台隐藏 splash 触发 `SurfaceControl.checkNotReleased` NPE(Play Console 崩溃榜)。**必须保留「仅前台时隐藏」语义** |
 | 字体 / asset 预载 | 分侧 | 原生页用原生字体;Surface 侧由入口保证 |
 
-### 9.1 ⚠️ Qt 冲突（开放问题 #1,W1 必须决策）
+### 9.1 ⚠️ Qt 冲突 —— **原前提不成立**（2026-08-11 实测订正）
 
-`modules/qt` 的 `QtPackage.createReactActivityLifecycleListeners()` 会在
-**Activity onCreate 就 `QtConfigure.preInit`**(已核实 `QtReactActivityLifecycleListener.kt`)。
+原文（保留）：`modules/qt` 的 `QtPackage.createReactActivityLifecycleListeners()` 会在
+**Activity onCreate 就 `QtConfigure.preInit`**，与「壳是 analytics 单一 owner」冲突，
+壳需二选一：(a) 保留该 listener；(b) 把模块从 autolinking 排除、壳自管。
 
-这与「壳是 analytics 单一 owner」**冲突**。壳必须**二选一并写下来**:
-- (a) 保留该 listener,承认 Qt 初始化不由壳控制
-- (b) 把模块从 autolinking 排除、壳自管
+**订正**：该回调**只由 expo 的 `ReactActivityDelegateWrapper` 分发**
+（`ReactActivityDelegateWrapper.kt:53-54`），而壳**没有 `ReactActivity`** ——
+用的是 `ReactFragment` + 裸 `ReactDelegate`（`ReactFragment.kt:47`），
+壳侧也搜不到任何 `ReactActivityLifecycleListener` 分发点。
+
+**所以 `preInit` 在壳里一次都不会调。** 真实状态不是「二选一」，而是
+**Qt 目前完全没有初始化、埋点静默死掉** —— 正是方案 §4.2 拿 iOS 的 AppsFlyer
+事故举例的那类失败模式（能力没接不报错，直到提审预演才发现）。
+
+决策因此变成：**壳自己在 `Application.onCreate` 调 `QtConfigure.preInit`**
+（壳当 analytics owner，与方案 §4.1 一致），而不是去补 listener 分发。
+**已按上方决策推迟到业务迁移后**，但调用点的 facade 要先建。
 
 ### 9.2 判据（iOS 总结,直接采用）
 
@@ -504,7 +555,12 @@ Android 复用同一入口即继承该决策。
 
 ---
 
-## 10. P8：Sentry
+## 10. P8：Sentry（**已推迟到业务迁移后** —— 决策见 §9 顶部）
+
+> ⚠️ 当前是**已存在的静默洞**：壳无任何 Sentry 依赖，但 JS 侧
+> `autoInitializeNativeSdk: false` 会把事件交给一个从未 init 的原生 SDK
+> （`wrapper.js:132-137`）。Surface 里的 JS 报错**既不上报也不报错**。
+> 详见进度文档 §2.17。原始要求保留如下：
 
 - **双 Runtime**:同 release / env / user;**各自上传自己的 mapping / source map**
 - RN 侧**挂靠原生实例,不重复 init**。JS 侧已就绪:`index.surfaces.js:17` 首先
@@ -641,14 +697,14 @@ RN 侧已就绪:`src/hooks/useShellSurfaceRefocus.ts`(45 行)把 `useFocusEffect
 
 ---
 
-## 13. 外部阻塞项（**建议 W1 第一天就提出**）
+## 13. 外部依赖与解除状态
 
 | # | 阻塞项 | 影响 | 需要谁 |
 | --- | --- | --- | --- |
-| 1 | **三渠道真实 release 产物 + 匹配签名** ⬆️ | P3 覆盖升级验证**一步也做不了**。原以为模拟器上有现成 fixture，实测那是 dev build 且无数据（§5.4），所以本项从「需要签名」升级为「需要完整产物」 | 发布 owner |
-| 1b | **一份真登录过的现网包数据（或脱敏 MMKV 样本）** | P2 的 MMKV 直读路径无真实数据可验，只能靠构造样本自测 | 发布 owner / QA |
-| 2 | `tipsy-app` 的 PR 权限（加 `tipsy-auth` android 段） | P0 做不了,整个 W1 卡住 | RN 仓 owner |
-| 3 | **Qt 冲突决策**（§9.1 二选一） | root side-effect 表无法零 UNKNOWN | 产品 / analytics owner |
+| 1 | **三渠道真实 release 产物 + 匹配签名** ⏸️ | P3 覆盖升级验证仍依赖它；已决定与 P2 剩余合并推迟到上线前 | 发布 owner |
+| 1b | **一份真登录过的现网包数据（或脱敏 MMKV 样本）** ⏸️ | P2 真实数据验证仍依赖它；同上推迟 | 发布 owner / QA |
+| ~~2~~ | ~~`tipsy-app` 的 Android 桥落地权限~~ | ✅ **已解除**：Android 模块已在当前 submodule pin，可追溯于 `feat/android-native` | — |
+| ~~3~~ | ~~Qt 原“二选一”冲突决策~~ | ✅ **原前提已推翻并由 owner 决策推迟**（§9.1）；真实现状是 Qt 尚未初始化 | — |
 | 4 | AB Test 的 Android appKey | AB 初始化做不了 | 后端 / 产品 |
 | ~~5~~ | ~~`PAT_TOKEN`（遗留自 W0）~~ | ✅ **已解除**（2026-08-10）：本仓独立签发 token，G1 已激活并首次真绿。**不再需要向 iOS 那个 PAT 的持有者取值** | — |
 

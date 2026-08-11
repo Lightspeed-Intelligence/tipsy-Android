@@ -1,8 +1,10 @@
 # W1-CLOSEOUT-1 READY：认证与网络安全收口
 
 > 状态：IMPLEMENTED / VALIDATION NOT RUN（2026-08-11）
-> Android base：`3f2f4675eda17f11134fe9b6182348932bf50de2`
-> RN pin：`a4eb9055d2b82932df3017dc411e5b810c5d3cb9`
+> 原始实现 base：`3f2f4675eda17f11134fe9b6182348932bf50de2`
+> 冲突同步 base：`61e465b`（P5 PR #15 已合入）
+> 当前 RN pin：`95760a6622424bc9be238e7790fdbf38fe7c7fb2`
+> （相对原审计 pin `a4eb9055d` 仅变更 locale exporter，auth/network 契约未变）
 
 ## 目标
 
@@ -27,11 +29,12 @@
 
 不包含：
 
-- 不改 `tipsy-app/` 内部文件，不 bump submodule。
+- 不改 `tipsy-app/` 内部文件；相对当前 `main` 不 bump submodule。
 - 不实现 401 response refresh/retry；live RN 只在请求前刷新。
 - 不修 ChatDetail props、instance-aware close、Login/Profile 桥；这些属于
   `W1-CLOSEOUT-2`。
-- 不开始 P5/P7/P8/P9，不发布 OTA，不改签名或版本号。
+- 本 closeout diff 不实现 P5/P7/P8/P9，不发布 OTA，不改签名或版本号；P5 后由
+  PR #15 并行落地并随 `main` 合入当前组合态，不属于本包实现范围。
 
 ## 验收
 
@@ -64,5 +67,6 @@ Gradle、编译与单测均按工作区约定保持 **NOT RUN**，在得到用�
 
 - 回滚只 revert 本包自有 commit；不改用户其他 WIP，不回退 submodule pin。
 - 若修复需要改变 `tipsy-auth` TS/Kotlin bridge 签名，停止本包，另开 tipsy-app PR。
-- 若测试暴露跨账号写入/清除仍可能发生，保持 ChatDetail disabled，不开始 P5/P9。
+- 若测试暴露跨账号写入/清除仍可能发生，保持 ChatDetail disabled，不开始 P9/W2；
+  P5 仅保留其已过 checkpoint，当前组合态不得据此标绿。
 - 若只能通过放宽 lint、跳过测试或 `returnDefaultValues` 通过，停止并复审设计。
