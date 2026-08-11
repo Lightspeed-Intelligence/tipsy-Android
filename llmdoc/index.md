@@ -49,8 +49,12 @@ RN 侧文档见 `tipsy-app/llmdoc/`；iOS 壳的同构实践见 `../Tipsy-iOS/ll
 
 ## 硬性纪律
 
-- **禁止在本仓直接改 `tipsy-app/` 内部文件**。RN 侧改动走 tipsy-app 自己的 PR 流程，
-  合入后回本仓 bump submodule pin。本仓 PR 中的 submodule 变更只允许是指针 bump。
+- **RN 侧改动提交到 `tipsy-app` 的 `feat/android-native` 分支**（2026-08-11 owner 决定：
+  Android 迁移相关的 RN 改动**不走 PR**，直接提交该分支）。本仓 PR 中的 submodule
+  变更仍**只允许是指针 bump** —— 改动本身要在 `tipsy-app` 的历史里可追溯，
+  不能以「本仓顺手改了 submodule 工作树」的形式存在。
+  ⚠️ 该分支**未合进 `main`/`release`**，靠子模块指针引用；bump pin 前确认目标 commit
+  **已推到远端**，否则 CI 拉不到（`--depth 1` 也拉不到，见进度文档 §2.10）。
 - **`index.surfaces.js` 是 iOS 壳与 Android 壳共用入口**，改动需双壳回归。
 - 状态只写在进度文档一处，不在别处复制快照。
 - 不继承 RN 侧的弱化质量配置（`lintOptions.abortOnError false`、`passWithNoTests`）。
