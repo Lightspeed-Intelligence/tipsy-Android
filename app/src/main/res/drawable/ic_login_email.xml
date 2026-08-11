@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  邮箱登录图标。从 RN 侧 `src/assets/images/login/login-email.svg` 逐字转成
+  VectorDrawable（同一 viewBox 32x32、同一 path、同一填充色）。
+
+  用 vector 而不是复制 svg：Android 不直接支持 svg。Google / Apple 两个图标
+  RN 侧本身是 png，故按原样复制到 drawable-nodpi。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="32dp"
+    android:height="32dp"
+    android:viewportWidth="32"
+    android:viewportHeight="32">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M28.5,22.5C28.5,24.433 26.933,26 25,26H7C5.067,26 3.5,24.433 3.5,22.5V12.5029L13.8145,17.5176C15.1943,18.1881 16.8057,18.1872 18.1855,17.5166L28.5,12.5029V22.5ZM25,7C26.8602,7 28.3802,8.45122 28.4922,10.2832L17.3115,15.7188C16.4836,16.1211 15.5164,16.1202 14.6885,15.7178L3.50684,10.2832C3.6188,8.45119 5.13981,7 7,7H25Z" />
+</vector>

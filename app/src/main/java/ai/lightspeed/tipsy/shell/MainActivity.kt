@@ -2,6 +2,7 @@ package ai.lightspeed.tipsy.shell
 
 import ai.lightspeed.tipsy.shell.i18n.LocalizedText
 import ai.lightspeed.tipsy.shell.i18n.rememberCurrentLanguage
+import ai.lightspeed.tipsy.shell.pages.login.LoginFragment
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
 import android.content.Intent
@@ -84,7 +85,10 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
             // 原生根：证明壳自己能先渲染，不依赖 RN
             findViewById<ComposeView>(R.id.native_root).setContent {
                 MaterialTheme {
-                    ShellHomeScreen(onOpenSurface = { openDebugSurface() })
+                    ShellHomeScreen(
+                        onOpenSurface = { openDebugSurface() },
+                        onOpenLogin = { openLogin() },
+                    )
                 }
             }
             // 冷启动的深链：Intent 已带 data
@@ -152,13 +156,31 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
         }
 
         override fun requestLogin(reason: String?) {
-            // 原生 Login 页属 W2。此刻**明确记录而非静默** ——
-            // 静默会让「未登录点深链」表现为点了没反应。
-            Log.w(TAG, "需要登录但原生 Login 页尚未实现（W2）：reason=$reason")
+            Log.i(TAG, "打开原生登录页：reason=$reason")
+            openLogin()
         }
 
         override fun rejectNotEnabled(route: AppRoute, reason: String) {
             Log.w(TAG, "拒绝导航：${route.javaClass.simpleName} —— $reason")
+        }
+    }
+
+    /**
+     * 打开原生登录页（W2）。
+     *
+     * ⚠️ **必须幂等** —— `requestLogin()` 可能被连续触发：401 兜底、深链 auth gate、
+     * 用户主动点击三条路径都会调它，而 401 在并发请求下可能来好几个。
+     * 不去重的表现是「登录页叠了好几层，返回要按多次」（iOS 的 402 防抖
+     * 处理的是同类问题）。用 tag 判定栈里是否已有。
+     */
+    private fun openLogin() {
+        if (supportFragmentManager.findFragmentByTag(TAG_LOGIN) != null) {
+            Log.i(TAG, "登录页已在栈中，忽略重复请求")
+            return
+        }
+        supportFragmentManager.commit {
+            replace(R.id.surface_container, LoginFragment.newInstance(), TAG_LOGIN)
+            addToBackStack(TAG_LOGIN)
         }
     }
 
@@ -171,6 +193,9 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
 
     private companion object {
         const val TAG = "MainActivity"
+
+        /** 登录页的 Fragment tag —— [openLogin] 靠它做幂等判定。 */
+        const val TAG_LOGIN = "login"
     }
 
     /**
@@ -219,7 +244,7 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
 }
 
 @Composable
-private fun ShellHomeScreen(onOpenSurface: () -> Unit) {
+private fun ShellHomeScreen(onOpenSurface: () -> Unit, onOpenLogin: () -> Unit) {
     val language by rememberCurrentLanguage()
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
@@ -246,6 +271,11 @@ private fun ShellHomeScreen(onOpenSurface: () -> Unit) {
             )
             Button(onClick = onOpenSurface, modifier = Modifier.padding(top = 24.dp)) {
                 Text("挂载 DebugSurface")
+            }
+            // 原生登录页入口。W2 的五 Tab shell 到位后这个自检根会整体替掉，
+            // 在那之前它是唯一能手工进登录页的路径（桥的 requestLogin 也进同一页）
+            Button(onClick = onOpenLogin, modifier = Modifier.padding(top = 12.dp)) {
+                Text("打开原生登录页")
             }
         }
     }
