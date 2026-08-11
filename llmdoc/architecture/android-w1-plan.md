@@ -2,11 +2,10 @@
 
 > 派生自 `android-native-migration-plan.md`（下称「方案」）。本文只做 W1 的**执行级**细化，
 > 不重复方案的论证。方案是真值，本文与之冲突时以方案为准。
-> 更新：2026-08-10 ｜ 状态：**执行中**
+> 契约更新：2026-08-11 ｜ 状态只看唯一进度真值
 >
 > **进度只看**[`../reference/android-native-progress.md`](../reference/android-native-progress.md)
 > （本文不记状态快照——重复的「当前进度」是 iOS 侧真实发生过的漂移源）。
-> 截至最后更新：P0 ✅ / P1 ✅ / P2 一半 / P3 已推迟 / P4-P9 未开始。
 
 ## 0. W1 的目标与不做什么
 
@@ -431,7 +430,7 @@ RN 经 initial props + `onLanguageChanged` 同步。
 
 | 模式 | 语义 | RN 对应 |
 | --- | --- | --- |
-| `REQUIRED` | 必带 token;缺失立即 auth error;401 → 一次 single-flight refresh + 重试 | `axiosAuth` |
+| `REQUIRED` | 请求前取有效 token；临过期 single-flight refresh；缺失/已过期立即 auth error；服务端 401 → token-aware auth reject，**不做 response retry** | `axiosAuth` |
 | `OPPORTUNISTIC` | **有 token 就带,没有也照发** | `axiosPublic` |
 | `NONE` | 永不带用户 token | 无 RN 对应,仅给明确禁止携带身份的端点 |
 
@@ -581,12 +580,16 @@ SafeAreaProvider (546) → KeyboardProvider (547) → SWRConfig (548)
 
 ---
 
-## 12. RNSurfaceFragment 要补的四件事（**已完成**，2026-08-10）
+## 12. RNSurfaceFragment 四项机制（主体已落地，真实实例关闭链待收口）
 
-W0 的 `RNSurfaceFragment.kt` 曾是 36 行 stub。四件事均已实现并**在 API 37 真机验证**：
+W0 的 `RNSurfaceFragment.kt` 曾是 36 行 stub。UUID、占位、reappear 与 props builder
+均已落地，并曾在 API 37 验证 DebugSurface 挂载、首帧占位与 reappear：
 Surface 挂载正常、首帧占位单次淡出、`onSurfaceReappeared` 实测发射
 （`surface=DebugSurface`，确认是**组件名**而非 instanceId）。
 判定逻辑抽在 `surface/ReappearPolicy.kt`（可单测），契约在 `surface/SurfaceContract.kt`。
+
+但真实 RN `popSurface()` 仍无 instanceId，Android bridge 固定把 `null` 交给 Activity，
+会绕过实例比对。故 §12.1 尚未闭环；在 W1 closeout 修复前不得标整体完成。
 
 ⚠️ 一处订正：原文与实现注释都说过「旋转会重建 Fragment」——**不成立**，
 `MainActivity` 的 `configChanges` 已含 `orientation|screenSize`（manifest:52）。

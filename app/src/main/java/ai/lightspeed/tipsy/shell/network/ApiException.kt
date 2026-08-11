@@ -38,8 +38,9 @@ sealed class ApiException(message: String) : IOException(message) {
     /**
      * 未登录且 [AuthMode.REQUIRED]。**请求根本没发出去。**
      *
-     * 对齐 RN `axiosAuth` 的行为：取不到有效 token 时 reject 并请求登录 UI，
+     * 对齐 RN `axiosAuth` 的行为：取不到有效 token 时 reject，
      * 而不是发一个必然 401 的请求（`axios.ts:158-174`）。
+     * 本层只提供分型错误，是否展示登录 UI 由上层决定。
      */
     class Unauthenticated : ApiException("未登录，请求未发出")
 

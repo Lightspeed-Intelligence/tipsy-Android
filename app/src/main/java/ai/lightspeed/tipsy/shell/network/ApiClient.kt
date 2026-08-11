@@ -1,5 +1,6 @@
 package ai.lightspeed.tipsy.shell.network
 
+import ai.lightspeed.tipsy.shell.auth.Jwt
 import ai.lightspeed.tipsy.shell.auth.ShellTokenStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -46,6 +47,8 @@ class ApiClient(
     private val downloadChannel: String,
     /** 当前泳道。null = 壳无意见；**空串 = 用户显式停用**（见 [LaneHeader]）。 */
     private val laneProvider: () -> String? = { null },
+    /** 与 token 有效性判定共用的时钟。可注入是为了精确测试过期边界。 */
+    private val nowSeconds: () -> Long = { System.currentTimeMillis() / 1000 },
 ) {
 
     /**
@@ -81,11 +84,18 @@ class ApiClient(
 
         // 取 token。**REQUIRED 模式下取不到就不发请求** —— 对齐 RN axiosAuth：
         // 发一个必然 401 的请求毫无意义，还会触发 auth 兜底造成误登出路径。
-        val token = when (authMode) {
+        val candidateToken = when (authMode) {
             AuthMode.NONE -> null
             // OPPORTUNISTIC / REQUIRED 都要取。⚠️ OPPORTUNISTIC 也要带 ——
             // 见 AuthMode 注释里 iOS 搜索历史那个事故
             else -> tokenStore.getValidToken()
+        }
+
+        // ShellTokenStore 的桥契约已保证返回时有效；这里仍在请求真正起飞前二次守门：
+        // await 之后可能恰好过期或换号。Native 与 RN axios 都不得把这种 stale token
+        // 发上网，且不能因为上游当前已校验就删掉这一层。
+        val token = candidateToken?.takeIf {
+            Jwt.hasNotExpired(it, nowSeconds()) && tokenStore.isCurrentToken(it)
         }
         if (authMode == AuthMode.REQUIRED && token == null) {
             throw ApiException.Unauthenticated()
@@ -111,6 +121,7 @@ class ApiClient(
                 401 -> {
                     // ⚠️ 传**实际使用的** token。null 时 gate 会忽略 ——
                     // 无法判断会话归属的 401 不得触发登出
+                    // 对齐 live RN response interceptor：只上报并抛错，**不 refresh+retry**。
                     errorGate.onUnauthorized(token)
                     throw ApiException.Http(401)
                 }

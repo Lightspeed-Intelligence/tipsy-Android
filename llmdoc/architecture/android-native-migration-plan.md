@@ -367,7 +367,7 @@ W1/W2 用手写 `AppContainer` 装配 singleton。边界稳定、且有测试证
 
 > **这是 W0 的第一件事**。当前 `gradle/libs.versions.toml` 的 AGP 9.2.1 / Kotlin 2.2.10 / compileSdk 37 是 Android Studio 模板默认值，与 RN 0.81.4 要求的原生编译基线不兼容，且 `modules/widget/android/build.gradle` 会读 `rootProject.ext.kotlinVersion` 去解析 Compose 编译器插件——版本不一致会在 autolinking 阶段炸。Compose BOM 已实测定为 **`2025.04.01`**（模板默认的 `2026.02.01` 与 Kotlin 2.1.20 不匹配）。
 
-**其余选型**：网络 OkHttp + Retrofit + kotlinx.serialization；UI Compose Material 3；异步 Coroutines + StateFlow；媒体 Media3 ExoPlayer + 有界 preload manager；图片 Coil。
+**其余选型**：网络直接使用 OkHttp + 显式 envelope/标量容错层（W1 决策：不引 Retrofit，见进度 §2.14）；UI Compose Material 3；异步 Coroutines + StateFlow；媒体 Media3 ExoPlayer + 有界 preload manager；图片 Coil。
 
 ### 3.4 模块划分
 
@@ -537,13 +537,17 @@ Surface 首帧 ready 前显示 Native 占位，ready 后单次淡出。**不用�
 
 | 模式 | 语义 | 对应 RN |
 | --- | --- | --- |
-| `REQUIRED` | 必带 token；缺失直接 auth error；401 走一次 single-flight refresh + retry | `axiosAuth` |
+| `REQUIRED` | 请求前取有效 token；临过期时 single-flight refresh；缺失/已过期直接 auth error；服务端 401 走 token-aware auth reject，**不做 response retry** | `axiosAuth` |
 | `OPPORTUNISTIC` | **有 token 就带，无 token 也发** | `axiosPublic` |
 | `NONE` | 永不带用户 token | （RN 无对应实例，仅用于明确禁止身份的端点） |
 
 > **iOS 踩过的坑，Android 必须避免**：把 `axiosPublic` 当成 `authorized:false` 实现成「永远不带 token」。很多「公开」接口带不带 token 行为不同——`/search/character_search` 带 token 才会记入最近搜索，iOS 错用导致搜索历史恒空。**端口化任何走 `axiosPublic` 的接口都必须用 `OPPORTUNISTIC`，逐一核对 RN 侧用的哪个实例。**
 
 **公共头**（已核实 `axios.ts:116-118`）：`Platform`、`X-App-Version`、`X-Download-Channel`（由 `getDownloadChannel()` 按 flavor 给 `GooglePlay`/`RuStore`/`APK`，已核实 `src/constants/common.ts:28-33`），加上端点要求的防欺诈标识（如 `X-Client-ID`）。
+
+> 2026-08-11 契约订正：live RN 的刷新发生在请求前 `getAuthToken()` 路径；服务端已经返回
+> 401 后不会再次 refresh/retry，而是上报带实际请求 token 的 auth reject。此前写成
+> “401 refresh + retry”是计划漂移，不作为 Android 验收目标。
 
 **统一信封** `{ code, msg, data? }`，`code != 0` 即业务错误。已知业务 code **不得**被笼统转成 IOException：`0` 成功、`6` 宝石不足、`9` 角色卡上限、`16` clover 类分支；HTTP `401` 走 token-aware auth reject、HTTP `402` 走带防抖的付费墙路由。双入口（原生页 + Surface 经桥）必须汇入**同一个漏斗**：401 → 登出并弹登录（防自触发循环）、402 → 宝石页 + 防抖。
 

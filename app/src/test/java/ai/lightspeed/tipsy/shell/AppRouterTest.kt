@@ -3,6 +3,7 @@ package ai.lightspeed.tipsy.shell
 import ai.lightspeed.tipsy.shell.auth.AuthStateHub
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
+import ai.lightspeed.tipsy.shell.router.ProductionRoutePolicy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -152,22 +153,21 @@ class AppRouterTest {
      * 静默的症状正是「点了没反应」。
      */
     @Test
-    fun `未启用的目标被明确拒绝`() {
-        val f = fixture(loggedIn = true, enabled = emptyList())
-        f.router.handle(AppRoute.Letter)
+    fun `P9 前 ChatDetail 被明确拒绝且不会导航`() {
+        assertFalse(
+            "生产白名单本身必须锁住 ChatDetail，不能只靠 Activity 记得不启用",
+            AppRoute.ChatDetail::class.java in ProductionRoutePolicy.enabledRouteTypes,
+        )
+        val f = fixture(
+            loggedIn = true,
+            enabled = ProductionRoutePolicy.enabledRouteTypes.toList(),
+        )
+        val route = AppRoute.ChatDetail("c1")
+        f.router.handle(route)
 
         assertEquals("不该导航", 0, f.navigated.size)
         assertEquals("必须明确拒绝一次", 1, f.rejections.size)
-    }
-
-    @Test
-    fun `未启用目标不进去重表 后续启用后仍可导航`() {
-        val f = fixture(loggedIn = true, enabled = emptyList())
-        f.router.handle(AppRoute.Letter)
-        f.router.markEnabled(AppRoute.Letter::class.java)
-        f.router.handle(AppRoute.Letter)
-
-        assertEquals("被拒绝的路由不该被去重表挡住", 1, f.navigated.size)
+        assertEquals(route, f.rejections.single())
     }
 
     // ── 顺序：auth gate 先于启用检查 ────────────────────────────
@@ -179,10 +179,17 @@ class AppRouterTest {
     @Test
     fun `未登录且未启用时先请求登录`() {
         val f = fixture(loggedIn = false, enabled = emptyList())
-        f.router.handle(AppRoute.Letter)
+        val route = AppRoute.ChatDetail("c1")
+        f.router.handle(route)
 
         assertEquals("应请求登录", 1, f.loginRequests.size)
         assertEquals("此刻不该报「未启用」", 0, f.rejections.size)
+
+        f.loggedIn = true
+        f.hub.notifyDidLogin("u1")
+
+        assertEquals("登录后仍不得打开未过 P9 的 Surface", 0, f.navigated.size)
+        assertEquals(route, f.rejections.single())
     }
 
     // ── URI 入口 ──────────────────────────────────────────────
@@ -254,8 +261,8 @@ class AppRouterTest {
             },
             isLoggedIn = { f.loggedIn },
             authStateHub = hub,
+            enabledRouteTypes = enabled.toSet(),
         )
-        router.markEnabled(*enabled.toTypedArray())
         f = Fixture(router, hub, navigated, loginRequests, rejections)
         f.loggedIn = loggedIn
         return f

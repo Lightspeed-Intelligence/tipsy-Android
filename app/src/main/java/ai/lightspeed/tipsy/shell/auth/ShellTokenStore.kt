@@ -1,5 +1,6 @@
 package ai.lightspeed.tipsy.shell.auth
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
@@ -16,16 +17,15 @@ import kotlinx.coroutines.sync.withLock
  * ## 刷新语义（照搬 RN，不是重新设计）
  *
  * 1. 无 token → null（未登录，合法业务态）
- * 2. token 未临过期 → 直接返回
+ * 2. token 有效且未临过期 → 直接返回；expired/malformed → null（不主动刷新）
  * 3. token **临过期**（剩余 0~5 分钟）→ single-flight 刷新
  * 4. 刷新失败但**旧 token 仍未过期** → 返回旧 token（RN `jwt.ts:127-129`）
  * 5. 刷新失败且旧 token 已过期 → 清 token，返回 null
  *
  * ⚠️ **已过期的 token 不走刷新路径** —— [Jwt.isExpiringSoon] 对已过期返回 false
- * （RN 的 `exp - now > 0` 条件）。这类 token 在第 2 步被"未临过期"放过，
- * 拿去发请求会得到 401，再由 `notifyServerAuthRejectedForToken` 处理。
- * 这是 RN 的现有行为，壳照搬；**不要在这里"顺手修正"**成主动刷新或直接清除 ——
- * 那会改变现网已验证的行为路径。
+ * （RN 的 `exp - now > 0` 条件）。持久层会保留原值，但 [getValidToken] 必须按壳桥
+ * 契约返回 null，不能把 expired/malformed token 交给 WebView/SSE 等不经过 axios
+ * 二次过滤的消费者。不要改成“主动刷新已过期 token”，那仍会与 live RN 分叉。
  *
  * ## single-flight
  *
@@ -38,6 +38,10 @@ class ShellTokenStore(
     private val persistence: TokenPersistence,
     private val refreshApi: RefreshApi,
     private val generations: Generations,
+    /**
+     * refresh job 与其完成后的状态通知所在作用域。生产装配必须使用 Main.immediate，
+     * 因为 [Listener] 会同步触达 Router/UI；真正的 refresh HTTP 由实现自行切到 IO。
+     */
     private val scope: CoroutineScope,
     private val listener: Listener = Listener.NOOP,
     /**
@@ -46,6 +50,8 @@ class ShellTokenStore(
      * 这些关键分支根本无法测 —— 而它们正是最容易写错的部分。
      */
     private val nowSeconds: () -> Long = { System.currentTimeMillis() / 1000 },
+    /** 可注入仅用于确定性覆盖“捕获 snapshot 后等待 single-flight 锁”的竞态。 */
+    private val refreshMutex: Mutex = Mutex(),
 ) {
 
     /** 持久化后端。P2 会换成带 legacy 迁移的实现；现在由调用方注入便于测试。 */
@@ -61,6 +67,11 @@ class ShellTokenStore(
 
     /** 登录态变化通知（→ `TipsyAuthRegistry` 广播 + 壳内常驻页订阅）。 */
     interface Listener {
+        /**
+         * 在 token 状态迁移的临界区内同步调用，以保证 `loggedOut` 不会落到随后登录的
+         * 新账号上。实现只能做有界、非阻塞且不抛异常的进程内事件分发；不得做 I/O
+         * 或等待其他线程。
+         */
         fun onTokenCleared()
 
         companion object {
@@ -70,10 +81,29 @@ class ShellTokenStore(
         }
     }
 
-    private val mutex = Mutex()
+    /**
+     * token cache、persistence 与 auth generation 的共同临界区。
+     *
+     * 只做“先看 generation、再写/清 token”仍有 TOCTOU：登录 B 可以夹在检查与清除
+     * 之间，随后旧账号 A 的失败 refresh 会把 B 清掉。所有状态迁移必须在这把锁内完成。
+     * Java monitor 是刻意选择：登录入口 [onLoggedIn] 是同步 API，不能获取
+     * suspend [refreshMutex]。
+     */
+    private val stateLock = Any()
 
-    /** 在飞的刷新。非 null 表示已有刷新在跑，后来者等它。 */
-    private var inFlight: Deferred<String?>? = null
+    /** 在飞 refresh 与所属会话绑定；换号后新会话不得等待旧账号的 job。 */
+    private data class InFlightRefresh(
+        val authGeneration: Long,
+        val token: String,
+        val deferred: Deferred<String?>,
+    )
+
+    private var inFlight: InFlightRefresh? = null
+
+    private data class TokenSnapshot(
+        val token: String?,
+        val generations: Generations.Snapshot,
+    )
 
     /**
      * 内存缓存，避免每次调用都读 MMKV。
@@ -88,20 +118,29 @@ class ShellTokenStore(
     private var cacheLoaded = false
 
     /**
-     * 取有效 token。契约：拿到的永远是可直接发请求的 token，或 null（未登录）。
+     * 取可直接发送的有效 token，并仅在它**尚未过期但临近过期**时尝试刷新。
+     *
+     * 已过期或无法解析时返回 null，但不主动刷新、也不在这里强制清持久值。这个返回
+     * 契约与 `SurfaceAuthContract` / iOS `AuthTokenStore.validToken()` 一致；否则 WebView
+     * 这类直接消费桥 token 的路径会发送失效值。HTTP 层仍应在真正起飞前二次校验，
+     * 以覆盖 await 后换号或恰好过期的窗口。
      *
      * **token 绝不写 log / Sentry breadcrumb / analytics** —— 本方法及其调用链
      * 不含任何打印 token 的语句。
      */
     suspend fun getValidToken(): String? {
-        val current = currentToken() ?: return null
+        val snapshot = currentTokenSnapshot()
+        val current = snapshot.token ?: return null
+        val currentTime = nowSeconds()
 
-        if (!Jwt.isExpiringSoon(current, nowSeconds())) {
-            // 含"已过期"的情况，见类注释第 3 条说明
-            return current
+        if (!Jwt.isExpiringSoon(current, currentTime)) {
+            // 已过期/无法解析不触发 refresh，但也绝不能桥给直接消费者。
+            return current.takeIf { Jwt.hasNotExpired(it, currentTime) }
         }
 
-        return refreshSingleFlight(current)
+        val refreshedOrFallback = refreshSingleFlight(current, snapshot.generations) ?: return null
+        // refresh API 也可能违反契约返回 malformed/已过期值；桥出口最后再守一次。
+        return refreshedOrFallback.takeIf { Jwt.hasNotExpired(it, nowSeconds()) }
     }
 
     /**
@@ -110,110 +149,195 @@ class ShellTokenStore(
      * 捕获 auth generation：刷新期间若发生 logout / 换号，**结果直接丢弃**，
      * 不写进 store —— 否则旧账号的新 token 会覆盖新账号的。
      */
-    private suspend fun refreshSingleFlight(currentToken: String): String? {
-        val existing = mutex.withLock { inFlight }
-        if (existing != null) return runCatching { existing.await() }.getOrNull()
+    private suspend fun refreshSingleFlight(
+        currentToken: String,
+        snapshot: Generations.Snapshot,
+    ): String? {
+        val flight = refreshMutex.withLock {
+            // 调用方可能在捕获 A snapshot 后被抢占，等它拿到 mutex 时账号已经切到 B。
+            // 这里必须在替换 inFlight 之前重验；否则迟到的 A 会覆盖 B 的 flight，随后
+            // 另一个 B 调用方再发第二次 refresh，破坏 single-flight。
+            val snapshotStillCurrent = synchronized(stateLock) {
+                ensureCacheLoadedLocked()
+                generations.isAuthValid(snapshot) && cached == currentToken
+            }
+            if (!snapshotStillCurrent) return@withLock null
 
-        val job = mutex.withLock {
-            // 双检：等锁期间可能已有人发起
-            inFlight ?: scope.async { doRefresh(currentToken) }.also { inFlight = it }
-        }
+            val existing = inFlight
+            if (existing != null &&
+                !existing.deferred.isCompleted &&
+                existing.authGeneration == snapshot.auth &&
+                existing.token == currentToken
+            ) {
+                existing
+            } else {
+                InFlightRefresh(
+                    authGeneration = snapshot.auth,
+                    token = currentToken,
+                    deferred = scope.async { doRefresh(currentToken, snapshot) },
+                ).also { inFlight = it }
+            }
+        } ?: return null
 
         return try {
-            job.await()
+            flight.deferred.await()
+        } catch (cancelled: CancellationException) {
+            // caller 取消不能被伪装成“未登录”；共享 refresh 属进程级 scope，会继续供
+            // 其他 waiter 使用，因此这里只传播 caller cancellation。
+            throw cancelled
         } catch (_: Throwable) {
             null
         } finally {
-            mutex.withLock { if (inFlight === job) inFlight = null }
+            // 不能由一个提前取消的 waiter 清掉仍在飞的共享 slot，否则下一请求会再发
+            // 第二次 refresh。若无人等到完成，下一调用会因 isCompleted=true 直接替换。
+            if (flight.deferred.isCompleted) {
+                refreshMutex.withLock { if (inFlight === flight) inFlight = null }
+            }
         }
     }
 
-    private suspend fun doRefresh(currentToken: String): String? {
-        val snapshot = generations.snapshot()
-
-        val newToken = try {
-            refreshApi.refresh(currentToken)
+    private suspend fun doRefresh(
+        currentToken: String,
+        snapshot: Generations.Snapshot,
+    ): String? {
+        val refreshedCandidate = try {
+            refreshApi.refresh(currentToken).takeIf { it.isNotBlank() }
+        } catch (cancelled: CancellationException) {
+            // scope 取消是生命周期信号，不是“刷新失败”；不得据此回退或清 token。
+            throw cancelled
         } catch (_: Throwable) {
-            // RN `jwt.ts:126-131`：刷新失败时若旧 token 仍未过期就继续用它，
-            // 否则清掉。**不打印异常内容** —— 异常 message 可能含请求详情。
-            return if (Jwt.hasNotExpired(currentToken, nowSeconds())) {
+            null
+        }
+        val refreshed = refreshedCandidate?.takeIf { Jwt.hasNotExpired(it, nowSeconds()) }
+
+        return synchronized(stateLock) {
+            // 校验与写/清是同一个原子步骤；否则 B 可夹在两者之间被 A 的结果覆盖。
+            if (!generations.isAuthValid(snapshot)) {
+                return@synchronized null
+            }
+
+            if (refreshed != null) {
+                persistLocked(refreshed)
+                return@synchronized refreshed
+            }
+
+            // 异常、空值与无效 refresh token 都走同一失败回退。后两者是服务端契约
+            // 违例，不能覆盖仍可用的旧 token，更不能经 bridge 交给直接消费者。
+            // 不打印异常内容，异常 message 可能含请求详情。
+            if (Jwt.hasNotExpired(currentToken, nowSeconds())) {
                 currentToken
             } else {
-                clearInternal()
+                clearInternalLocked(notifyListener = true)
                 null
             }
         }
-
-        if (!generations.isAuthValid(snapshot)) {
-            // 刷新期间换过号/登出：这个 token 属于旧账号，丢弃。
-            // 不清当前 token —— 当前 token 属于新账号，与本次刷新无关。
-            return null
-        }
-
-        if (newToken.isBlank()) {
-            return if (Jwt.hasNotExpired(currentToken, nowSeconds())) currentToken else null
-        }
-
-        persist(newToken)
-        return newToken
     }
 
     /** 登录成功后由壳调用（W2 的原生 Login 页）。会自增 auth generation。 */
-    fun onLoggedIn(token: String) {
+    fun onLoggedIn(token: String) = synchronized(stateLock) {
         generations.bumpAuth()
-        persist(token)
+        persistLocked(token)
     }
 
     /**
-     * 仅清 token（删号等场景，对应桥的 `clearToken()`）。
-     * 自增 auth generation 使在飞响应失效。
-     */
-    suspend fun clearToken() {
-        mutex.withLock { inFlight = null }
-        clearInternal()
-    }
-
-    /**
-     * 被服务端拒绝的 token 是否仍是当前 token。
+     * 清 token 并自增 auth generation，使在飞响应失效。
      *
-     * ⚠️ 这是 `notifyServerAuthRejectedForToken` 的判定依据（W1 计划 §3.2）：
-     * **只有仍是当前 token 才允许登出**，否则旧账号迟到的 401 会误登出新账号。
+     * [notifyListener] 默认为 true，供完整 logout 路径广播一次 `loggedOut`；桥的
+     * `clearToken()`（删号等中间步骤）必须显式传 false，只清值、不广播也不收栈。
+     */
+    suspend fun clearToken(notifyListener: Boolean = true) {
+        refreshMutex.withLock {
+            inFlight = null
+            synchronized(stateLock) {
+                clearInternalLocked(notifyListener = notifyListener)
+            }
+        }
+    }
+
+    /**
+     * 仅当 [expectedToken] 仍属于当前会话时清除。
+     *
+     * 401 终端不能写成 `isCurrentToken()` 后再 `clearToken()`：登录 B 可以夹在两次调用
+     * 之间，旧账号 A 的迟到 401 会清掉 B。比较、generation bump、持久化清除与通知
+     * 必须是同一个原子状态迁移。
+     */
+    suspend fun clearTokenIfCurrent(
+        expectedToken: String,
+        notifyListener: Boolean = true,
+    ): Boolean = refreshMutex.withLock {
+        synchronized(stateLock) {
+            ensureCacheLoadedLocked()
+            if (cached != expectedToken) {
+                false
+            } else {
+                inFlight = null
+                clearInternalLocked(notifyListener = notifyListener)
+                true
+            }
+        }
+    }
+
+    /**
+     * token 是否仍属于当前会话，仅供“发送前是否还能使用”之类的只读判定。
+     *
+     * ⚠️ 销毁性操作不得先调本方法再另行清除：两步之间可以换号。401 必须直接用
+     * [clearTokenIfCurrent] 原子 compare-and-clear，否则旧账号迟到响应会误登出新账号。
      */
     fun isCurrentToken(token: String): Boolean = currentToken() == token
 
     /**
-     * 是否**存在** token（不判断有效性、不触发刷新）。
+     * 是否存在**当前仍可用**的 token（只做本地判定，不触发刷新）。
      *
-     * 给 Router 的 auth gate 用：它只需要知道「要不要先弹登录」，
-     * 不该为了这个判断去发一次网络刷新 —— 那会让每条深链都可能卡在网络上。
+     * 给 Router 的 auth gate 用：expired/malformed 不能算“已登录”，否则路由会直接进入
+     * 受保护目标，随后才被 API 拒绝；但这里也不该发 refresh，让每条深链卡在网络上。
      *
      * ⚠️ **刻意不暴露 token 本身**。Router 不需要它，多一个出口就多一条泄漏路径。
      */
-    fun hasToken(): Boolean = currentToken() != null
+    fun hasToken(): Boolean = currentToken()?.let {
+        Jwt.hasNotExpired(it, nowSeconds())
+    } == true
+
+    private fun currentTokenSnapshot(): TokenSnapshot = synchronized(stateLock) {
+        ensureCacheLoadedLocked()
+        TokenSnapshot(cached, generations.snapshot())
+    }
 
     private fun currentToken(): String? {
         if (!cacheLoaded) {
-            synchronized(this) {
+            synchronized(stateLock) {
                 if (!cacheLoaded) {
-                    cached = persistence.read()?.takeIf { it.isNotBlank() }
-                    cacheLoaded = true
+                    ensureCacheLoadedLocked()
                 }
             }
         }
         return cached
     }
 
-    private fun persist(token: String) {
+    /** [stateLock] 内调用。 */
+    private fun ensureCacheLoadedLocked() {
+        if (!cacheLoaded) {
+            cached = persistence.read()?.takeIf { it.isNotBlank() }
+            cacheLoaded = true
+        }
+    }
+
+    /** [stateLock] 内调用。 */
+    private fun persistLocked(token: String) {
         cached = token
         cacheLoaded = true
         persistence.write(token)
     }
 
-    private fun clearInternal() {
+    /**
+     * [stateLock] 内调用。listener 同样留在临界区内，保证 loggedOut 事件先于随后登录 B；
+     * 否则 B 可夹在持久化清除与通知之间，收到一条属于 A 的迟到 loggedOut。Listener
+     * 契约限定为同步、非阻塞事件分发；若未来要做 I/O，必须先引入按 generation 串行的事件队列。
+     */
+    private fun clearInternalLocked(notifyListener: Boolean) {
         generations.bumpAuth()
         cached = null
         cacheLoaded = true
         persistence.write(null)
-        listener.onTokenCleared()
+        if (notifyListener) listener.onTokenCleared()
     }
 }
