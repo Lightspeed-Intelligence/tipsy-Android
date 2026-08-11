@@ -8,6 +8,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import androidx.core.view.isNotEmpty
 import com.facebook.react.ReactFragment
 import expo.modules.tipsyauth.TipsyAuthRegistry
 
@@ -115,7 +116,7 @@ class RNSurfaceFragment : ReactFragment() {
                 override fun onGlobalLayout() {
                     if (isRevealed) return
                     val hasContent = (reactView as? ViewGroup)?.let {
-                        it.childCount > 0 && it.getChildAt(0).height > 0
+                        it.isNotEmpty() && it.getChildAt(0).height > 0
                     } ?: (reactView.height > 0)
                     if (!hasContent) return
 
