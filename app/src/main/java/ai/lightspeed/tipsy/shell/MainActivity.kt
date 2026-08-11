@@ -2,6 +2,8 @@ package ai.lightspeed.tipsy.shell
 
 import ai.lightspeed.tipsy.shell.i18n.LocalizedText
 import ai.lightspeed.tipsy.shell.i18n.rememberCurrentLanguage
+import ai.lightspeed.tipsy.shell.pages.login.LoginFragment
+import androidx.activity.enableEdgeToEdge
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
 import android.content.Intent
@@ -40,6 +42,16 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
     private lateinit var router: AppRouter
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 内容绘制到状态栏/导航栏之下，对齐 RN 侧的 `statusBarTranslucent`
+        // （`LoginScreen.tsx:372` Modal 属性）。
+        //
+        // ⚠️ 不做的表现：状态栏是**不透明灰条**，而 RN 版那里是页面底色的延伸 ——
+        // 与 RN 并排看第一眼就能看出来（首版实测如此）。
+        //
+        // targetSdk=36 在 Android 15+ 上本就强制 edge-to-edge，但 API<35 的设备
+        // 需要显式调用。壳 minSdk=24，所以必须调 —— 否则新老设备表现不一致。
+        // 各页自行用 inset 做避让（LoginFragment 已处理）。
+        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
@@ -76,17 +88,22 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
             authStateHub = app.authStateHub,
             logger = { Log.i(TAG, it) },
         )
-        // 当前 RN 入口仍是只注册 DebugSurface 的 index.surfaces.debug.js。
-        // AppRouter 默认使用 ProductionRoutePolicy；ChatDetail 在完成 W1-P9 / §9.1
-        // 矩阵前刻意不进生产白名单：
-        // 命中该路由时 Router 会走 rejectNotEnabled 记录明确拒绝，
-        // 而不是把未注册的 ChatDetailSurface 交给 React Native 挂载。
+        // RN 入口已切到 index.surfaces.js（本包 §2.19），业务 Surface 组件**在包里**。
+        // 但 AppRouter 仍用 ProductionRoutePolicy 的空白名单：能挂 ≠ 已验收，
+        // ChatDetail 在完成 W1-P9 / §9.1 矩阵前刻意不进生产白名单。
+        // 命中该路由时 Router 走 rejectNotEnabled 记录明确拒绝。
+        //
+        // ⚠️ 白名单是编译期常量（ProductionRoutePolicy），不再有运行时 markEnabled。
+        // 启用某个路由要集中改那里并同步矩阵测试。
 
         if (savedInstanceState == null) {
             // 原生根：证明壳自己能先渲染，不依赖 RN
             findViewById<ComposeView>(R.id.native_root).setContent {
                 MaterialTheme {
-                    ShellHomeScreen(onOpenSurface = { openDebugSurface() })
+                    ShellHomeScreen(
+                        onOpenSurface = { openDebugSurface() },
+                        onOpenLogin = { openLogin() },
+                    )
                 }
             }
             // 冷启动的深链：Intent 已带 data
@@ -154,13 +171,31 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
         }
 
         override fun requestLogin(reason: String?) {
-            // 原生 Login 页属 W2。此刻**明确记录而非静默** ——
-            // 静默会让「未登录点深链」表现为点了没反应。
-            Log.w(TAG, "需要登录但原生 Login 页尚未实现（W2）：reason=$reason")
+            Log.i(TAG, "打开原生登录页：reason=$reason")
+            openLogin()
         }
 
         override fun rejectNotEnabled(route: AppRoute, reason: String) {
             Log.w(TAG, "拒绝导航：${route.javaClass.simpleName} —— $reason")
+        }
+    }
+
+    /**
+     * 打开原生登录页（W2）。
+     *
+     * ⚠️ **必须幂等** —— `requestLogin()` 可能被连续触发：401 兜底、深链 auth gate、
+     * 用户主动点击三条路径都会调它，而 401 在并发请求下可能来好几个。
+     * 不去重的表现是「登录页叠了好几层，返回要按多次」（iOS 的 402 防抖
+     * 处理的是同类问题）。用 tag 判定栈里是否已有。
+     */
+    private fun openLogin() {
+        if (supportFragmentManager.findFragmentByTag(TAG_LOGIN) != null) {
+            Log.i(TAG, "登录页已在栈中，忽略重复请求")
+            return
+        }
+        supportFragmentManager.commit {
+            replace(R.id.surface_container, LoginFragment.newInstance(), TAG_LOGIN)
+            addToBackStack(TAG_LOGIN)
         }
     }
 
@@ -173,6 +208,9 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
 
     private companion object {
         const val TAG = "MainActivity"
+
+        /** 登录页的 Fragment tag —— [openLogin] 靠它做幂等判定。 */
+        const val TAG_LOGIN = "login"
     }
 
     /**
@@ -221,7 +259,7 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
 }
 
 @Composable
-private fun ShellHomeScreen(onOpenSurface: () -> Unit) {
+private fun ShellHomeScreen(onOpenSurface: () -> Unit, onOpenLogin: () -> Unit) {
     val language by rememberCurrentLanguage()
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
@@ -248,6 +286,11 @@ private fun ShellHomeScreen(onOpenSurface: () -> Unit) {
             )
             Button(onClick = onOpenSurface, modifier = Modifier.padding(top = 24.dp)) {
                 Text("挂载 DebugSurface")
+            }
+            // 原生登录页入口。W2 的五 Tab shell 到位后这个自检根会整体替掉，
+            // 在那之前它是唯一能手工进登录页的路径（桥的 requestLogin 也进同一页）
+            Button(onClick = onOpenLogin, modifier = Modifier.padding(top = 12.dp)) {
+                Text("打开原生登录页")
             }
         }
     }

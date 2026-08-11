@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  登录页返回箭头。移植自 RN `tipsy-app/src/assets/images/login/login-back-arrow.svg`。
+
+  原 SVG 是 27x22 viewBox、单条 stroke path（无填充）。这里保持同一 viewBox
+  以免路径坐标失真；实际渲染尺寸 18x15 由使用处的 Modifier.size 控制
+  （对齐 RN 的 `backIcon: {width:18, height:15}`）。
+
+  stroke 色是 `white` + `stroke-opacity 0.8` → #CCFFFFFF。
+  strokeWidth 1.5、圆头圆角连接，与原 SVG 一致 —— 改成方头会明显变"硬"。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="27dp"
+    android:height="22dp"
+    android:viewportWidth="27"
+    android:viewportHeight="22">
+    <path
+        android:pathData="M10.8252,4.75L4.75,10.8252M4.75,10.8252L10.8252,16.9004M4.75,10.8252H21.9266"
+        android:strokeWidth="1.5"
+        android:strokeColor="#CCFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

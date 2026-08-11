@@ -54,10 +54,14 @@ class TipsyApplication : Application(), ReactApplication {
         object : DefaultReactNativeHost(this) {
             override fun getPackages(): List<ReactPackage> = PackageList(this).packages
 
-            // Debug 直连 Metro 时的入口模块。W0 严格隔离期指向零业务依赖的
-            // 自检入口，与 app/build.gradle 的 react.entryFile 保持一致 ——
-            // 两处不一致会出现"Metro 加载业务包、离线包却是自检包"的错配。
-            override fun getJSMainModuleName(): String = "index.surfaces.debug"
+            // Debug 直连 Metro 时的入口模块。**必须与 app/build.gradle 的
+            // react.entryFile 保持一致** —— 两处不一致会出现「Metro 加载业务包、
+            // 离线包却是自检包」的错配，且 debug 下看不出来（Metro 那份是对的），
+            // 只有 release 或关掉 Metro 时才暴露。
+            //
+            // W1-CLOSEOUT-2 起切到业务入口：`index.surfaces.debug` 只注册
+            // DebugSurface，任何业务 Surface 路由都会挂到一个不存在的组件上。
+            override fun getJSMainModuleName(): String = "index.surfaces"
 
             override fun getUseDeveloperSupport(): Boolean = BuildConfig.DEBUG
 

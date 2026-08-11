@@ -11,6 +11,28 @@ plugins {
 // RN Gradle plugin：由 settings 的 autolinking 引入，提供 react { } 扩展
 apply plugin: 'com.facebook.react'
 
+// ── 风控密钥（X-Client-ID 的 AES-128 key）────────────────────────────
+//
+// 这**是真凭据**，所以不进 git（方案 §12.7：真凭据一律走 CI secret）。
+// 取值顺序：环境变量 → local.properties（已 gitignore）→ 空串。
+//
+// 三渠道三把不同密钥、dev/prod 又各一套，共六把。对应 RN 侧
+// `tipsy-app/.env.{development,production}` 的 EXPO_PUBLIC_*_DEVICE_ID_KEY。
+// 渠道选错 key 的表现：后端风控静默拒绝发码，且**报错不提密钥**。
+//
+// 缺失时留空串：与 RN 的降级行为一致（发空 X-Client-ID 而非不发），
+// 让本地开发无需配密钥也能跑通 UI —— 但发码会被风控拦，这是预期的。
+def secretProps = new Properties()
+def secretPropsFile = rootProject.file('local.properties')
+if (secretPropsFile.exists()) {
+    secretPropsFile.withInputStream { secretProps.load(it) }
+}
+
+/** 读一把密钥：环境变量优先（CI），再 local.properties（本机），最后空串。 */
+def deviceIdKey = { String name ->
+    System.getenv(name) ?: secretProps.getProperty(name) ?: ''
+}
+
 react {
     // RN 工程根 = submodule 目录（本仓 Gradle root 是仓库根）
     root = file('../tipsy-app')
@@ -28,10 +50,22 @@ react {
     )
     bundleCommand = 'export:embed'
 
-    // W0 严格隔离期：只打零业务依赖的自检入口，用于二分「挂载层问题 vs
-    // 业务 import 链问题」。业务 native module 经 capability gate 接回后，
-    // 由所属 packet 切到 index.surfaces.js（方案 §5.2）。
-    entryFile = file('../tipsy-app/index.surfaces.debug.js')
+    // W1-CLOSEOUT-2：切到业务入口（方案 §5.2 说的「由所属 packet 切回」）。
+    //
+    // 在此之前打的是 index.surfaces.debug.js —— 它**只注册 DebugSurface**，
+    // 所以任何指向业务 Surface 的路由都会去挂一个包里不存在的组件。
+    //
+    // ⚠️ **必须与 TipsyApplication.getJSMainModuleName() 同时改**。
+    // 那个是 Metro 直连时的入口，本项是离线内嵌包的入口 —— 两处不一致会出现
+    // 「Metro 加载业务包、离线包却是自检包」的错配，且 debug 下完全正常，
+    // 只有 release 或关掉 Metro 时才暴露。
+    //
+    // 切换的代价（真机验证时要专门看）：index.surfaces.js 顶层会跑 sentry init、
+    // i18n 初始化，以及 hydrateTags / hydrateCharacterBadgeConfigs /
+    // hydrateAvatarDecorationConfigs 三个网络引导。**这三个内部都静默捕获失败** ——
+    // 失败不报错，只表现为标签行/角色徽章/头像框空掉（全新安装必现，
+    // 升级安装因 MMKV 残留会被掩蔽）。
+    entryFile = file('../tipsy-app/index.surfaces.js')
     bundleAssetName = 'index.android.bundle'
 
     // Hermes 由 gradle.properties 的 hermesEnabled 控制，不是 react {} 的属性
@@ -187,6 +221,31 @@ android {
             excludes += ['/META-INF/{AL2.0,LGPL2.1}']
         }
     }
+}
+
+// ── 注入风控密钥（DEVICE_ID_KEY）────────────────────────────────────
+//
+// 必须在 **variant** 层做，不能写在 productFlavors 或 buildTypes 里：
+// 密钥的选取跨**两个维度** —— 渠道（flavor）决定用哪把、环境（buildType）
+// 决定是 dev 还是 prod 那一套。单独在 flavor 块里读不到当前 buildType，
+// 反之亦然（两者独立求值，flavor 的 ext 在 buildType 块内不可见）。
+//
+// 与 RN 的映射（tipsy-app/src/lib/fraud-detection/index.ts:36-46）：
+//   googlePlay → EXPO_PUBLIC_GOOGLE_PLAY_DEVICE_ID_KEY
+//   directApk  → EXPO_PUBLIC_APK_DEVICE_ID_KEY
+//   ruStore    → EXPO_PUBLIC_RUSTORE_DEVICE_ID_KEY
+// 环境后缀沿用 API_BASE_URL 的划分：release 走 production，其余走 development。
+android.applicationVariants.all { variant ->
+    def channelKey = [
+        googlePlay: 'GOOGLE_PLAY',
+        directApk : 'APK',
+        ruStore   : 'RUSTORE',
+    ][variant.flavorName]
+    // debug 与 debugOptimized 都打 dev 后端，故用 dev 密钥；只有 release 用 prod。
+    def envSuffix = variant.buildType.name == 'release' ? 'PRODUCTION' : 'DEVELOPMENT'
+    def propName = "TIPSY_${channelKey}_DEVICE_ID_KEY_${envSuffix}"
+    def keyValue = deviceIdKey(propName)
+    variant.buildConfigField 'String', 'DEVICE_ID_AES_KEY', "\"${keyValue}\""
 }
 
 dependencies {

@@ -9,13 +9,19 @@ import org.junit.Test
 /**
  * Surface 契约测试（W1 §12.1 / §12.4）。
  *
- * ⚠️ **不测 `buildInitialProps`**：`android.os.Bundle` 在 JVM 单测里是抛异常的
- * stub（与 `Base64` / `Log` / `Uri` 同类）。要测它得引 Robolectric，
+ * ⚠️ **不测 `buildInitialProps` 的 Bundle 产物**：`android.os.Bundle` 在 JVM 单测里
+ * 是抛异常的 stub（与 `Base64` / `Log` / `Uri` 同类）。要测它得引 Robolectric，
  * 而用 `returnDefaultValues = true` 绕是方案 §5.4 点名的假绿色。
  *
  * 所以这里覆盖的是**不依赖 Android 类型**的部分：instanceId 唯一性、
- * capability 集合、版本常量。initial props 的实际内容由 §9.1 的设备验收覆盖
- * （那本来就要在真机上看 JS 收到了什么）。
+ * capability 集合、版本常量、key 命名约束。
+ *
+ * **props 的实际形状**（平铺 vs 嵌套、每个 Surface 的必填参数）由
+ * `SurfacePropsTest` 覆盖 —— `SurfaceProps` 刻意返回纯 `Map` 而不是 `Bundle`，
+ * 正是为了让那部分可测。撞名守卫也抽成了不依赖 Bundle 的
+ * [SurfaceContract.assertNoShellKeyClash]。
+ *
+ * 剩下真正只能在真机看的是「JS 到底收到了什么」——§9.1 设备验收覆盖。
  */
 class SurfaceContractTest {
 
@@ -102,13 +108,9 @@ class SurfaceContractTest {
      */
     @Test
     fun `props 的 key 里不含 token 相关字样`() {
-        val keys = listOf(
-            SurfaceContract.KEY_CONTRACT_VERSION,
-            SurfaceContract.KEY_INSTANCE_ID,
-            SurfaceContract.KEY_COMPONENT_NAME,
-            SurfaceContract.KEY_CAPABILITIES,
-            SurfaceContract.KEY_ROUTE,
-            SurfaceContract.KEY_CONTEXT,
+        // 从 SHELL_OWNED_KEYS 取而不是手写清单：加了新壳字段但忘了加到这里，
+        // 断言会静默漏过它。（`KEY_ROUTE` 已随嵌套形状一起删除，见类注释。）
+        val keys = SurfaceContract.SHELL_OWNED_KEYS + setOf(
             SurfaceContract.CONTEXT_KEY_LANGUAGE,
             SurfaceContract.CONTEXT_KEY_ENVIRONMENT,
             SurfaceContract.CONTEXT_KEY_DISTRIBUTION,

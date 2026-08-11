@@ -14,6 +14,7 @@ import okhttp3.mockwebserver.MockWebServer
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -175,11 +176,30 @@ class ApiClientTest {
             requestNow = now + 2,
         )
 
-        assertThrows(ApiException.Unauthenticated::class.java) {
-            kotlinx.coroutines.runBlocking {
-                f.client.get("user/info", authMode = AuthMode.REQUIRED)
-            }
+        // ⚠️ 这里**不能**用 `assertThrows { runBlocking { ... } }`（其余用例的写法）。
+        //
+        // 本用例的 token 落在 refresh 窗口内（exp = now+1，requestNow = now+2），所以
+        // `getValidToken()` 会走到 `refreshSingleFlight`，那里 `scope.async` 把 refresh
+        // 排到 **TestScope 的虚拟时间调度器**上（fixture 传的 `scope = this`），随后
+        // `deferred.await()` 等它完成。而 `runBlocking` 已经占住唯一的 test 线程 ——
+        // 调度器再也没有机会跑那个协程，于是**永久死锁**（不是变慢）。
+        //
+        // 症状：整个测试 task 挂到 CI job 60 分钟超时被 cancel，本地看起来像"卡住"，
+        // 且**不产生失败报告**（旧报告还在，容易被误读成通过）。
+        // 其余九处 `runBlocking` 侥幸不死锁，是因为它们的 token 无效/未进 refresh 窗口，
+        // `getValidToken()` 在真正 suspend 之前就 return 了。
+        //
+        // 正确写法：直接在 runTest 的协程里 await 异常，不要嵌 runBlocking。
+        // 用 try/catch 而非 assertThrows：后者的 lambda 不是 suspend，
+        // 想在里面调 suspend 函数就只能嵌 runBlocking —— 正是死锁的来源。
+        // （本仓未依赖 kotlin-test，所以不用 assertFailsWith。）
+        var caught: ApiException.Unauthenticated? = null
+        try {
+            f.client.get("user/info", authMode = AuthMode.REQUIRED)
+        } catch (e: ApiException.Unauthenticated) {
+            caught = e
         }
+        assertNotNull("REQUIRED + 已过期 token 必须抛 Unauthenticated", caught)
 
         assertEquals("真正建请求前必须二次检查过期窗口", 0, server.requestCount)
     }

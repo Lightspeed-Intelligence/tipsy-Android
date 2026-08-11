@@ -10,6 +10,7 @@
 > ｜ **P6 network closeout 已实现、组合验证待跑**（§2.14 / §2.18）
 > ｜ **§12 Fragment 机制已落地、真实实例关闭链待收口**（§2.15）
 > ｜ **P7 Qt / P8 Sentry 已决定推迟到业务迁移后**（2026-08-11，见 §2.17）｜ **P9 未开始**
+> ｜ **原生登录页：邮箱验证码链路真机已验**（§2.20）—— Google/Apple 受 §12.8 签名指纹阻塞未接
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
@@ -920,6 +921,159 @@ RN/AuthStateHub 的有界状态通知且整段位于主线程，未发现跨账�
 closeout，不得据此把 P1 整体标绿。另一个债务是 `notifyServerPaymentRequired()` 的
 Promise 会在异步 gate/导航完成前 resolve；当前 RN 只消费 rejection，终端副作用仍切到
 主线程，但后续若调用方依赖 Promise 完成语义，必须补成可等待链路。
+
+### 2.19 W1-CLOSEOUT-2：Surface 上线前置（已完成，2026-08-11）
+
+P9 的三层前置。**单测 17 条**（连同既有共 **228 条**，skipped=0）。
+
+#### ⚠️ 比 initial props 形状更靠前的一层：组件不在包里
+
+`app/build.gradle` 的 `entryFile` 原先指向 `index.surfaces.debug.js`，而那个文件
+**只注册 `DebugSurface`**（`:59`）。所以任何指向业务 Surface 的路由都会去挂一个
+**包里不存在的组件**。这是 W0 刻意的隔离（方案 §5.2「由所属 packet 切回」），
+到这一步才该切。
+
+已切到 `index.surfaces.js`，**两处同时改**：`app/build.gradle` 的 `entryFile`
+（离线内嵌包）与 `TipsyApplication.getJSMainModuleName()`（Metro 直连）。
+⚠️ 只改一处会出现「Metro 加载业务包、离线包却是自检包」的错配，
+**debug 下看不出来**（Metro 那份是对的），只有 release 或关掉 Metro 才暴露。
+
+实测切换后 bundle 从 27MB / 426 asset 起步，13 个业务 Surface 的组件名与业务入口
+独有标记（`index.surfaces.js evaluated` / `align i18n to shell language`）都在包里。
+
+⚠️ **风险面随之变大**：`index.surfaces.js` 顶层会跑 sentry init、i18n 初始化，
+以及 `hydrateTags` / `hydrateCharacterBadgeConfigs` / `hydrateAvatarDecorationConfigs`
+三个网络引导。**这三个内部都静默捕获失败** —— 失败不报错，只表现为标签行 /
+角色徽章 / 头像框空掉（全新安装必现，升级安装因 MMKV 残留会被掩蔽）。
+真机验收时要专门看这三条。
+
+#### initial props 从嵌套 `route` 改为**平铺**
+
+原实现把业务参数塞进嵌套的 `route` Bundle，而 RN 侧 **13 个 Surface 无一读
+`props.route`**（全仓搜零命中）。它们一律读平铺的顶层 props：
+
+| Surface | 必需 props（实测） |
+| --- | --- |
+| `ChatDetailSurface` | `characterId`（**非可选**，`:75`） |
+| `CommentsSurface` | `targetType` + `targetId`（`:16-24`） |
+| `SettingsSurface` | `initialScreen?` |
+| `NotificationSurface` | `tab?` |
+
+iOS 的 `makeInitialProperties()` 产出的正是平铺形状。**嵌套形状会让
+`characterId` 恒为 `undefined`**，而 RN 侧不报错，只走「无参进入」兜底 ——
+表现为「点某个角色却进了上次的会话」。
+
+`CONTRACT_VERSION` **未递增**：嵌套形状从未被任何 bundle 消费过，
+这是修正一个从未生效的字段布局，不是契约变更。
+
+新增 `SurfaceProps`（route → 业务 props 映射）。**刻意返回 `Map` 而非 `Bundle`** ——
+`Bundle` 在 JVM 单测里是抛异常的 stub，而这层映射正是最该被测的部分
+（key 拼错、漏必填参数，两边都不报错）。撞名守卫也抽成不依赖 Bundle 的
+`assertNoShellKeyClash`，**撞名直接抛**而不是静默覆盖。
+
+#### `SurfaceDependencyChecklist`（P9 第一个交付物）
+
+`ChatDetailSurface` 的 18 项微根 + 5 个微栈目标，每项标注**缺失后果** ——
+缺项的共同症状是「点了没反应」（事件进 store 无人渲染，不报错不崩溃）。
+
+配套测试**双向断言**「清单 ⊆ RN 源码」与「RN 源码 ⊆ 清单」——
+只有前者时，RN 侧新增一个 `PortalHost` 清单仍会全绿，那是虚假的安心感。
+另有一条钉死 `SurfaceToastHost` 必须在具名 `PortalHost` 群之前（顺序反了
+表现为「弹窗被 toast 盖住」，测试很难抓）。
+
+⚠️ 核对时发现一处**双端不一致**：`ChatDetailSurface.tsx:628` 是
+`PortalHost name="MayBallSplashPV"`，而 `App.tsx:478` 是 `"SplashPV"`。
+全仓搜下来**两个名字都没有对应的 `Portal hostName` 消费方**，
+且 `components/animations/SplashPV.tsx` 根本不用 Portal —— 看起来两侧都是休眠遗留。
+**但这是推断，不是实测结论**：真机验收若发现活动开屏不弹，先查这里。
+**别"顺手统一"名字** —— 改 `index.surfaces.js` 系文件需要双壳回归。
+
+#### 仍未做（明确边界）
+
+- ChatDetail **未**放回生产白名单 —— 等 §9.1 矩阵填满（与并行的 PR #16 一致）
+- 真机验收未跑：本包所有验证都是单测 + bundle 内容核对，按 §5.4 纪律
+  「Surface 能否真的跑起来」当前状态是 `NOT RUN`
+
+### 2.20 原生登录页：邮箱验证码链路（真机已验，2026-08-11）
+
+首个原生业务页。`/login/email/send_code` + `/login/email` 全链路接通：发码、
+60s 冷却、验码、成功后 `tokenStore.onLoggedIn` + `authStateHub.notifyDidLogin`。
+状态收在 `EmailLoginViewModel`（跨重组/配置变更存活）。
+
+**Google / Apple 登录仍未接**（社交按钮在位但无实现）—— `/login/firebase` 受
+§12.8 签名指纹阻塞，**无法真机验证**，不是漏实现。`/login/password` 与
+`/login/email/did_not_get_code` 未做。年龄验证 / 资料补全 / 账号合并弹窗属 W4。
+
+#### 静默失败：`errorMessage = null` 等于不弹 toast
+
+网络失败时原先把 `errorMessage` 置 `null`，本意「让 UI 用默认文案」，但 UI 是
+`errorMessage?.let { toast }` —— **null 等于什么都不弹**，真机表现为「点发送完全
+没反应」。API 24 模拟器 TLS 握手失败时踩到（那一档是 CI/冒烟矩阵里的真实环境）。
+现回落到 `FALLBACK_ERROR_KEY`；后端 `code≠0` 但 `msg` 为空时同样回落。
+
+⚠️ 兜底文案用 `Please try again later` 而**不是** RN 的 `Something went wrong`：
+后者**不在 26 个 locale 文件里任何一个**，`L10n.t` 找不到会回落到 key 本身，
+结果所有语言都显示英文（正是 §4.8 那条「非英文用户静默看英文」）。前者 26 个
+locale 均已有翻译，已逐一校验。
+
+#### 与 RN 的一处刻意偏离
+
+RN 的发码/登录**不检查 envelope 的 `code`**（`auth.ts:126-143`），后端限流返回
+HTTP 200 + `code≠0` 时 RN 静默当成功、倒计时照走，用户等一封永不到的邮件。
+壳这里检查 `code` 并把后端 `msg` 抛给 UI。
+
+#### 测试与验证
+
+app 单测 **49 条**覆盖本页（ViewModel 编排 / envelope 契约 / 状态机 / `X-Client-ID`
+加密），skipped=0。契约测试用 `MockWebServer` 验实际发出的 header。
+
+⚠️ `android.util.Log` 在 JVM 单测里是抛异常的 stub，故 ViewModel 的失败日志经
+`logWarn` 注入（默认参数给生产实现，同 `nowMs` 的处理）。**没有**开
+`returnDefaultValues` —— 那正是 §5.4 点名的假绿色，且会掩盖上面那个 null 静默。
+
+原有「网络失败不启动倒计时」用例只断言状态、断言不到「用户被告知」，所以漏掉了
+这个 bug。新增用例直接断言用户可见文案。
+
+真机（API 36，`ai.lightspeed.tipsy`）：正确码登录成功并落地 token；错误码弹
+「验证码错误」且停在原页；倒计时到 0 恢复「重新发送」；断网点发送弹
+「Please try again later」且不启动倒计时（可立即重试）。
+
+**未验**：API 24 真机/模拟器（该档 TLS 连不上本后端，是发现此 bug 的环境但未跑
+通完整链路）；三个 applicationId 的覆盖升级；`didLogin` 广播的下游消费（W2 五 Tab
+尚不存在）。RN 侧 `onAuthStateChanged` 目前**只有类型声明、无 JS 订阅方**，所以
+登录只发 `authStateHub`、未发 `TipsyAuthRegistry`；接 Surface 前需补齐对称性。
+
+### 2.21 CI 挂死：`runTest` 里嵌 `runBlocking`（2026-08-11 修复）
+
+`ApiClientTest.store 返回后恰好过期 REQUIRED 仍不得起飞` 会**永久死锁**，
+表现为 G1 Fast Gate 在「单元测试」步骤耗到 **job 60 分钟超时被 cancel**，
+后续「桥单测」与「skipped=0 校验」两步直接 skipped。
+
+PR #16 的 G1 记录是 `fail 1h0m15s`，PR #17 首跑是 `cancelled 1h0m15s`
+—— **同一个签名**。该 PR 描述里也写明「未执行组合验证」，所以这条是带着红 CI
+合进 main 的，不是本次合并引入。
+
+机制：`fixture` 传 `scope = this`（TestScope），该用例的 token 落在 refresh
+窗口内（`exp = now+1`、`requestNow = now+2`），于是 `getValidToken()` 走到
+`refreshSingleFlight`，那里 `scope.async` 把 refresh 排到**虚拟时间调度器**上，
+随后 `deferred.await()` 等它。而外层 `assertThrows { runBlocking { ... } }` 已经
+占住唯一的 test 线程 —— 调度器永远拿不到执行机会。
+
+同文件另有九处 `runBlocking` 侥幸不死锁：它们的 token 无效或不在 refresh 窗口内，
+`getValidToken()` 在真正 suspend 前就 return 了。**别以为那个写法是安全的。**
+
+修法：直接在 `runTest` 协程里 `try/catch` 调 suspend 函数，不嵌 `runBlocking`
+（本仓未依赖 kotlin-test，故不用 `assertFailsWith`）。
+
+⚠️ **这个坑的二次伤害是「报告看起来是绿的」**：测试 task 挂死时不产生新报告，
+`build/reports/tests/**/index.html` 还是上一次成功运行的内容。排查期间据此读到
+过「303 条全绿」，而那是挂死前的旧产物 —— 真实数字是 **336**。
+判据：**先看报告 mtime，再看数字**；挂死的 task 没有 mtime 更新。
+
+修复后实测：`:app:test{DirectApk,GooglePlay}DebugUnitTest --rerun-tasks`
+→ 各 **336 条**、failures=0、ignored=0，全程 2m35s（此前是无限挂）；
+`:tipsy-auth:testDebugUnitTest --rerun-tasks` → 15 条、ignored=0，
+`LiveAppSafetyTest` 已执行；`:app:lintDirectApkDebug` 过。
 
 ## 3. 横切能力
 
