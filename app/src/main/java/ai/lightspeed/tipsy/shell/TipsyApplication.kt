@@ -13,10 +13,15 @@ import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint
 import com.facebook.react.defaults.DefaultReactNativeHost
 import ai.lightspeed.tipsy.shell.auth.AuthStateHub
 import ai.lightspeed.tipsy.shell.auth.Generations
+import ai.lightspeed.tipsy.shell.auth.LegacyMmkvStore
 import ai.lightspeed.tipsy.shell.auth.MmkvTokenPersistence
 import ai.lightspeed.tipsy.shell.auth.RefreshTokenApi
 import ai.lightspeed.tipsy.shell.auth.ShellTokenStore
 import ai.lightspeed.tipsy.shell.bridge.ShellAuthProvider
+import ai.lightspeed.tipsy.shell.i18n.AccountLanguageReader
+import ai.lightspeed.tipsy.shell.i18n.AssetLocaleLoader
+import ai.lightspeed.tipsy.shell.i18n.L10n
+import ai.lightspeed.tipsy.shell.i18n.LanguageCodes
 import ai.lightspeed.tipsy.shell.network.ApiClient
 import ai.lightspeed.tipsy.shell.network.ApiErrorGate
 import android.util.Log
@@ -95,6 +100,14 @@ class TipsyApplication : Application(), ReactApplication {
         private set
 
     /**
+     * RN 侧 MMKV 的只读入口（W1-P5 用它读账号语言）。
+     *
+     * `lazy` 而非 `lateinit`：`bootstrapI18n` 在 `registerAuthBridge` 之前跑，
+     * 而 MMKV 的初始化在两处都要用 —— 用 lazy 让谁先用谁触发，不依赖调用顺序。
+     */
+    private val legacyStore by lazy { LegacyMmkvStore.open(this) }
+
+    /**
      * 当前承载 Surface 的容器提供的"关闭自己"回调。
      * 由 [MainActivity] 在 onCreate/onDestroy 设置与清除 ——
      * Application 不该直接持 Activity 引用（泄漏），所以用可空回调转接。
@@ -114,10 +127,58 @@ class TipsyApplication : Application(), ReactApplication {
         super.onCreate()
         DefaultNewArchitectureEntryPoint.releaseLevel = ReleaseLevel.STABLE
         loadReactNative(this)
+        // i18n 必须早于 registerAuthBridge：桥的 getCurrentLanguageCode 会读
+        // L10n.current，而 index.surfaces.js 在 runtime 启动时就调它对齐 i18n
+        bootstrapI18n()
         registerAuthBridge()
         // Expo 模块的 Application 生命周期分发；autolinked 模块依赖它
         ApplicationLifecycleDispatcher.onApplicationCreate(this)
     }
+
+    /**
+     * 装配 i18n（W1-P5，方案 §4.8）。
+     *
+     * **两阶段初始化**（对齐 RN，方案 §4.6）：
+     * 1. 这里先按**设备 locale** 起步 —— 冷启动时还没有 user
+     * 2. 拿到账号后按 `user.language_code` 覆盖（见 [refreshAccountLanguage]）
+     *
+     * ⚠️ 两阶段的必然结果是**首屏读到的可能是过渡语言**。方案 §4.6 与 W1
+     * 计划 §7.6 都明确：**不要拿语言当缓存闸** —— iOS 那样做导致「第二次启动
+     * 永远没有种子」。当前壳还没有缓存层（W2/W3 才有），此处只留约束说明。
+     */
+    private fun bootstrapI18n() {
+        L10n.bootstrap(
+            loader = AssetLocaleLoader(this),
+            // ⚠️ 设备 locale 走 fromDeviceLocale 而**不是** normalize ——
+            // 两条规则对简体 zh 给不同答案（en vs zh-tw），见 LanguageCodes 注释
+            initialLanguage = LanguageCodes.fromDeviceLocale(deviceLanguageTag()),
+            listener = { code ->
+                // 桥广播收口在 L10n.setLanguage 里，所以这里是**唯一**发射点。
+                // 运行中的 Surface 靠它同步 i18next（index.surfaces.js:102-107）
+                TipsyAuthRegistry.notifyLanguageChanged(code)
+            },
+            logger = { Log.w(TAG, it) },
+        )
+        refreshAccountLanguage()
+    }
+
+    /**
+     * 按账号语言覆盖（两阶段的第 2 步）。
+     *
+     * 也用于「RN 设置页改完语言后壳需要重读」—— 桥契约没有 JS→壳 的语言
+     * 通知方法（已核实），所以由 [MainActivity] 在 Surface 容器关闭时调这里。
+     * 账号无语言意见时**不覆盖**，保留设备默认。
+     */
+    fun refreshAccountLanguage() {
+        val raw = legacyStore.getString(AccountLanguageReader.USER_STORAGE_KEY)
+        val accountLanguage = AccountLanguageReader.parse(raw) ?: return
+        L10n.setLanguage(accountLanguage)
+    }
+
+    /** 设备 locale 的 BCP-47 tag。 */
+    private fun deviceLanguageTag(): String =
+        resources.configuration.locales.takeIf { it.size() > 0 }?.get(0)?.toLanguageTag()
+            ?: java.util.Locale.getDefault().toLanguageTag()
 
     /**
      * 注册 auth 桥 provider（W1-P0）。
@@ -153,9 +214,9 @@ class TipsyApplication : Application(), ReactApplication {
 
         val provider = ShellAuthProvider(
             isDebugBuild = BuildConfig.DEBUG,
-            // P5 会换成壳的 L10n store。现在返回 null = 壳无意见，
-            // RN 侧沿用自己的语言判定，不至于被一个假值锁死。
-            languageCodeProvider = { null },
+            // W1-P5：壳成为语言的唯一 writer。`index.surfaces.js:45-49` 在 runtime
+            // 启动时读它对齐 i18next，运行中的变化经 onLanguageChanged 事件接力。
+            languageCodeProvider = { L10n.current },
             onPopSurface = { instanceId -> onPopSurfaceRequested?.invoke(instanceId) },
             onNavigateGemsPurchase = { params ->
                 val handler = onNavigateGemsPurchaseRequested

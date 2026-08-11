@@ -3,10 +3,11 @@
 > Kotlin/Compose 原生壳，以 integrated brownfield 方式托管 `tipsy-app`（Expo React Native，
 > git submodule）。核心页面逐步原生化，其余以 RN Surface 运行。
 >
-> **当前状态：未开工**（仅 Android Studio 模板脚手架）。状态一律以
-> [android-native-progress.md](reference/android-native-progress.md) 为准。
+> **当前状态：W0 完成，W1 只剩 P9**（仍是零业务代码）。状态一律以
+> [android-native-progress.md](reference/android-native-progress.md) 为准 ——
+> **本文不记状态快照**，重复的「当前进度」是 iOS 侧真实发生过的漂移源。
 
-**目标技术栈：** Kotlin, Compose Material 3, OkHttp + Retrofit + kotlinx.serialization,
+**目标技术栈：** Kotlin, Compose Material 3, OkHttp（**已决定不引 Retrofit**，见进度文档 §2.14）,
 MMKV, Coroutines/StateFlow, Media3 ExoPlayer, Coil, Expo `ReactHost`（RN 宿主）。
 
 **架构：** Fragment 宿主 + ComposeView（原生页）/ ReactFragment（RN Surface）；单 React

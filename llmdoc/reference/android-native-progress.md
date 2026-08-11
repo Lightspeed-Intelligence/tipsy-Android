@@ -1,30 +1,31 @@
 # Tipsy Android 原生化迁移：现状（唯一状态真值）
 
-> 更新：2026-08-10 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
+> 更新：2026-08-11 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
 > **G1 CI 已激活**（2026-08-10，`PAT_TOKEN` 已配，首次真绿，见 §2.10）
 >
 > **W1 进行中** —— 细化方案见 [`../architecture/android-w1-plan.md`](../architecture/android-w1-plan.md)。
 > **P0 桥已接通**（§2.11）｜ **P1 auth 契约已完成**（§2.13）｜ **P2 机制已验、兜底推迟**（§2.12）
 > ｜ **P2 剩余 + P3 已决定合并推迟到上线前**（2026-08-10，见 W1 计划 §5.6）
 > ｜ **P4 Router 已完成**（含真机验证）｜ **P6 network 已完成**（§2.14）
-> ｜ **§12 Fragment 四件事已完成**（§2.15，含真机验证）｜ **P5 / P7 / P8 / P9 未开始**
+> ｜ **§12 Fragment 四件事已完成**（§2.15，含真机验证）｜ **P5 i18n 已完成**（§2.16）
+> ｜ **P7 Qt / P8 Sentry 已决定推迟到业务迁移后**（2026-08-11，见 §2.17）｜ **P9 未开始**
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
 ## 0. 三十秒速览
 
-- **波次进度**：W0 完成；**W1 走到 P1**（P0 桥 + P1 auth 契约完成，P2 一半，P3 推迟，P4-P9 未开始）。
-- **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost）+ `MainActivity`（Compose 原生根 + Router 接线）+ `RNSurfaceFragment`（§12 四件事已补齐）+ `auth/`（6 类）+ `network/`（7 类）+ `router/`（3 类）+ `surface/`（2 类）+ `bridge/ShellAuthProvider`。**仍是零业务代码。**
+- **波次进度**：W0 完成；**W1 只剩 P9**（P0/P1/P4/P5/P6/§12 完成，P2 一半，P3 推迟，P7/P8 推迟到业务迁移后）。
+- **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost）+ `MainActivity`（Compose 原生根 + Router 接线）+ `RNSurfaceFragment`（§12 四件事已补齐）+ `auth/`（6 类）+ `network/`（7 类）+ `router/`（3 类）+ `surface/`（2 类）+ `i18n/`（6 类）+ `bridge/ShellAuthProvider`。**仍是零业务代码。**
 - **submodule**：pin `56c4bbfa7`（分支 `feat/tipsy-auth-android`，**未合进 main/release**，按约定靠子模块指针引用），`node_modules` 已装（1812 包）。
-- **已验证**：三 flavor debug 构建通过、applicationId 正确、JS bundle 内嵌、51 个 project autolink、**Surface 两种 bundle 来源均可挂载**（§2.6）、**MMKV 互操作**（§2.12）、**auth 契约单测 62 条**（§2.13）。
-- **不存在**：五 Tab、i18n、Sentry、core/feature 模块、**G3 nightly**（G1 已激活，但三 flavor 全量与 release 打包仍无自动防线）。Router 与 network 层已建（§2.14），但**只有 ChatDetail 一个目标启用**。
+- **已验证**：三 flavor debug 构建通过、applicationId 正确、JS bundle 内嵌、51 个 project autolink、**Surface 两种 bundle 来源均可挂载**（§2.6）、**MMKV 互操作**（§2.12）、**单测共 211 条**（skipped=0）。
+- **不存在**：五 Tab、Sentry、Qt 埋点、core/feature 模块、**G3 nightly**（G1 已激活，但三 flavor 全量与 release 打包仍无自动防线）。Router 与 network 层已建（§2.14），但**只有 ChatDetail 一个目标启用**。
 
 ## 1. 波次状态
 
 | 波次 | 内容 | 业务量 | 状态 | source_rn_sha | target_android_sha |
 | --- | --- | --- | --- | --- | --- |
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
-| W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟡 **进行中（P0/P1 完成）** | `56c4bbfa7` | — |
+| W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟡 **进行中（只剩 P9）** | `56c4bbfa7` | — |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | ⬜ 阻塞于 W1 | — | — |
 | W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | ⬜ 阻塞于 W2 | — | — |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | ⬜ 阻塞于 W3 | — | — |
@@ -747,6 +748,127 @@ saved state 仍然需要，但理由是**进程重建**（App 后台被杀、用
 挡不住硬编码字符串，但能挡住「顺手加个 KEY_TOKEN」。
 initial props 会进 `Bundle`，可能落入 saved instance state、ANR trace、崩溃日志。
 
+### 2.16 W1-P5：i18n（已完成）
+
+`shell/i18n/` 六个类 + 26 份词条资源。**单测 42 条**（连同既有共 **211 条**，skipped=0）。
+
+| 类 | 职责 |
+| --- | --- |
+| `LanguageCodes` | **两条** normalize 规则 + 26 个 supported 码 |
+| `L10n` | 查表 + fallback 链 + 语言状态 + 广播收口 |
+| `LocaleTable` | 一个语言的词条表（宽松逐值解析） |
+| `AssetLocaleLoader` | 从 `assets/locales/<code>.json` 读 |
+| `AccountLanguageReader` | 从 `user-storage` 信封读账号语言（只读） |
+| `LocalizedText` / `rememberLocalizedString` | Compose 自订阅组件 |
+
+#### ⚠️ `normalizeLanguageCode` 实际是**两条**规则，方案文档记漏了
+
+方案 §4.8 与 W1 计划 §7.2 都只提了一个函数，但 `i18n-index.ts` 里有两条对
+**同一输入给不同答案**的规则：
+
+| 场景 | RN 出处 | 简体 `zh` 的结果 |
+| --- | --- | --- |
+| 账号语言 / 任意码 | `normalizeLanguageCode`（`:64-75`） | **`zh-tw`** |
+| 启动读设备 locale | `defaultLanguage`（`:118-135`） | **`en`** |
+
+即：账号 `language_code` 存 `zh` 的用户看繁体，设备语言是简体的新用户看英文。
+**这不是 bug，是两个不同场景的产品决策**（iOS 的 `L10n.swift:56-79` 同样拆两个函数）。
+只实现一条的后果是简体设备用户看到繁体 —— 而这在英文环境测试里看不出来。
+`LanguageCodesTest` 有一条专门的**对照测试**钉死这个差异。
+
+#### `en` 也必须查表
+
+实测 `en.json` 的 1838 个 key 里 **94 个 key ≠ value**（如 `Currently unavailable`
+→ `More to come`）。拿 key 当英文文案会让这批词条显示错文案，且因为
+「看起来像正常英文」而不会被发现。`LocaleAssetsTest` 断言导出产物里
+确实存在这类词条 —— 否则这条约束会被悄悄绕过。
+
+#### 导出脚本双壳共用（2026-08-11 决定）
+
+`tipsy-app/scripts/export-shell-locales.mjs` 改为按**探测仓库标记目录**决定输出：
+iOS → `Tipsy-iOS/Resources/Locales/`，Android → `app/src/main/assets/locales/`。
+`SHELL_KEYS` **不按平台分叉** —— 分叉的代价是「某平台非英文用户静默看到英文」，
+多导出几条未用词条只是几 KB。实测 26 个语言 × 180 条，0 缺失。
+
+**为什么用 assets 而不是 `res/raw` / `strings.xml`**：资源名不允许连字符
+（`zh-tw`/`pt-br` 要改名再映射），而 key 是含空格标点的英文原文，做不成合法资源名
+（方案 §4.8 已明确排除）。也不用 `values-<qualifier>`：壳的语言真值来自**账号**，
+让系统按设备 locale 挑资源会与账号语言打架。
+
+#### 语言真值链与一处已知缺口
+
+真值在**后端**，本地是镜像：设置页 → `POST /user/set_language` → `updateUserInfo()`
+重拉 → `user.language_code` → `user-storage.state.languageCode`
+（`useChangeLanguage.ts:57-72` + `store/user.ts:187`）。
+
+**语言设置页刻意不迁**（方案 §8.1），仍在 `SettingsSurface` 里。所以壳**只读**
+这个 key，不写 —— 写 Zustand 信封必须 merge（§4.6），那属 P2。
+
+⚠️ **桥契约没有 JS→壳 的语言通知方法**（已核实 `modules/tipsy-auth/src/index.ts`
+只有壳→JS 的 `onLanguageChanged`）。当前处理：`MainActivity` 挂
+`OnBackStackChangedListener`，Surface 容器出栈时重读。
+**用 listener 而不是在 `popSurface()` 里调** —— 返回键有两条路径（桥的 popSurface /
+系统返回键直接走 FragmentManager），只挂前者会漏掉「按系统返回键退出设置页」。
+若将来该时机不够（如设置页不关就切 Tab），再考虑给桥加可选方法，
+**不要为了「更干净」提前改跨仓契约。**
+
+#### Compose 组件从第一天就做
+
+方案 §4.8 与 W1 计划 §7.3 都要求「不让每个页面手挂 listener，iOS 后期才补，
+Android 第一天就做」。已提供 `LocalizedText` 与 `rememberLocalizedString`。
+
+⚠️ **不要写 `Text(L10n.t(key))`** —— 那是普通函数调用，Compose 不知道它读了
+可变状态，语言切换后已组合的文本**不会重组**，表现为「切了语言当前页没变，
+退出重进才变」。这类 bug 在切完立刻返回的路径下很容易漏测。
+
+#### 两阶段初始化，且语言**不**作为缓存闸
+
+`TipsyApplication.bootstrapI18n()` 先按设备 locale 起步，再按账号语言覆盖
+（对齐 RN 两段式）。必然结果是**首屏可能读到过渡语言** ——
+方案 §4.6 与 W1 计划 §7.6 明确：**不要拿语言当缓存闸**（iOS 那样做导致
+「第二次启动永远没有种子」）。壳当前无缓存层，只在代码里留了约束注释，
+**没有造一个没人用的抽象**。
+
+### 2.17 P7 Qt / P8 Sentry 推迟到业务迁移后（2026-08-11 决定）
+
+> **决策**：Qt 埋点接线与 Sentry 原生实例推迟到业务代码迁移（W2/W3）完成之后。
+> **决策人**：项目 owner（用户）。**风险 owner 同上。**
+
+**进入 W2 的判据不受影响**：三条判据里的「root side-effect 表零 `UNKNOWN`」
+—— **已决策推迟不等于 UNKNOWN**，按 W1 计划 §5.6 的格式写成显式推迟即可。
+故 P7 收窄为「填表 + 记两条决策」，不是删除。
+
+**两项的推迟成本不对称（重要）**：
+
+| | Sentry | Qt |
+| --- | --- | --- |
+| 接入形态 | 单点（一个 `init`） | 埋点调用点散在**每个**业务页 |
+| 推迟成本 | 干净，迁完补即可 | 现在不定调用点写法 → 迁完要回头改几十个页面 |
+
+**对冲**：Qt 需要现在就定一个薄 `Analytics` facade，业务页照常调用，
+Qt 接上前只在 debug 打日志。⚠️ **这一处刻意不遵循「未实现项 debug 抛异常」的
+纪律**（§2.11 那两条实现纪律）—— 埋点每次事件都抛会让 debug 不可用。
+**facade 尚未落地**，W2 第一个业务页开工前必须建。
+
+**两处已存在的静默洞（不是「还没做的功能」，2026-08-11 实测）**：
+
+1. **Qt 的 `preInit` 在壳里一次都不会调。** `QtPackage` 只实现
+   `createReactActivityLifecycleListeners`，而该回调**只由 expo 的
+   `ReactActivityDelegateWrapper` 分发**（`ReactActivityDelegateWrapper.kt:53-54`）。
+   壳没有 `ReactActivity` —— 用的是 `ReactFragment` + 裸 `ReactDelegate`
+   （`ReactFragment.kt:47`），壳侧也搜不到任何 `ReactActivityLifecycleListener` 分发点。
+   **所以开放问题 §12.1 的前提不成立**：不是「保留 listener vs 排除模块」二选一，
+   而是「Qt 目前完全没初始化」。这正是方案 §4.2 拿 iOS 的 AppsFlyer 事故举例的
+   那类失败模式。
+2. **Sentry 的 JS 事件交给了一个从未 init 的原生 SDK。** 壳没有任何 Sentry 依赖
+   （`app/build.gradle` 与 catalog 均无），但 `sentry_react-native` 被 autolink 进来，
+   JS 侧 `src/surfaces/sentry.ts` 写 `autoInitializeNativeSdk: false` 且注释说
+   「原生层由壳自持」。按 wrapper 实现（`wrapper.js:132-137`）这一支把
+   `enableNative` 置 true 后返回 —— **Surface 里的 JS 报错既不上报也不报错。**
+
+**已告知的代价**：W2/W3 那 32.6k 行迁移期间远端崩溃证据缺位，只能靠 logcat
+与本机复现。**Sentry 的价值恰在迁移过程中最高**，而不是迁完之后。
+
 ## 3. 横切能力
 
 | 能力 | 状态 | 落地处 |
@@ -754,13 +876,13 @@ initial props 会进 `Bundle`，可能落入 saved instance state、ANR trace、
 | Auth 所有权 | 🟢 **壳已是 owner** | `shell/auth/`（§2.13）。刷新/登出/401 归属已实现；**历史 token 迁移未完**（P2） |
 | `tipsy-auth` Android 实现 | 🟢 **已实现** | `modules/tipsy-auth/android/`（12 个必须方法 + 主线程约束），§2.11 / §2.13 |
 | 网络层 | 🟢 **已完成** | `shell/network/`（§2.14）。OkHttp（与 RN 共享 client）+ 三鉴权模式 + envelope + 401/402 汇聚 + 标量漂移容错。**未引 Retrofit** |
-| i18n | 🔴 未开始 | — |
-| Router / 深链 | 🔴 未开始 | — |
-| RN Surface 宿主 | 🟡 骨架就位 | `RNSurfaceFragment`（继承官方 `ReactFragment`，共享单 ReactHost）；**instanceId / 首帧协议 / onSurfaceReappeared 尚未实现**，见方案 §4.3 |
+| i18n | 🟢 **已完成** | `shell/i18n/`（§2.16）。壳是唯一 writer；key-based 查表 + 两条 normalize 规则 + Compose 自订阅组件。**语言设置页仍在 RN**（刻意，方案 §8.1） |
+| Router / 深链 | 🟢 **已完成** | `shell/router/`（3 类）。七条外部深链 + auth gate + 去重 + scheme 安全审计（W1 计划 §6.3：五个通用 scheme 全部不迁） |
+| RN Surface 宿主 | 🟢 **四件事已补齐** | `RNSurfaceFragment`（继承官方 `ReactFragment`，共享单 ReactHost）+ `surface/`（instanceId / 首帧协议 / onSurfaceReappeared / capability handshake），§2.15 |
 | Push | 🔴 未开始 | — |
-| Analytics（Qt） | 🔴 未开始 | 归属待决策（方案 §12.1） |
+| Analytics（Qt） | ⏸️ **已决定推迟** | 推迟到业务迁移完成后（2026-08-11，§2.17）。⚠️ **现状是 `preInit` 一次都不会调**，不是「还没接」 |
 | 营销 SDK（ATT/AppsFlyer/FB/TikTok） | 🔴 未开始 | iOS 事故点，方案 §4.2 |
-| Sentry | 🔴 未开始 | — |
+| Sentry | ⏸️ **已决定推迟** | 同上（§2.17）。⚠️ JS 侧 `autoInitializeNativeSdk: false` 已把事件交给一个从未 init 的原生 SDK |
 | Widget | 🔴 未开始 | — |
 | OTA | 🔴 未开始 | 隔离方案见 §5.3。W0 已**显式禁用** expo-updates 资源任务（原因见 §2.2.2），W4 接入时需先解决其 projectRoot 推导 |
 | CI | 🟡 **G1 已激活** | `.github/workflows/android-ci.yml`（§2.10）。**G3 nightly 未建** —— 三 flavor 全量与 release 打包无自动防线 |
