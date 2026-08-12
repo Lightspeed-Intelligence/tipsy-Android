@@ -12,9 +12,9 @@
 > ｜ **P7 Qt / P8 Sentry 已决定推迟到业务迁移后**（2026-08-11，见 §2.17）｜ **P9 未开始**
 > ｜ **原生登录页：邮箱验证码链路真机已验**（§2.20）—— Google/Apple 受 §12.8 签名指纹阻塞未接
 >
-> **W2 已开工**：五 Tab shell + Home 首屏接真实接口已落地（§2.23）——
-> **单测与构建全绿，主链路真机已验**（tab 切换 / 五个 series tab 真实列表 / 翻页；
-> 下拉刷新与性别筛选仍未验）。
+> **W2 进行中**：五 Tab shell + Home 首屏（§2.23，主链路真机已验）+ 标签筛选抽屉
+> 与 For You 冷启动种子（§2.24，**抽屉、种子写入门禁、离线渲染种子真机全已验**）。
+> Home 剩 banner / 彩蛋弹窗 / mp4 封面三项（前两项评估留 RN Surface）。
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
@@ -23,8 +23,8 @@
 - **波次进度**：W0 完成；W1 的契约层全部落地且已在 CI 组合验证（§2.22），只剩 §12 实例关闭链与 P9；P2 剩余/P3/P7/P8 均已决策推迟。**W2 已开工**：五 Tab + Home 首屏（§2.23）。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + **`analytics/`** + **`tabs/`** + **`pages/login/`、`pages/home/`**。**已有第一批业务代码**（登录页 + Home）。
 - **submodule**：pin `95760a6622424bc9be238e7790fdbf38fe7c7fb2`（远端分支 `feat/android-native`，**未合进 main/release**，按约定靠子模块指针引用）。W2 首包**不动 submodule**。
-- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W2 首包本机跑过同序列：lint 无新增、`assembleGooglePlayDebug`、**app 单测 431 条 + 桥单测 15 条，failures=0 / skipped=0**。release 权限数仍 **51**（未因 coil 增加）。
-- **不存在 / 未验**：Screen / ChatList / Profile 三个 Tab 仍是占位页；标签筛选抽屉是 stub（下一包）；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。P9 前生产路由白名单为空，ChatDetail 保持 disabled。真机侧**下拉刷新、性别筛选、进程重建恢复仍未验**（§2.23）。
+- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W2 两包本机都跑过同序列：lint 无新增、`assembleGooglePlayDebug`、**app 单测 476 条，failures=0 / skipped=0**。release 权限数仍 **51**（未因 coil 增加）。
+- **不存在 / 未验**：Screen / ChatList / Profile 三个 Tab 仍是占位页；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。P9 前生产路由白名单为空，ChatDetail 保持 disabled。真机侧 §2.23 三项（下拉刷新、性别筛选、进程重建恢复）与 §2.24 四项（筛选抽屉、种子写入门禁、离线渲染种子、种子与真实数据衔接）**均已真机验过**；⚠️ 其中**性别筛选持久化查出真实缺陷**（`config-persist-storage` 信封不存在时静默不写 → 全新安装用户改性别永不持久化，§2.23.1，**待 owner 定修法**）。
 
 ## 1. 波次状态
 
@@ -32,7 +32,7 @@
 | --- | --- | --- | --- | --- | --- |
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟡 **契约层已收口且 CI 已验；§12 关闭链 + P9 未完** | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17 已并） |
-| W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **进行中**：Login 邮箱链路已验、五 Tab + Home 首屏已落地（§2.20 / §2.23） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | — |
+| W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **进行中**：Login 邮箱链路已验、五 Tab + Home 首屏已落地、筛选抽屉 + 冷启动种子已落地（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面 | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 已并；**PR #20 待并**：抽屉 + 种子 + 标签污染种子的修复） |
 | W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | ⬜ 阻塞于 W2 | — | — |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | ⬜ 阻塞于 W3 | — | — |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
@@ -1121,9 +1121,23 @@ nightly，未建）、真机验收（§2.19 的 `NOT RUN` 依然成立）。
 已做：6 个系列（**含 World** —— 见下）、真实分页、下拉刷新（系统控件，对齐 RN 的
 Android 分支）、性别筛选与持久化、session 语义、翻页去重 + 限次续拉、5 个页面级埋点。
 
-未做（下一包）：冷启动缓存（`useForYouListCache` 的信封 + authScope 门禁 + 7 天 TTL）、
-标签筛选抽屉（382 行）、banner（946 行，方案 §8.1 评估留 RN Surface）、每日彩蛋弹窗、
-可见性驱动的曝光去重、mp4 动图封面。
+未做（下一包）：banner（946 行，方案 §8.1 评估留 RN Surface）、每日彩蛋弹窗、
+mp4 动图封面。
+
+✅ **标签筛选抽屉与 For You 冷启动种子已做**（§2.24）。
+
+⚠️ **「可见性驱动的曝光去重」这条原是误记，已核实不存在**（2026-08-12）：
+`character_page_exposure` 在 RN 侧由 **mount `useEffect`** 发出
+（`HomeCard.tsx:182-196`），**不经 viewability**。壳侧 `LaunchedEffect(item.stableKey)`
+已是同一语义，且 `LazyVerticalGrid` 的 `key = stableKey` 保证复用 slot 不重报
+（正是方案 §8.4「曝光去重集合与列表更新解耦」要求的）—— **这条已满足，不是待办**。
+
+`home.tsx` 里那两套 `viewabilityConfig` 各有别的用途，别误当成本事件的门禁：
+- `itemVisiblePercentThreshold: 1` → `VisibleItemsContext`，管 **mp4 封面播放**
+  （`AnimatedCoverMedia.tsx`）
+- `itemVisiblePercentThreshold: 50` + 连续可见 ≥100ms → **另一条批量上报管道**，
+  POST `/recommend_report/tracking/report_batch` 报停留时长
+  （`lib/recommendTracking/`），不是埋点事件。这条属推荐反馈，未迁，也不在 W2 范围
 
 #### ✅ 开放问题 §12.4 可以关闭：Android **显示** World
 
@@ -1204,13 +1218,179 @@ RN bundler 自己把它们打进 `drawable-mdpi` —— 说明 RN 完全不参�
   - World 卡片的 `∞ 0` 是**真实数据**不是 bug：图标按 `character_type == 9` 分流
     走 `ic_card_world_interaction`，计数取 `stats.studio_chat_count`
     （`HomeFeedParserTest` 断言 42），测试环境多数 world 该字段确为 0。
-  - **仍未在真机上验**：下拉刷新、性别筛选（`All` 下拉）、进程重建恢复。
+  - ✅ **下拉刷新 / 性别筛选 / 进程重建恢复已补验**（2026-08-12，Pixel 10 模拟器 /
+    Android 17）—— 详见 §2.23.1。**性别筛选查出一处真实缺陷**（持久化静默失效）。
 
 新增测试按「错了不报错」的风险点组织：`HomeTextTest`(19，逐条对着 RN 实现取真值)、
 `HomeViewModelTest`(19，session 语义/去重续拉/失败不清列表)、
 `HomeApiContractTest`(10，真实 HTTP 验实际请求体)、`HomeFeedParserTest`(15)、
 `ShellTabBarTest`(16)、`AnalyticsTest`(12，含"sink 内再次 track 不死锁")、
 `HomeFilterEnvelopeTest`(4)。
+
+#### 2.23.1 补验三项真机（2026-08-12，Pixel 10 模拟器 / Android 17）
+
+§2.23 遗留的三项。**下拉刷新与进程重建通过；性别筛选查出一处真实缺陷。**
+
+**✅ 下拉刷新** —— 刷新前首屏 Elara / Niko / Ben，下拉后换成 Emi / test，
+一批新 `characterId` 重新曝光。种子信封同步被**覆盖**而非叠加：
+14:22:55 存 `[Elara, Niko, Kai, Ben, Dylan]` → 14:23:32 存 `[test, Emi, ...]`，
+与两次首屏一一对应，证明走的是 `isRefresh && nextPage == 0` 清 `lockedHead` 的路径。
+
+⚠️ 手势前提：列表**必须在顶部**下拉才触发。我第一次在滑到中段时下拉，无任何反应
+也无日志 —— 不是缺陷，但会让人误判成刷新没接线。
+
+**✅ 进程重建恢复** —— `KEYCODE_HOME` 后台化 + `kill -9`（保留 task，比
+`force-stop` 更接近系统回收），PID 13267 → 14089，恢复后**无 FATAL / ANR**，
+首屏渲染 Emi / test 即 14:23:32 那份种子，说明冷启动读种子在进程重建路径同样成立。
+
+⚠️ **series 选择不恢复是设计如此，不是缺陷**：kill 前停在 Trending，恢复回 For You。
+已核实 `selectedSeries` 无任何持久化、也不进 `SavedStateHandle`（全仓 grep 无命中），
+RN 侧同样不持久化 series。
+
+**🔴 性别筛选：内存态正确，持久化静默失效**
+
+内存态没问题：选 Female 后顶部标签变 `Female`、列表换成 Esmeralda / Iris，
+新种子信封也正确记为 `gender: 'Female'`（14:26:50）。
+
+但 `config-persist-storage` 这个 key 在设备上**始终不存在**（dump `mmkv.default`
+确认 0 命中），于是 `kill -9` 重启后性别**退回 All**。
+
+根因是 `mergeGenderIntoEnvelope` 的刻意设计：信封缺 `state` 子对象就
+`return null` → 调用方不写（`HomeFilterStore.kt:109-117`）。这个保守策略本身是对的
+（§2.23 记了整体覆盖会重置用户二十多项设置），**但它假设信封已由 RN 建好**。
+
+已核实这不是壳的路径写错：RN 的 `zustandStorage` 用 `createMMKV()` **无参数**，
+即默认实例 `mmkv.default`（`tipsy-app/src/store/mmkv.ts:4`），与壳读写同一个 store。
+信封不存在只是因为这台模拟器上 RN 的 config store 从未初始化过。
+
+**所以缺陷是真实的**：全新安装的用户，在 RN 侧首次初始化该 store 之前，
+改性别**永远不持久化且无任何提示** —— 每次冷启动都退回 All。
+`writeGender` 的返回值虽然是 `false`，但调用方按注释刻意不回滚 UI、也不告警，
+于是本地完全看不出异常（与 §2.24 种子那处同类的"静默"缺陷）。
+
+⚠️ **修法不能是"信封不存在就建一个"** —— 壳凭空造 Zustand 信封要猜 `version` 和
+其余二十多个字段的默认值，猜错等于给 RN 侧一个结构不对的信封，
+比不持久化更糟。合理方向是二者之一，需 owner 定：
+1. 只在信封缺失时写一个**仅含 `{state:{gender}}` + 正确 `version`** 的最小信封，
+   靠 Zustand persist 的 merge 语义补齐其余字段（要先核实 RN 的 `version` 与
+   `merge` 配置，否则可能触发 migrate 分支）
+2. 判定为"可接受"：等 W3 迁 Settings 时 RN store 必然已初始化，届时自愈
+
+**未验**：上述任一修法都没做，本次只定位。也没验"信封已存在时 merge 是否只动
+`gender`"—— 设备上无信封可比对，该行为目前只有 `HomeFilterEnvelopeTest`(4) 的
+单测覆盖。
+
+### 2.24 W2 第二刀：标签筛选抽屉 + For You 冷启动种子（2026-08-12）
+
+W2 的 Home 收尾。**单测与构建全绿**（476 条）。真机**已全验**
+（Pixel 10 模拟器 / Android 17，2026-08-12 复验）：
+
+- ✅ 抽屉拉取并渲染真实标签、选中高亮、关抽屉后列表收敛到筛选结果
+- ✅ **选了标签不写种子**：勾 Anime 后 feed 收敛到 1 条，dump `mmkv.default`
+  确认**没有**新信封落地；取消勾选再确认，14:03:09 立刻落一份 5 条的新信封
+  —— 证明「不写」只发生在有筛选时，无筛选路径正常
+- ✅ **离线冷启动渲染种子**：断网 + `force-stop` 后冷启，首屏渲染出信封里的
+  33 / Luciano / 111 / Evelyn Sharp（第 5 条在屏外）。**无全屏 spinner**
+  —— UI 树里唯一的 `ProgressBar` 是 42x42、y≈213 在搜索栏内，种子之上没有遮挡层，
+  §2.24 的「有种子时先显示种子且不显示 spinner」在真机成立
+- ✅ **种子与真实数据衔接**：恢复网络后冷启，首屏仍是同 4 个角色**且无重复卡片**
+  （去重按 stableKey 生效）；下滑出现 Tomboy Lena / Yuto / Luna / Sylvan
+  —— 种子在前、真实数据追加在后
+
+⚠️ 我第一次报的「已在真机确认」是**无效的** —— 为清种子删了 `mmkv.default`，
+那是 app 共用的 MMKV store（`token-storage` 也在里面），会话被清空、应用重启到
+登录页，后续盲点坐标全落在登录页上，而我把登出后写的 `guest` 信封读成了通过。
+**清种子要用下拉刷新**（`isRefresh && nextPage == 0` 会清 `lockedHead`），
+不要删共享 store。
+
+真机操作两条经验（下次省时间）：
+- launcher activity 是 `ai.lightspeed.tipsy/.shell.MainActivity`（**不是** `.MainActivity`，
+  用后者 `am start` 会静默落到桌面）；`adb shell monkey -p ... -c LAUNCHER 1` 最省事
+- `adb screencap` 拉回的 PNG 多次为空，**改用 `uiautomator dump` 读 UI 树**取控件
+  文本与坐标，比截图可靠
+
+#### 标签筛选抽屉（`HomeFragment.onFilterClick` 的 stub 已删除）
+
+- `HomeTag` + `HomeTagParser`：`POST /character/tags`（**只发 `{nsfw}`**，不带
+  `language_code`）。按 `sort_order` 稳定排序；**`show_in_filter !== false`** 才进
+  筛选（不是 `== true` —— 字段缺失时要显示，写反会让标签集体消失）；
+  label 取 `desc` 回落 `alias`
+- `HomeFilterDrawer`：`Dialog` + 底部面板。高 630 / 圆角 20 / header 49 /
+  chip 30 高 18 内距 / 选中色 `#AD403B`（品牌主色）
+- ✓ 图标用 `Canvas` 两条线段画 —— RN 用 AntDesign 字体图标，壳没有那套字体，
+  为一个对勾引 `material-icons-extended`（约 2MB）不值得
+
+⚠️ **应用时机是「关闭抽屉」而不是「点确认按钮」**（`TipsyDrawer.tsx:338` 的 ✓ 调的
+就是 `handleClose`，`onClose` 回调里才 `setSelectedTags`）：点 ✓ / 点遮罩 / 按返回键
+**三者都应用**。照「确认才生效、点外面丢弃」实现与现网相反。
+
+**两处按系列分流**（都容易漏）：
+- Following / World 请求**不带 `tag_ids`**（`useHomeCharacterLists.ts:89`）
+- 它们的 `filterKey` 也**不含标签**，且 `onTagsApplied` 只清受影响系列的游标。
+  第一版写 `cursors.clear()`，被 `改标签不作废 World 已缓存的列表` 这条测试挡下
+
+#### For You 冷启动种子（方案 §4.6 的信封）
+
+`HomeForYouCache`：`{version, authScope, gender, savedAt, items}`，
+authScope 门禁（`guest` / `user:<id>`）+ 7 天 TTL + 只存**前 5 条**
+（`LOCKED_HOME_CACHE_SIZE = 5`）。**语言刻意不做门禁**（§4.6 的反直觉修正）。
+
+⚠️ **壳写自己的 key（`shell-for-you-seed`），不读也不写 RN 的 `for-you-cache`**。
+RN 那份是**裸数组**（`JSON.stringify(items)`，无信封）—— 已核实它因此
+**不按账号隔离 / 无 TTL / logout 不清**（全仓没有清该 key 的代码）。§4.6 要求壳不
+继承这三点，所以两份并存：读 RN 的等于继承跨账号复用，写 RN 的会让 RN 侧解析到
+非预期结构。代价是首次装壳版没有种子。
+
+存**原始响应片段**而非解析后模型 —— 读写都复用 `HomeFeedParser`，
+不必再写一套序列化（那会是第二个真值来源）。
+
+⚠️ **信封刻意不含 tags，代价是「选了标签时不写种子」**（2026-08-12 自测发现，
+PR #20 修）。写进去也能当门禁，但那样带标签这一次的种子对下次无标签的冷启动
+永远失效，等于白存 —— 所以选择不写。
+
+这条不是洁癖，缺了它是真缺陷：标签勾选存在**无 persist 的 session store**，
+杀进程后归零，于是「筛选出的 2 条」会被当作未筛选的 For You 首屏渲染，
+**三道门禁全过、本地完全看不出异常**。改前真机抓到两份信封作证 ——
+12:52 未筛选 5 条，12:57 应用 Action 后只剩 2 条却仍标着 `gender: All`。
+
+同一处还有第二个缺陷：`onTagsApplied` 里必须丢掉 `lockedHead`。合并列表时读
+`lockedHead` **早于**第 0 页落地后清空它，所以首屏失败（种子保留 —— 失败不清
+列表是对的）之后改标签，那几条未筛选的角色会混进筛选结果，用户无从分辨。
+
+**RN 侧同样有这两个缺陷**：`getForYouListReq` 带 `tag_ids`
+（`useHomeCharacterLists.ts:59`），而 cache 写入 effect 只看 `forYouFirstPage`
+变化、不看筛选状态（同文件 `163-169`）。按 §4.6 壳不继承缓存缺陷。
+
+种子与真实数据的衔接（两条都是被测试逼出来的）：
+- 种子**不写进 `loaded`** —— `loadIfNeeded` 靠它判「已有数据就不拉」，
+  写进去会让首屏永远停在种子上、真实数据一次都不拉
+- `loadIfNeeded` **不能无条件置 `isInitialLoading = true`** —— 会在种子之上再盖
+  全屏 spinner，种子白读。第一版就是这么写的，`有种子时先显示种子且不显示 spinner`
+  这条挡下了
+
+真实第 0 页到达后种子作为**锁定头**在前、真实数据去重追加
+（对齐 `home.tsx:711` 的 `unionBy(cachedList, flatList)`）；下拉刷新丢弃种子
+（RN 的 `setShowForYouCache(false)` 同义）。
+
+#### 顺带修的两处文档失真
+
+1. 方案 §8.1「筛选持久化」称含 `tags` —— 实际 `config-persist-storage` 的 `tags` 是
+   **标签目录**，用户勾选存在**无 persist 中间件**的 `session.ts`
+   （已核实 `grep -c persist` = 0）。**杀进程后勾选归零，只有 gender 存活**。
+   照文档实现会让原生版比 RN 多记住筛选
+2. 「可见性驱动的曝光去重」是误记，见 §2.23 的更正 —— 该条已满足，不是待办
+
+#### 验证
+
+- app 单测 **476 条**（新增 43）、failures=0、**skipped=0**（2026-08-12 复跑确认）
+- lint 无新增（baseline 仍 5 条）、`assembleGooglePlayDebug` 通过
+- **真机 `PASS`**（2026-08-12，Pixel 10 模拟器 / Android 17）：抽屉打开/勾选/应用、
+  「选了标签不写种子」、离线冷启动渲染种子、种子与真实数据衔接**四项全过**，
+  详见本节开头。种子这项尤其需要真机：它依赖 MMKV 实际可读写，而 §2.23 刚修过
+  `LegacyMmkvStore` 全新安装不可用的缺陷 —— 已确认冷启动读得到信封
+
+新增测试：`HomeTagParserTest`(11)、`HomeForYouCacheTest`(16，三道门禁 + 坏数据)、
+`HomeViewModelTest` +16（标签分流 9 + 种子 7）。
 
 ## 3. 横切能力
 
@@ -1259,6 +1439,16 @@ RN bundler 自己把它们打进 `drawable-mdpi` —— 说明 RN 完全不参�
   不需要产品决策 —— `home.tsx:505-511` 的 filter 已给出答案，**Android 显示 World、
   Multi-character 两端都隐藏**。World 点进去是 SimulatorGame WebView，方案 §8.1 已定不迁。
 - **§12.9 Apple 登录按钮在 Android 是否展示**、**§12.10 `/login/password` 是否对外**
+
+W2 真机验证新增的一项（2026-08-12，§2.23.1）：
+
+- **性别筛选持久化在信封缺失时静默失效** —— `config-persist-storage` 不存在时
+  `mergeGenderIntoEnvelope` 刻意 `return null` 不写，导致全新安装用户改性别
+  永不持久化、每次冷启动退回 `All`，且 UI 无任何提示。已核实壳读写路径正确
+  （RN 的 `zustandStorage` 也是默认 MMKV 实例），根因是信封尚未被 RN 初始化。
+  **需 owner 在两条路里定**：(1) 缺失时写仅含 `{state:{gender}}` 的最小信封
+  （须先核实 RN 的 `version` / `merge` 配置，否则可能触发 migrate 分支）；
+  (2) 判为可接受，等 W3 迁 Settings 时 RN store 必然已初始化而自愈。
 
 ## 6. 已废弃的历史尝试
 

@@ -75,6 +75,28 @@ object HomeStyle {
     /** App 全局背景底色 `#34212A`（`AppBackground.tsx` styles.container）。 */
     val APP_BACKGROUND = Color(0xFF34212A)
 
+    // ── 筛选抽屉（`HomeFilterDrawer.tsx` + `TipsyDrawer.tsx`）──
+
+    /** 遮罩 `rgba(0,0,0,0.6)`（`TipsyDrawer.tsx:428`）。 */
+    val DRAWER_SCRIM = Color(0x99000000)
+
+    /** 标签 chip 底 `rgba(255,255,255,0.04)`（`HomeFilterDrawer.tsx:303`）。 */
+    val TAG_FILL = Color(0x0AFFFFFF)
+
+    /**
+     * 选中标签底 `#AD403B`（`TIPSY_PRIMARY_COLOR`，`constants/colors.ts:1`）。
+     *
+     * ⚠️ 这是**品牌主色**，不是 Home 专用色。别就近取个相近的红 ——
+     * 与 RN 差一点点在并排对比时看得出来。
+     */
+    val TAG_FILL_SELECTED = Color(0xFFAD403B)
+
+    /** 标签文字与标题纯白（`:294` / `:318`）。 */
+    val DRAWER_TEXT = Color(0xFFFFFFFF)
+
+    /** header 里 `|` 分隔符 `#999`（`:299`）。 */
+    val DRAWER_SEPARATOR = Color(0xFF999999)
+
     // ── 尺寸（设计稿原值，使用处加 `.s`）────────────────────
 
     /** header 高 50（`HomeHeader.tsx:189`）。 */
@@ -181,4 +203,52 @@ object HomeStyle {
 
     /** CDN 图片宽度参数 400（`constants/img.ts:4`）。 */
     const val IMAGE_CDN_WIDTH = 400
+
+    // ── 筛选抽屉尺寸（`HomeFilterDrawer.tsx` + `TipsyDrawer.tsx`）──
+
+    /**
+     * 抽屉高 **630**（`HomeFilterDrawer.tsx:131`）。
+     *
+     * 固定值而非百分比。⚠️ 小屏上 630.s 可能超过可用高度 —— 使用处要
+     * `coerceAtMost(可用高度)`，否则标题与勾选按钮会被推出屏幕外。
+     */
+    const val DRAWER_HEIGHT = 630
+
+    /** 抽屉顶部圆角 20（`TipsyDrawer.tsx:376-377`）。 */
+    const val DRAWER_RADIUS = 20
+
+    /** 抽屉 header 高 49（`TipsyDrawer.tsx:435`）。 */
+    const val DRAWER_HEADER_HEIGHT = 49
+
+    /** header 左右内距 10（`:434`）。 */
+    const val DRAWER_HEADER_PADDING = 10
+
+    /** header 标题字号 17（`:456`）。 */
+    const val DRAWER_TITLE_SIZE = 17
+
+    /** 内容区：上 12、四周 10（`HomeFilterDrawer.tsx:262-263`）。 */
+    const val DRAWER_CONTENT_PADDING_TOP = 12
+    const val DRAWER_CONTENT_PADDING = 10
+
+    /** 标签区底部留白 30（`:267`）—— 给最后一行留出滚动余量。 */
+    const val DRAWER_CONTENT_PADDING_BOTTOM = 30
+
+    /** 「Tags」小标题字号 15、下间距 15（`:275-278`）。 */
+    const val DRAWER_SECTION_TITLE_SIZE = 15
+    const val DRAWER_SECTION_TITLE_BOTTOM = 15
+
+    /** header 里 `|` 字号 10（`:299`）。 */
+    const val DRAWER_SEPARATOR_SIZE = 10
+
+    /** Reset 文字字号 13（`:364`）。 */
+    const val DRAWER_RESET_SIZE = 13
+
+    /** 标签 chip：高 30 / 圆角 20 / 左右内距 18 / 字号 13（`:303-318`）。 */
+    const val TAG_HEIGHT = 30
+    const val TAG_RADIUS = 20
+    const val TAG_PADDING_H = 18
+    const val TAG_TEXT_SIZE = 13
+
+    /** 标签间距：横 6（`:266` gap）、竖 6（`:310` marginBottom）。 */
+    const val TAG_GAP = 6
 }

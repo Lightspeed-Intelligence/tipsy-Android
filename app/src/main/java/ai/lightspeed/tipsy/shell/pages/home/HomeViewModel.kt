@@ -2,6 +2,7 @@ package ai.lightspeed.tipsy.shell.pages.home
 
 import ai.lightspeed.tipsy.shell.analytics.Analytics
 import ai.lightspeed.tipsy.shell.network.ApiException
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CoroutineScope
@@ -10,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import org.json.JSONArray
 import java.util.UUID
 
 /**
@@ -36,6 +38,19 @@ class HomeViewModel(
     private val languageProvider: () -> String,
     /** 注入是为了测试；生产用 viewModelScope。 */
     private val scope: CoroutineScope? = null,
+    /**
+     * For You 冷启动种子缓存。null = 不启用（测试里多数用例不关心种子）。
+     */
+    private val cache: HomeForYouCache? = null,
+    /** 当前 userId，用于 authScope 门禁。未登录返回 null。 */
+    private val userIdProvider: () -> String? = { null },
+    /**
+     * 失败诊断日志。默认走 `android.util.Log`。
+     *
+     * 注入而非直接调用：JVM 单测里 `android.util.Log` 是抛 "not mocked" 的桩。
+     * 同 `EmailLoginViewModel.logWarn` 的做法。
+     */
+    private val logWarn: (String, Throwable?) -> Unit = { msg, t -> Log.w(TAG, msg, t) },
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(
@@ -53,6 +68,16 @@ class HomeViewModel(
     private val loaded = mutableMapOf<HomeSeries, List<HomeFeedItem>>()
 
     /**
+     * 冷启动种子的「锁定头」（For You 专用）。
+     *
+     * 真实第 0 页到达时把它放在最前、再 union 真实数据（对齐 RN 的
+     * `unionBy(displayCachedList, flatList, key)`，`home.tsx:711`）——
+     * **不是直接丢弃种子**：那会让首屏内容在真实数据到达瞬间整屏跳变。
+     * 首页之后（翻页 / 刷新）不再参与，置 null。
+     */
+    private var lockedHead: List<HomeFeedItem> = emptyList()
+
+    /**
      * 当前在飞的请求。切系列/刷新时取消 ——
      * 不取消的表现是「切到 B 系列后 A 的响应到达并覆盖了 B 的列表」。
      */
@@ -64,7 +89,35 @@ class HomeViewModel(
     fun onFirstAppear() {
         Analytics.track("page_exposure", mapOf("page_name" to "discover", "platform" to "app"))
         trackSubpageExposure(_state.value.selectedSeries)
+        seedFromCache()
         loadIfNeeded(_state.value.selectedSeries)
+    }
+
+    /**
+     * 冷启动种子：先显示上次的前 5 条，避免白屏（方案 §4.6）。
+     *
+     * ⚠️ **只在 For You 且列表为空时**。种子是按 For You 拉的，显示在其他系列
+     * 下就是错数据。三个门禁（version / authScope / TTL）在 [HomeForYouCache] 里。
+     *
+     * 种子进 `items` 但**不建游标** —— 真实第一页到达后走 [mergeSeed] 覆盖，
+     * 不能让种子把 `nextPage` 顶成 1，否则首屏永远从第 2 页开始拉。
+     */
+    private fun seedFromCache() {
+        val cache = cache ?: return
+        if (_state.value.selectedSeries != HomeSeries.FOR_YOU) return
+        if (_state.value.items.isNotEmpty()) return
+        val seed = cache.read(
+            authScope = HomeForYouCache.authScopeOf(userIdProvider()),
+            gender = _state.value.gender,
+        )
+        if (seed.isEmpty()) return
+        // ⚠️ 种子**不写进 `loaded`** —— `loadIfNeeded` 用
+        // `loaded[series]?.isNotEmpty()` 判「已有数据就不拉」，写进去会让
+        // 首屏永远停在种子上、真实数据一次都不拉。存 [lockedHead] 里，
+        // 第 0 页到达时作为锁定头参与合并
+        lockedHead = seed
+        // isInitialLoading 置 false：有种子就不该显示全屏 spinner
+        _state.value = _state.value.copy(items = seed, isInitialLoading = false)
     }
 
     /** Tab 重新获得焦点（切走再切回）。RN 的 `isFocused` effect 会重报子页曝光。 */
@@ -116,6 +169,68 @@ class HomeViewModel(
             errorMessage = null,
         )
         loadIfNeeded(_state.value.selectedSeries)
+    }
+
+    /**
+     * 打开筛选抽屉。
+     *
+     * 顺手拉标签目录 —— **失败不阻塞抽屉打开**（抽屉里还有性别与重置可用）。
+     * RN 的 `hydrateTags` 也是 `console.warn` 后咽掉（`config_persist.ts:321`）。
+     */
+    fun onFilterDrawerOpen() {
+        _state.value = _state.value.copy(isFilterDrawerOpen = true)
+        if (_state.value.tagCatalog.isNotEmpty()) return
+        workScope.launch {
+            val tags = runCatching { api.fetchTags(_state.value.nsfw) }
+                .onFailure { logWarn("标签目录拉取失败，抽屉只显示性别筛选", it) }
+                .getOrNull()
+                ?: return@launch
+            _state.value = _state.value.copy(tagCatalog = tags)
+        }
+    }
+
+    fun onFilterDrawerDismiss() {
+        _state.value = _state.value.copy(isFilterDrawerOpen = false)
+    }
+
+    /**
+     * 应用标签勾选。
+     *
+     * 语义与 [onGenderSelected] 一致：**清所有系列的游标与已加载数据**，
+     * 因为标签是跨系列的筛选条件。相同勾选直接返回，避免无谓重拉。
+     *
+     * ⚠️ 只保留仍在目录里的 id（对齐 `HomeFilterDrawer.tsx:80` 的
+     * `filter((id) => visibleTagIds.has(id))`）—— 目录随 nsfw 变化，
+     * 留着不存在的 id 会让请求带上后端不认识的标签，静默返回空列表。
+     */
+    fun onTagsApplied(tagIds: List<String>) {
+        val visible = _state.value.tagCatalog.mapTo(HashSet()) { it.id }
+        val next = tagIds.filter { it in visible }
+        if (next == _state.value.selectedTagIds) {
+            _state.value = _state.value.copy(isFilterDrawerOpen = false)
+            return
+        }
+        inFlight?.cancel()
+        // ⚠️ **只清受标签影响的系列**，不是 cursors.clear()。
+        // Following / World 不发标签，它们的结果不会因改标签而变 —— 一起清掉
+        // 会让用户切回去时白等一次加载，而拿到的内容完全一样（RN 侧靠 SWR key
+        // 不含 tags 自然保留，这里要显式做到同一效果）
+        cursors.keys.retainAll { !it.supportsTagFilter }
+        loaded.keys.retainAll { !it.supportsTagFilter }
+        // ⚠️ 种子必须在这里丢掉。种子是**未筛选**的内容，而合并时读 lockedHead
+        // 早于第 0 页落地后清空它 —— 首屏失败（种子留着，失败不清列表）后改标签，
+        // 那几条未筛选的角色会混进筛选结果，用户无从分辨哪条不属于筛选
+        lockedHead = emptyList()
+        val current = _state.value.selectedSeries
+        _state.value = _state.value.copy(
+            selectedTagIds = next,
+            isFilterDrawerOpen = false,
+            // 当前系列不受标签影响时（理论上抽屉不该开着）保留其列表
+            items = if (current.supportsTagFilter) emptyList() else _state.value.items,
+            hasReachedEnd = if (current.supportsTagFilter) false else _state.value.hasReachedEnd,
+            errorMessage = null,
+        )
+        loadIfNeeded(current)
     }
 
     /**
@@ -199,12 +314,16 @@ class HomeViewModel(
         // 顺序照 `HomeCard.tsx` 的对象字面量序 —— 后端按字符串存，顺序变化会
         // 让同一筛选在报表里被当成两种
         val gender = _state.value.gender.storedValue
-        val filterJson = """{"gender":"$gender","selectedTags":[]}"""
+        // ⚠️ 埋点里的 selectedTags 是**用户的勾选原样**，不按系列过滤
+        // （`home.tsx:1398` 直接传 `selectedTags.tags`）—— 即使 Following
+        // 请求时不带标签，埋点里仍记着用户当时勾了什么。按系列清空会让归因失真
+        val tagsJson = JSONArray(_state.value.selectedTagIds).toString()
+        val filterJson = """{"gender":"$gender","selectedTags":$tagsJson}"""
         val common = mapOf(
             "scene" to series.key,
             "filter" to filterJson,
             "gender" to gender,
-            "selectedTags" to "[]",
+            "selectedTags" to tagsJson,
             "banner" to "",
         )
         return when (item) {
@@ -240,7 +359,14 @@ class HomeViewModel(
     /** 没有数据且没在飞就拉第一页；已有数据直接返回（对齐 SWR 的缓存命中）。 */
     private fun loadIfNeeded(series: HomeSeries) {
         if (loaded[series]?.isNotEmpty() == true) return
-        _state.value = _state.value.copy(isInitialLoading = true, errorMessage = null)
+        _state.value = _state.value.copy(
+            // ⚠️ 已有种子（或任何已显示内容）时**不置** isInitialLoading ——
+            // 那会在种子之上再盖一个全屏 spinner，等于种子白读了。
+            // 这条被 `有种子时先显示种子且不显示 spinner` 逼出来：
+            // 第一版无条件置 true，种子刚设好就被覆盖
+            isInitialLoading = _state.value.items.isEmpty(),
+            errorMessage = null,
+        )
         load(series, isRefresh = false)
     }
 
@@ -261,7 +387,7 @@ class HomeViewModel(
      */
     private suspend fun loadPageChain(series: HomeSeries, isRefresh: Boolean) {
         while (true) {
-            val filterKey = currentFilterKey()
+            val filterKey = currentFilterKey(series)
             val cursor = cursors[series]
                 ?.takeIf { it.filterKey == filterKey }
                 ?: SeriesCursor(sessionId = newSessionId(), filterKey = filterKey)
@@ -272,7 +398,10 @@ class HomeViewModel(
                 gender = _state.value.gender,
                 nsfw = _state.value.nsfw,
                 languageCode = languageProvider(),
-                tagIds = emptyList(), // 标签筛选属下一包
+                // ⚠️ Following / World **不带标签**（`useHomeCharacterLists.ts:89`
+                // 的 `isFollowing ? [] : tags`）。带上会把关注列表筛掉大半，
+                // 而这两个系列 UI 上没有筛选入口，用户无从发现自己被筛了
+                tagIds = if (series.supportsTagFilter) _state.value.selectedTagIds else emptyList(),
                 contentType = null,
                 sessionId = cursor.sessionId,
             )
@@ -281,10 +410,17 @@ class HomeViewModel(
             // （items 为空但 rawItemCount > 0 说明这页全是暂不支持的类型，还有下一页）
             val reachedEnd = page.hasMore?.let { !it } ?: (page.rawItemCount == 0)
 
-            val existing = if (isRefresh && cursor.nextPage == 0) {
-                emptyList()
-            } else {
-                loaded[series].orEmpty()
+            val existing = when {
+                // 下拉刷新的第 0 页：清空重来，**种子也不留**
+                // （用户主动刷新就是要新内容，RN 的 setShowForYouCache(false) 同义）
+                isRefresh && cursor.nextPage == 0 -> {
+                    lockedHead = emptyList()
+                    emptyList()
+                }
+                // 冷启动第 0 页：种子作为锁定头在前（`home.tsx:711` 的 unionBy 顺序），
+                // 真实数据去重后追加。种子里已有的角色不会重复出现
+                cursor.nextPage == 0 -> lockedHead
+                else -> loaded[series].orEmpty()
             }
             // 去重按 stableKey（含 requestId 的那个）。For You 翻页实测每页
             // 1~3 条重复，全量替换会让可见卡片重配（方案 §8.4 第 1 条）
@@ -303,6 +439,34 @@ class HomeViewModel(
                 hasReachedEnd = reachedEnd,
                 emptyAfterDedupeStreak = streak,
             )
+
+            // 写种子：只有 For You 的第 0 页（对齐 `useHomeCharacterLists.ts:163-169`
+            // 的 `forYouFirstPage` effect）。用**原始响应片段**而不是模型，见
+            // HomeForYouCache 类注释
+            // ⚠️ 选了标签时**不写种子**。信封只记 gender 不记 tags，而标签勾选存在
+            // 无 persist 的 session store（见 §8.1 更正）—— 杀进程后勾选归零，
+            // 下次冷启动这份「Action 筛出来的 2 条」会当作未筛选的 For You 首屏显示，
+            // 三道门禁全过、且本地看不出异常。
+            // RN 同样有这个缺陷（`getForYouListReq` 带 tag_ids，而 cache 写入 effect
+            // 只看 forYouFirstPage 变化，不看筛选状态），但 §4.6 要求壳不继承缓存缺陷。
+            // 备选是把 tags 也写进信封做门禁，但那样「选了标签」这一次的种子对
+            // 下次无标签的冷启动永远失效，等于白存 —— 不如不写。
+            val hasTagFilter = _state.value.selectedTagIds.isNotEmpty()
+            if (series == HomeSeries.FOR_YOU && cursor.nextPage == 0) {
+                if (!hasTagFilter) {
+                    page.rawList?.let { raw ->
+                        cache?.write(
+                            authScope = HomeForYouCache.authScopeOf(userIdProvider()),
+                            gender = _state.value.gender,
+                            rawItems = raw,
+                        )
+                    }
+                }
+                // 第 0 页已落地，锁定头的使命结束 —— 留着会让后续刷新把
+                // 旧种子又插回列表头。
+                // 放在标签门禁之外：写不写种子是一回事，种子退不退场是另一回事
+                lockedHead = emptyList()
+            }
 
             if (series == _state.value.selectedSeries) {
                 _state.value = _state.value.copy(
@@ -367,9 +531,16 @@ class HomeViewModel(
      * 只含 gender+tags+contentTypes，nsfw 与语言靠"离开首页再回来"重置；
      * 壳内 Home 是常驻 Fragment，没有那个挂载周期可依赖（见 [SeriesCursor] 注释）。
      */
-    private fun currentFilterKey(): String {
+    private fun currentFilterKey(series: HomeSeries): String {
         val s = _state.value
-        return "${s.gender.storedValue}|${s.nsfw}|${languageProvider()}"
+        // 标签进指纹：勾选变化必须换 session，否则新筛选会复用旧推荐池，
+        // 表现是「筛了标签但结果没怎么变」。
+        //
+        // ⚠️ **按系列算**：Following / World 不发标签（见 loadPageChain 的说明），
+        // 所以它们的指纹里也不能含标签 —— 含了会让「改标签」白白作废这两个系列
+        // 已缓存的列表与页码，用户切回去要重新加载，且结果完全一样
+        val tags = if (series.supportsTagFilter) s.selectedTagIds.joinToString(",") else ""
+        return "${s.gender.storedValue}|${s.nsfw}|${languageProvider()}|$tags"
     }
 
     /** 对齐 RN 的 `client_${uuid()}` 前缀 —— 后端按前缀区分客户端生成的 session。 */
@@ -392,5 +563,7 @@ class HomeViewModel(
          * 结果所有语言都显示英文（进度文档 §2.20 已为登录页记过同一条）。
          */
         const val FALLBACK_ERROR_KEY = "Please try again later"
+
+        private const val TAG = "HomeViewModel"
     }
 }

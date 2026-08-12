@@ -128,6 +128,13 @@ data class HomeFeedPage(
     val rawItemCount: Int,
     /** World 接口独有；其余系列为 null，到底靠 [rawItemCount] == 0 判定。 */
     val hasMore: Boolean?,
+    /**
+     * 原始 `list` 数组，**仅 For You 第 0 页**带上，其余为 null。
+     *
+     * 给冷启动种子缓存用（[HomeForYouCache] 存的是原始响应片段，理由见该类注释）。
+     * 不是所有页都带：其余页与其他系列不进缓存，留着只是白占内存。
+     */
+    val rawList: JSONArray? = null,
 )
 
 /**
@@ -155,6 +162,8 @@ internal fun parsePublicListForTest(
 internal fun parseWorldListForTest(data: JSONObject): HomeFeedPage =
     HomeFeedParser.parseWorldList(data)
 
+internal fun parseTagsForTest(data: JSONObject): List<HomeTag> = HomeTagParser.parse(data)
+
 /** JSON → 模型的解析。**宽松逐值**，单个字段坏不整页丢（对齐 `LocaleTable` 的策略）。 */
 internal object HomeFeedParser {
 
@@ -180,7 +189,13 @@ internal object HomeFeedParser {
                 else -> parseCharacter(payload, recommendation)?.let(items::add)
             }
         }
-        return HomeFeedPage(items = items, rawItemCount = list.length(), hasMore = null)
+        return HomeFeedPage(
+            items = items,
+            rawItemCount = list.length(),
+            hasMore = null,
+            // 只有第 0 页需要（种子缓存），其余页留 null 省内存
+            rawList = if (page == 0) list else null,
+        )
     }
 
     /** `/character/get/public_list` 的裸 `CharacterGetRes` 形态。 */

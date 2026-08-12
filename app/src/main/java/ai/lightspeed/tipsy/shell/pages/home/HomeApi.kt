@@ -54,6 +54,14 @@ interface HomeFeedSource {
         contentType: Int?,
         sessionId: String,
     ): HomeFeedPage
+
+    /**
+     * 标签目录（筛选抽屉的数据源）。
+     *
+     * ⚠️ **不带 `language_code`**（`character.ts:106-118` 只发 `{nsfw}`）——
+     * 标签文案的本地化在后端按请求头处理。加上这个参数不会报错，只是与 RN 不一致。
+     */
+    suspend fun fetchTags(nsfw: Boolean): List<HomeTag>
 }
 
 class HomeApi(private val apiClient: ApiClient) : HomeFeedSource {
@@ -180,6 +188,16 @@ class HomeApi(private val apiClient: ApiClient) : HomeFeedSource {
         )
         val data = envelope.data ?: return HomeFeedPage(emptyList(), 0, hasMore = false)
         return HomeFeedParser.parseWorldList(data)
+    }
+
+    override suspend fun fetchTags(nsfw: Boolean): List<HomeTag> {
+        val envelope = apiClient.post(
+            path = "/character/tags",
+            jsonBody = JSONObject().put("nsfw", nsfw).toString(),
+            authMode = AuthMode.OPPORTUNISTIC,
+        )
+        val data = envelope.data ?: return emptyList()
+        return HomeTagParser.parse(data)
     }
 
     companion object {

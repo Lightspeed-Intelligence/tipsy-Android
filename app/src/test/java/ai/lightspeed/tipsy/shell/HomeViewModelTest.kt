@@ -1,12 +1,15 @@
 package ai.lightspeed.tipsy.shell
 
 import ai.lightspeed.tipsy.shell.network.ApiException
+import ai.lightspeed.tipsy.shell.pages.home.HomeCacheStorage
 import ai.lightspeed.tipsy.shell.pages.home.HomeFeedItem
 import ai.lightspeed.tipsy.shell.pages.home.HomeFeedPage
 import ai.lightspeed.tipsy.shell.pages.home.HomeFeedSource
 import ai.lightspeed.tipsy.shell.pages.home.HomeFilters
+import ai.lightspeed.tipsy.shell.pages.home.HomeForYouCache
 import ai.lightspeed.tipsy.shell.pages.home.HomeGender
 import ai.lightspeed.tipsy.shell.pages.home.HomeSeries
+import ai.lightspeed.tipsy.shell.pages.home.HomeTag
 import ai.lightspeed.tipsy.shell.pages.home.HomeViewModel
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -374,20 +377,429 @@ class HomeViewModelTest {
         assertEquals(listOf("a"), vm.state.value.items.map { it.stableKey })
     }
 
+    // ── 标签筛选 ──────────────────────────────────────────
+
+    @Test
+    fun `勾选标签后请求带上 tag_ids 且换 session`() = runTest {
+        val api = RecordingApi()
+        api.tags = listOf(HomeTag("t1", "浪漫"), HomeTag("t2", "校园"))
+        api.pages = listOf(page(character("a")), page(character("b")))
+        val vm = viewModel(api)
+        vm.onFirstAppear()
+        advanceUntilIdle()
+        val before = api.calls.last().sessionId
+
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+        vm.onTagsApplied(listOf("t1"))
+        advanceUntilIdle()
+
+        assertEquals(listOf("t1"), api.calls.last().tagIds)
+        // 不换 session 的话新筛选复用旧推荐池 → 「筛了但结果没怎么变」
+        assertTrue("勾选标签必须换 session", api.calls.last().sessionId != before)
+    }
+
+    @Test
+    fun `Following 不带标签`() = runTest {
+        // `useHomeCharacterLists.ts:89` 的 isFollowing ? [] : tags。
+        // 带上会把关注列表筛掉大半，而该系列 UI 上没有筛选入口
+        val api = RecordingApi()
+        api.tags = listOf(HomeTag("t1", "浪漫"))
+        api.pages = listOf(page(character("a")), page(character("b")))
+        val vm = viewModel(api)
+        vm.onFirstAppear()
+        advanceUntilIdle()
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+        vm.onTagsApplied(listOf("t1"))
+        advanceUntilIdle()
+
+        vm.onSeriesSelected(HomeSeries.FOLLOWING)
+        advanceUntilIdle()
+
+        val followingCall = api.calls.last { it.series == HomeSeries.FOLLOWING }
+        assertEquals(emptyList<String>(), followingCall.tagIds)
+    }
+
+    @Test
+    fun `World 不带标签`() = runTest {
+        val api = RecordingApi()
+        api.tags = listOf(HomeTag("t1", "浪漫"))
+        api.pages = listOf(page(character("a")), page(character("b")))
+        val vm = viewModel(api)
+        vm.onFirstAppear()
+        advanceUntilIdle()
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+        vm.onTagsApplied(listOf("t1"))
+        advanceUntilIdle()
+
+        vm.onSeriesSelected(HomeSeries.WORLD)
+        advanceUntilIdle()
+
+        assertEquals(emptyList<String>(), api.calls.last { it.series == HomeSeries.WORLD }.tagIds)
+    }
+
+    @Test
+    fun `改标签不作废 World 已缓存的列表`() = runTest {
+        // filterKey 按系列算：World 不发标签，指纹里也不能含标签。
+        // 含了会让「改标签」白白清掉 World 的游标，切回去要重新加载且结果相同
+        val api = RecordingApi()
+        api.tags = listOf(HomeTag("t1", "浪漫"))
+        api.pages = listOf(page(character("a")), page(character("w")), page(character("b")))
+        val vm = viewModel(api)
+        vm.onFirstAppear()
+        advanceUntilIdle()
+        vm.onSeriesSelected(HomeSeries.WORLD)
+        advanceUntilIdle()
+        val worldSession = api.calls.last { it.series == HomeSeries.WORLD }.sessionId
+
+        vm.onSeriesSelected(HomeSeries.FOR_YOU)
+        advanceUntilIdle()
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+        vm.onTagsApplied(listOf("t1"))
+        advanceUntilIdle()
+        vm.onSeriesSelected(HomeSeries.WORLD)
+        advanceUntilIdle()
+
+        assertEquals(
+            "World 的 session 不应因改标签而变",
+            worldSession,
+            api.calls.last { it.series == HomeSeries.WORLD }.sessionId,
+        )
+    }
+
+    @Test
+    fun `不在目录里的勾选 id 被丢弃`() = runTest {
+        // 目录随 nsfw 变化；留着不存在的 id 会让请求带上后端不认识的标签，
+        // 静默返回空列表（对齐 HomeFilterDrawer.tsx:80 的 visibleTagIds 过滤）
+        val api = RecordingApi()
+        api.tags = listOf(HomeTag("t1", "浪漫"))
+        api.pages = listOf(page(character("a")), page(character("b")))
+        val vm = viewModel(api)
+        vm.onFirstAppear()
+        advanceUntilIdle()
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+
+        vm.onTagsApplied(listOf("t1", "已下线的标签"))
+        advanceUntilIdle()
+
+        assertEquals(listOf("t1"), vm.state.value.selectedTagIds)
+        assertEquals(listOf("t1"), api.calls.last().tagIds)
+    }
+
+    @Test
+    fun `重复应用同一勾选不重发请求`() = runTest {
+        val api = RecordingApi()
+        api.tags = listOf(HomeTag("t1", "浪漫"))
+        api.pages = listOf(page(character("a")), page(character("b")))
+        val vm = viewModel(api)
+        vm.onFirstAppear()
+        advanceUntilIdle()
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+        vm.onTagsApplied(listOf("t1"))
+        advanceUntilIdle()
+        val calls = api.calls.size
+
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+        vm.onTagsApplied(listOf("t1"))
+        advanceUntilIdle()
+
+        assertEquals("同一勾选不应重拉", calls, api.calls.size)
+        assertTrue("但抽屉要关上", !vm.state.value.isFilterDrawerOpen)
+    }
+
+    @Test
+    fun `标签目录只拉一次`() = runTest {
+        val api = RecordingApi()
+        api.tags = listOf(HomeTag("t1", "浪漫"))
+        api.pages = listOf(page(character("a")))
+        val vm = viewModel(api)
+        vm.onFirstAppear()
+        advanceUntilIdle()
+
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+        vm.onFilterDrawerDismiss()
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+
+        assertEquals(1, api.tagFetchCount)
+    }
+
+    @Test
+    fun `标签目录拉取失败不阻塞抽屉打开`() = runTest {
+        // RN 的 hydrateTags 也是 console.warn 后咽掉（config_persist.ts:321）
+        val api = RecordingApi()
+        api.tagError = ApiException.Transport(java.io.IOException("boom"))
+        api.pages = listOf(page(character("a")))
+        val vm = viewModel(api)
+        vm.onFirstAppear()
+        advanceUntilIdle()
+
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+
+        assertTrue("抽屉仍应打开", vm.state.value.isFilterDrawerOpen)
+        assertTrue(vm.state.value.tagCatalog.isEmpty())
+        assertNull("不应把标签失败当成列表错误", vm.state.value.errorMessage)
+    }
+
+    @Test
+    fun `埋点的 selectedTags 是用户勾选原样`() = runTest {
+        // home.tsx:1398 直接传 selectedTags.tags —— 即使 Following 请求不带标签，
+        // 埋点里仍记着用户当时勾了什么。按系列清空会让归因失真
+        val api = RecordingApi()
+        api.tags = listOf(HomeTag("t1", "浪漫"))
+        api.pages = listOf(page(character("a")), page(character("b")))
+        val vm = viewModel(api)
+        vm.onFirstAppear()
+        advanceUntilIdle()
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+        vm.onTagsApplied(listOf("t1"))
+        advanceUntilIdle()
+
+        assertEquals(listOf("t1"), vm.state.value.selectedTagIds)
+    }
+
+    // ── 冷启动种子 ────────────────────────────────────────
+
+    @Test
+    fun `有种子时先显示种子且不显示 spinner`() = runTest {
+        val api = RecordingApi()
+        api.pages = listOf(page(character("real")))
+        val storage = SeedStorage()
+        seed(storage, "a", "b")
+        val vm = viewModel(api, cache = cacheOf(storage))
+
+        vm.onFirstAppear()
+        // 还没 advance：种子应该已经在了（同步读盘）
+        assertEquals(2, vm.state.value.items.size)
+        assertTrue("有种子就不该显示全屏 spinner", !vm.state.value.isInitialLoading)
+    }
+
+    @Test
+    fun `种子不阻止真实请求`() = runTest {
+        // 种子若写进 loaded，loadIfNeeded 会判「已有数据」而永不请求 ——
+        // 表现是首屏永远停在上次的 5 条上
+        val api = RecordingApi()
+        api.pages = listOf(page(character("real")))
+        val storage = SeedStorage()
+        seed(storage, "a")
+        val vm = viewModel(api, cache = cacheOf(storage))
+
+        vm.onFirstAppear()
+        advanceUntilIdle()
+
+        assertEquals("必须仍发出第 0 页请求", 1, api.calls.size)
+        assertEquals(0, api.calls.single().page)
+    }
+
+    @Test
+    fun `真实数据到达后种子在前、真实数据追加`() = runTest {
+        // 对齐 RN 的 unionBy(cachedList, flatList)：种子在前，不是整屏跳变
+        val api = RecordingApi()
+        api.pages = listOf(page(character("real")))
+        val storage = SeedStorage()
+        seed(storage, "a")
+        val vm = viewModel(api, cache = cacheOf(storage))
+
+        vm.onFirstAppear()
+        advanceUntilIdle()
+
+        val keys = vm.state.value.items.map { it.stableKey }
+        assertEquals("种子应在最前", "r-a-a", keys.first())
+        assertTrue("真实数据应追加在后", keys.contains("real"))
+    }
+
+    @Test
+    fun `种子里已有的角色不重复出现`() = runTest {
+        val api = RecordingApi()
+        // 真实第 0 页里也含 a（用与种子相同的 stableKey）
+        api.pages = listOf(page(characterWithRequestId("a", "r-a"), character("real")))
+        val storage = SeedStorage()
+        seed(storage, "a")
+        val vm = viewModel(api, cache = cacheOf(storage))
+
+        vm.onFirstAppear()
+        advanceUntilIdle()
+
+        val keys = vm.state.value.items.map { it.stableKey }
+        assertEquals("a 只应出现一次", 1, keys.count { it == "r-a-a" })
+    }
+
+    @Test
+    fun `下拉刷新丢弃种子`() = runTest {
+        // 用户主动刷新就是要新内容（RN 的 setShowForYouCache(false) 同义）
+        val api = RecordingApi()
+        api.pages = listOf(page(character("real1")), page(character("real2")))
+        val storage = SeedStorage()
+        seed(storage, "a")
+        val vm = viewModel(api, cache = cacheOf(storage))
+        vm.onFirstAppear()
+        advanceUntilIdle()
+
+        vm.onRefresh()
+        advanceUntilIdle()
+
+        val keys = vm.state.value.items.map { it.stableKey }
+        assertTrue("刷新后种子不应还在", !keys.contains("r-a-a"))
+    }
+
+    @Test
+    fun `第 0 页成功后写入种子`() = runTest {
+        val api = RecordingApi()
+        api.pages = listOf(page(character("real")))
+        val storage = SeedStorage()
+        val vm = viewModel(api, cache = cacheOf(storage))
+
+        vm.onFirstAppear()
+        advanceUntilIdle()
+
+        assertTrue("应写出种子", storage.value != null)
+    }
+
+    @Test
+    fun `选了标签时不写种子`() = runTest {
+        // 真机上抓到的：信封只记 gender 不记 tags，而标签勾选杀进程就归零 ——
+        // 筛选结果被当作未筛选首屏，三道门禁全过且看不出异常
+        val api = RecordingApi()
+        api.tags = listOf(HomeTag("action", "动作"))
+        api.pages = listOf(page(character("all")), page(character("filtered")))
+        val storage = SeedStorage()
+        val vm = viewModel(api, cache = cacheOf(storage))
+        vm.onFirstAppear()
+        advanceUntilIdle()
+        val afterFirst = storage.value
+
+        // 必须先开抽屉拉目录 —— onTagsApplied 会把不在 tagCatalog 里的 id 丢掉
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+        vm.onTagsApplied(listOf("action"))
+        advanceUntilIdle()
+
+        assertEquals("带标签的第 0 页不该覆盖种子", afterFirst, storage.value)
+    }
+
+    @Test
+    fun `首屏失败后改标签，种子不该钉在筛选结果之上`() = runTest {
+        // 首屏失败时种子留着（这是对的，失败不清列表）。但接着改标签后，
+        // 那份**未筛选**的种子会混在筛选结果里，用户看不出哪条不属于筛选
+        val api = RecordingApi()
+        api.tags = listOf(HomeTag("action", "动作"))
+        api.error = ApiException.Transport(java.io.IOException("boom"))
+        api.pages = listOf(page(character("filtered")))
+        val storage = SeedStorage()
+        seed(storage, "seeded")
+        val vm = viewModel(api, cache = cacheOf(storage))
+        vm.onFirstAppear()
+        advanceUntilIdle()
+        assertTrue(
+            "失败后种子应仍在",
+            vm.state.value.items.any { it.stableKey == "r-seeded-seeded" },
+        )
+
+        api.error = null
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+        vm.onTagsApplied(listOf("action"))
+        advanceUntilIdle()
+
+        val keys = vm.state.value.items.map { it.stableKey }
+        assertTrue("筛选结果里不该混着未筛选的种子: $keys", !keys.contains("r-seeded-seeded"))
+    }
+
+    @Test
+    fun `非 For You 系列不读种子`() = runTest {
+        // 种子是按 For You 拉的，显示在其他系列下就是错数据
+        val api = RecordingApi()
+        api.pages = listOf(page(character("a")), page(character("weekly")))
+        val storage = SeedStorage()
+        seed(storage, "seeded")
+        val vm = viewModel(api, cache = cacheOf(storage))
+        vm.onFirstAppear()
+        advanceUntilIdle()
+
+        vm.onSeriesSelected(HomeSeries.WEEKLY_PICKS)
+        advanceUntilIdle()
+
+        val keys = vm.state.value.items.map { it.stableKey }
+        assertTrue("Weekly Picks 不该出现种子", !keys.contains("r-seeded-seeded"))
+    }
+
     // ── fixture ───────────────────────────────────────────
+
+    /** 内存版种子存储。 */
+    private class SeedStorage(var value: String? = null) : HomeCacheStorage {
+        override fun getString(key: String): String? = value
+        override fun putString(key: String, value: String): Boolean {
+            this.value = value
+            return true
+        }
+    }
+
+    private fun cacheOf(storage: SeedStorage) =
+        HomeForYouCache(storage, nowMs = { NOW }, logWarn = { _, _ -> })
+
+    /** 往 storage 里塞一份 guest / ALL 的有效种子。 */
+    private fun seed(storage: SeedStorage, vararg ids: String) {
+        val raw = org.json.JSONArray()
+        ids.forEach { id ->
+            raw.put(
+                org.json.JSONObject(
+                    """{"type":"character","request_id":"r-$id","data":{"character":{
+                       "character_id":"$id","nickname":"n","introduction":"",
+                       "image_url":"u","creator_id":"c"}}}""",
+                ),
+            )
+        }
+        cacheOf(storage).write("guest", HomeGender.ALL, raw)
+    }
 
     private fun TestScope.viewModel(
         api: RecordingApi,
         languageProvider: () -> String = { "en" },
+        cache: HomeForYouCache? = null,
     ) = HomeViewModel(
         api = api,
         filters = FakeFilters(),
         languageProvider = languageProvider,
         scope = this,
+        cache = cache,
+        // 种子测试统一用 guest 作用域
+        userIdProvider = { null },
+        // 单测里不碰 android.util.Log（那是抛 "not mocked" 的桩）
+        logWarn = { _, _ -> },
     )
 
-    private fun page(vararg items: HomeFeedItem) =
-        HomeFeedPage(items = items.toList(), rawItemCount = items.size, hasMore = null)
+    /**
+     * 一页数据。
+     *
+     * `rawList` 带一个占位数组 —— 种子写入需要它非空（生产里由
+     * `HomeFeedParser.parseForYou` 填真实响应片段）。给 null 的话
+     * 「第 0 页后写种子」永远不触发，测试会假绿。
+     */
+    private fun page(vararg items: HomeFeedItem) = HomeFeedPage(
+        items = items.toList(),
+        rawItemCount = items.size,
+        hasMore = null,
+        rawList = org.json.JSONArray().apply {
+            items.forEach { item ->
+                put(
+                    org.json.JSONObject(
+                        """{"type":"character","data":{"character":{
+                           "character_id":"${item.stableKey}","nickname":"n",
+                           "introduction":"","image_url":"u","creator_id":"c"}}}""",
+                    ),
+                )
+            }
+        },
+    )
 
     private fun character(id: String) = HomeFeedItem.Character(
         characterId = id,
@@ -407,6 +819,17 @@ class HomeViewModelTest {
         isChatted = false,
         recommendation = null,
     )
+
+    /** 带 requestId 的角色 —— stableKey 变成 `${requestId}-${id}`，用于测种子去重。 */
+    private fun characterWithRequestId(id: String, requestId: String) =
+        character(id).copy(
+            recommendation = HomeFeedItem.Recommendation(
+                requestId = requestId,
+                expId = null,
+                position = 0,
+                sessionId = "s",
+            ),
+        )
 
     private fun world(id: String) = HomeFeedItem.World(
         projectId = id,
@@ -460,6 +883,17 @@ class HomeViewModelTest {
             return pages.getOrNull(indexForSeries)
                 ?: HomeFeedPage(emptyList(), rawItemCount = 0, hasMore = null)
         }
+
+        /** 标签目录：默认空表。测标签筛选的用例自己塞值。 */
+        var tags: List<HomeTag> = emptyList()
+        var tagFetchCount: Int = 0
+        var tagError: Throwable? = null
+
+        override suspend fun fetchTags(nsfw: Boolean): List<HomeTag> {
+            tagFetchCount++
+            tagError?.let { throw it }
+            return tags
+        }
     }
 
     /** 内存版筛选存储。 */
@@ -474,4 +908,10 @@ class HomeViewModelTest {
             return true
         }
     }
+
+    private companion object {
+        /** 种子测试的固定"当前时间"。任意值都行，只要读写用同一个。 */
+        const val NOW = 1_000_000L
+    }
+
 }
