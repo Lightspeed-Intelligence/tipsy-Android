@@ -217,6 +217,10 @@ class HomeViewModel(
         // 不含 tags 自然保留，这里要显式做到同一效果）
         cursors.keys.retainAll { !it.supportsTagFilter }
         loaded.keys.retainAll { !it.supportsTagFilter }
+        // ⚠️ 种子必须在这里丢掉。种子是**未筛选**的内容，而合并时读 lockedHead
+        // 早于第 0 页落地后清空它 —— 首屏失败（种子留着，失败不清列表）后改标签，
+        // 那几条未筛选的角色会混进筛选结果，用户无从分辨哪条不属于筛选
+        lockedHead = emptyList()
         val current = _state.value.selectedSeries
         _state.value = _state.value.copy(
             selectedTagIds = next,
@@ -439,16 +443,28 @@ class HomeViewModel(
             // 写种子：只有 For You 的第 0 页（对齐 `useHomeCharacterLists.ts:163-169`
             // 的 `forYouFirstPage` effect）。用**原始响应片段**而不是模型，见
             // HomeForYouCache 类注释
+            // ⚠️ 选了标签时**不写种子**。信封只记 gender 不记 tags，而标签勾选存在
+            // 无 persist 的 session store（见 §8.1 更正）—— 杀进程后勾选归零，
+            // 下次冷启动这份「Action 筛出来的 2 条」会当作未筛选的 For You 首屏显示，
+            // 三道门禁全过、且本地看不出异常。
+            // RN 同样有这个缺陷（`getForYouListReq` 带 tag_ids，而 cache 写入 effect
+            // 只看 forYouFirstPage 变化，不看筛选状态），但 §4.6 要求壳不继承缓存缺陷。
+            // 备选是把 tags 也写进信封做门禁，但那样「选了标签」这一次的种子对
+            // 下次无标签的冷启动永远失效，等于白存 —— 不如不写。
+            val hasTagFilter = _state.value.selectedTagIds.isNotEmpty()
             if (series == HomeSeries.FOR_YOU && cursor.nextPage == 0) {
-                page.rawList?.let { raw ->
-                    cache?.write(
-                        authScope = HomeForYouCache.authScopeOf(userIdProvider()),
-                        gender = _state.value.gender,
-                        rawItems = raw,
-                    )
+                if (!hasTagFilter) {
+                    page.rawList?.let { raw ->
+                        cache?.write(
+                            authScope = HomeForYouCache.authScopeOf(userIdProvider()),
+                            gender = _state.value.gender,
+                            rawItems = raw,
+                        )
+                    }
                 }
                 // 第 0 页已落地，锁定头的使命结束 —— 留着会让后续刷新把
-                // 旧种子又插回列表头
+                // 旧种子又插回列表头。
+                // 放在标签门禁之外：写不写种子是一回事，种子退不退场是另一回事
                 lockedHead = emptyList()
             }
 

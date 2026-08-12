@@ -665,6 +665,56 @@ class HomeViewModelTest {
     }
 
     @Test
+    fun `选了标签时不写种子`() = runTest {
+        // 真机上抓到的：信封只记 gender 不记 tags，而标签勾选杀进程就归零 ——
+        // 筛选结果被当作未筛选首屏，三道门禁全过且看不出异常
+        val api = RecordingApi()
+        api.tags = listOf(HomeTag("action", "动作"))
+        api.pages = listOf(page(character("all")), page(character("filtered")))
+        val storage = SeedStorage()
+        val vm = viewModel(api, cache = cacheOf(storage))
+        vm.onFirstAppear()
+        advanceUntilIdle()
+        val afterFirst = storage.value
+
+        // 必须先开抽屉拉目录 —— onTagsApplied 会把不在 tagCatalog 里的 id 丢掉
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+        vm.onTagsApplied(listOf("action"))
+        advanceUntilIdle()
+
+        assertEquals("带标签的第 0 页不该覆盖种子", afterFirst, storage.value)
+    }
+
+    @Test
+    fun `首屏失败后改标签，种子不该钉在筛选结果之上`() = runTest {
+        // 首屏失败时种子留着（这是对的，失败不清列表）。但接着改标签后，
+        // 那份**未筛选**的种子会混在筛选结果里，用户看不出哪条不属于筛选
+        val api = RecordingApi()
+        api.tags = listOf(HomeTag("action", "动作"))
+        api.error = ApiException.Transport(java.io.IOException("boom"))
+        api.pages = listOf(page(character("filtered")))
+        val storage = SeedStorage()
+        seed(storage, "seeded")
+        val vm = viewModel(api, cache = cacheOf(storage))
+        vm.onFirstAppear()
+        advanceUntilIdle()
+        assertTrue(
+            "失败后种子应仍在",
+            vm.state.value.items.any { it.stableKey == "r-seeded-seeded" },
+        )
+
+        api.error = null
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+        vm.onTagsApplied(listOf("action"))
+        advanceUntilIdle()
+
+        val keys = vm.state.value.items.map { it.stableKey }
+        assertTrue("筛选结果里不该混着未筛选的种子: $keys", !keys.contains("r-seeded-seeded"))
+    }
+
+    @Test
     fun `非 For You 系列不读种子`() = runTest {
         // 种子是按 For You 拉的，显示在其他系列下就是错数据
         val api = RecordingApi()
