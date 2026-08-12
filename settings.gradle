@@ -84,33 +84,52 @@ pluginManagement {
     //
     // 所以这里只做检查并**明确报错**，而不是假装能修好 —— 否则失败点会漂移到
     // 某个 plugin 内部，报出无上下文的 `Cannot run program "node"`。
+    // ⚠️ 探针必须**真的 fork 一次裸 `node`**，不能只读 System.getenv('PATH')。
+    //    2026-08-12 实测：旧的 System.getenv('PATH') 检查会**误放行**。
+    //    Studio 用 Tooling API 在自己进程里跑 settings 脚本，而它启动时导入过一次
+    //    shell 环境（idea.log: "shell environment loaded (/bin/zsh, 30 vars)"），
+    //    于是 JVM 自身的 $PATH 含 node、fork 出去的子进程却只有裸
+    //    /usr/bin:/bin:/usr/sbin:/sbin —— 检查通过，构建随后死在 Expo 内部，
+    //    同一次构建的日志里既有 "[Tipsy] node vX" 又有 Cannot run program "node"。
+    //    只有 fork 才测得到 Expo 真正走的那条路。
     def nodeBinDir = new File(nodeExecutable).parentFile?.absolutePath
-    def currentPath = System.getenv('PATH') ?: ''
-    def pathEntries = currentPath.tokenize(File.pathSeparator)
-    def pathHasNode = pathEntries.any { new File(it, 'node').canExecute() }
-    if (!pathHasNode) {
+    def bareNodeError = null
+    try {
+        providers.exec {
+            commandLine('node', '--version')
+        }.standardOutput.asText.get()
+    } catch (Exception e) {
+        bareNodeError = e.message ?: e.toString()
+    }
+    if (bareNodeError != null) {
         throw new GradleException(
-            "当前 Gradle 进程的 \$PATH 里找不到可执行的 `node`。\n" +
+            "fork 子进程时找不到可执行的 `node` —— 这正是 Expo autolinking 的调用方式。\n" +
             "\n" +
             "已解析到 node 绝对路径（${nodeSource}）：${nodeExecutable}\n" +
             "但它**不够** —— Expo 的 autolinking plugin 硬编码裸 `node`，\n" +
             "只能靠进程自身的 \$PATH 解析，无法用参数覆盖。\n" +
             "\n" +
-            "当前 \$PATH：${currentPath}\n" +
+            "当前 JVM 的 \$PATH：${System.getenv('PATH') ?: '(空)'}\n" +
+            "（它可能看着是好的而子进程仍失败：Studio 启动时导入过 shell 环境。）\n" +
+            "原始错误：${bareNodeError}\n" +
             "\n" +
-            "从 Android Studio（Dock/Finder）启动时最常见，因为它走 launchd GUI 域、\n" +
-            "**不读 shell 配置**。修复：\n" +
+            "从 Android Studio（Dock/Finder）启动时最常见：它走 launchd GUI 域、\n" +
+            "**不读 shell 配置**，且 runningboardd 会按 bundle id **缓存**启动环境，\n" +
+            "该缓存跨「⌘Q 再打开」存活。修复（都在**终端**里执行）：\n" +
             // ⚠️ 这里给的是**展开后的完整值**，不是 \$PATH 变量引用 ——
             //    launchctl setenv 不做 shell 展开，写 \$PATH 会把字面量存进去。
-            "  1) 在**终端**里执行（值已展开，可直接粘贴）：\n" +
+            "  1) launchctl getenv PATH —— 若不含 ${nodeBinDir}，则执行：\n" +
             "     launchctl setenv PATH \"${nodeBinDir}${File.pathSeparator}${System.getenv('PATH') ?: ''}\"\n" +
-            "     ⚠️ launchctl 不做 shell 展开，别写 \\\$PATH。\n" +
-            "     长期方案：做成 LaunchAgent，否则重启机器后失效。\n" +
-            "  2) ./gradlew --stop\n" +
-            "  3) **完全退出 Android Studio（⌘Q）再打开** —— Sync 或\n" +
-            "     Invalidate Caches 都不够：daemon 继承的是 Studio 启动那刻的环境。\n" +
+            "     ⚠️ launchctl 不做 shell 展开，别写 \\\$PATH。长期方案做成 LaunchAgent。\n" +
+            "  2) ./gradlew --stop        # 旧 daemon 带着坏 PATH，会被复用\n" +
+            "  3) 清掉 runningboardd 缓存的启动环境（⌘Q 往往不够）：\n" +
+            "     svc=\$(launchctl print gui/\$(id -u) | grep -o 'application\\.com\\.google\\.android\\.studio\\.[0-9]*\\.[0-9]*' | head -1)\n" +
+            "     launchctl kill SIGTERM gui/\$(id -u)/\$svc\n" +
+            "     然后 ⌘Q 退出 Studio、从 Dock 重开；仍不行就登出重登。\n" +
+            "  4) 验证**进程实际**的 PATH（不是 launchctl getenv，两者不一致正是本坑特征）：\n" +
+            "     ps eww \$(pgrep -f 'MacOS/studio' | head -1) | tr ' ' '\\n' | grep ^PATH=\n" +
             "\n" +
-            "从终端跑时通常不会遇到（shell PATH 已含 node）。\n" +
+            "从终端跑通常不会遇到（shell PATH 已含 node）。\n" +
             "详见 llmdoc/reference/android-native-progress.md 的 §2.3 与方案 ADR-004 第 3 条。"
         )
     }

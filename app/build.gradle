@@ -213,6 +213,13 @@ android {
             'GradleDependency',
             'AndroidGradlePluginVersion',
             'NewerVersionAvailable',
+            // 从 RN 移植的位图只有**一份**（无 @2x/@3x，已核实），放在
+            // drawable-nodpi 并由使用点显式给 dp 尺寸 —— 与 RN 侧 expo-image
+            // 的行为一致（RN bundler 自己也把它们打进单一密度目录）。
+            // 补 hdpi/mdpi/xhdpi 三档只能放重采样产物：包体 ×4、各档细节不一致，
+            // 且不带来任何新信息。详见 llmdoc/reference/android-bitmap-assets.md。
+            // ⚠️ 若将来设计提供多档原图，**撤销这条 disable** 并按档放置。
+            'IconMissingDensityFolder',
         ]
     }
 
@@ -251,6 +258,12 @@ android.applicationVariants.all { variant ->
 dependencies {
     // 直读 RN 侧 MMKV（方案 §2.4 的主迁移路径）。版本与 RN 侧对齐，见 libs.versions.toml
     implementation libs.mmkv
+
+    // 图片加载（W2 起 Home 卡片封面）。**不是新增依赖** —— coil3 3.0.4 已由
+    // react-native-screens 引入依赖树；版本是与 RN 侧的耦合约束，见 catalog 注释。
+    // 网络层必须显式引 coil-network-okhttp：不引则 http(s) URL 静默不加载。
+    implementation libs.coil.compose
+    implementation libs.coil.network.okhttp
 
     // android.jar 的 org.json 是 stub（调用即抛 "not mocked"），JVM 单测需真实实现。
     testImplementation libs.json

@@ -297,6 +297,20 @@ class ShellTokenStore(
         Jwt.hasNotExpired(it, nowSeconds())
     } == true
 
+    /**
+     * 当前 token 的 `sub`（用户 id），无有效 token 时 null。
+     *
+     * ⚠️ **只返回 userId，不返回 token**（同 [hasToken] 的理由：多一个 token
+     * 出口就多一条泄漏路径）。给埋点绑定 uid 用 —— `Analytics` 的四个
+     * uid-required 事件在绑定前会排队，冷启动已登录时必须尽早绑上，
+     * 否则首屏卡片曝光全部积压到用户下一次登录才发出。
+     *
+     * 不触发刷新，与 [hasToken] 一致。
+     */
+    fun currentUserId(): String? = currentToken()
+        ?.takeIf { Jwt.hasNotExpired(it, nowSeconds()) }
+        ?.let { Jwt.subject(it) }
+
     private fun currentTokenSnapshot(): TokenSnapshot = synchronized(stateLock) {
         ensureCacheLoadedLocked()
         TokenSnapshot(cached, generations.snapshot())

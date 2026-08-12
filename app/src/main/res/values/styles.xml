@@ -17,7 +17,19 @@
 
     <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="android:textViewStyle">@style/Widget.App.TextView</item>
-        <item name="android:windowBackground">@android:color/black</item>
+        <!--
+          W2 起从纯黑改成 App 背景色（对齐 RN `AppBackground` 的 `#34212A`）。
+
+          ⚠️ **底色必须在主题上给，不是在布局上** —— windowBackground 在
+          Activity 视图树 inflate **之前**就绘制，是唯一能覆盖冷启动首帧的层。
+          写在布局的 `android:background` 上会：
+            1. 晚一帧生效 —— 首帧仍是主题色（改之前是纯黑，与页面底色不同，
+               表现为启动瞬间闪一下黑）
+            2. 被 lint 判 Overdraw（主题与布局各画一遍同色背景）
+
+          所以这里改主题、布局不设 background。两处都设才是真正的 overdraw。
+        -->
+        <item name="android:windowBackground">@color/app_background</item>
     </style>
 
 </resources>

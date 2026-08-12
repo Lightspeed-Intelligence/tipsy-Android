@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  五 Tab 容器布局（W2）。
+
+  tab_content 与 tab_bar 叠放（tabbar 在上）—— 对齐 RN：内容区 fillMaxSize，
+  tabbar 悬在其上，各页自己用底部留白避让（HomeFragment.listBottomPadding）。
+
+  ⚠️ **不设 android:background** —— App 底色由主题的 windowBackground 提供
+  （`values/styles.xml` 的 AppTheme，值同为 `@color/app_background`）。
+  这里再设一遍是 overdraw（lint 会报），且解决不了它想解决的问题：
+  切 Tab 期间可见的是 window 背景，那本就由主题覆盖。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <FrameLayout
+        android:id="@+id/tab_content"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <androidx.compose.ui.platform.ComposeView
+        android:id="@+id/tab_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom" />
+
+</FrameLayout>

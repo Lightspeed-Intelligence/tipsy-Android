@@ -22,13 +22,14 @@ RN 侧文档见 `tipsy-app/llmdoc/`；iOS 壳的同构实践见 `../Tipsy-iOS/ll
 | 文档 | 描述 |
 | --- | --- |
 | [android-native-migration-plan.md](architecture/android-native-migration-plan.md) | **迁移技术方案**：架构决策（5 个 ADR）、Android 四条硬约束、跨界契约、构建/渠道/OTA、波次计划、风险登记 |
-| [android-w1-closeout-ready.md](architecture/android-w1-closeout-ready.md) | **当前 closeout 工作包**：W1 auth/network correctness 的边界、验收、验证与停止条件 |
+| [android-w1-closeout-ready.md](architecture/android-w1-closeout-ready.md) | W1 auth/network correctness 工作包的边界、验收与停止条件（**已完成并经 CI 验证**，见进度文档 §2.22） |
 
 ## 参考
 
 | 文档 | 描述 |
 | --- | --- |
 | [android-native-progress.md](reference/android-native-progress.md) | **状态权威**：波次进度、工程实况、与目标基线的偏差、未决问题 |
+| [android-bitmap-assets.md](reference/android-bitmap-assets.md) | 从 RN 移植的位图为何放 `drawable-nodpi`，以及 `IconMissingDensityFolder` 为何显式 disable |
 
 ---
 
@@ -60,3 +61,7 @@ RN 侧文档见 `tipsy-app/llmdoc/`；iOS 壳的同构实践见 `../Tipsy-iOS/ll
 - 状态只写在进度文档一处，不在别处复制快照。
 - 不继承 RN 侧的弱化质量配置（`lintOptions.abortOnError false`、`passWithNoTests`）。
 - OTA 发布、签名、真实版本号递增都需要独立明确授权。
+- **UI 照 RN 的对应平台分支实现，不照另一端**。`TabNavigator.tsx` 这类文件里
+  iOS 与 Android 是两套不同实现（tabbar：悬浮胶囊 vs 通栏实心；下拉刷新：自绘
+  动画 vs 系统控件）。照 iOS 壳的同名组件做会与现网 Android 用户看到的界面不同，
+  而这类偏差没人会报（用户不会同时装两个版本）。
