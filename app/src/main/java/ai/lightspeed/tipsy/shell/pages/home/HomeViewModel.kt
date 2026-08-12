@@ -2,6 +2,7 @@ package ai.lightspeed.tipsy.shell.pages.home
 
 import ai.lightspeed.tipsy.shell.analytics.Analytics
 import ai.lightspeed.tipsy.shell.network.ApiException
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CoroutineScope
@@ -10,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import org.json.JSONArray
 import java.util.UUID
 
 /**
@@ -36,6 +38,13 @@ class HomeViewModel(
     private val languageProvider: () -> String,
     /** 注入是为了测试；生产用 viewModelScope。 */
     private val scope: CoroutineScope? = null,
+    /**
+     * 失败诊断日志。默认走 `android.util.Log`。
+     *
+     * 注入而非直接调用：JVM 单测里 `android.util.Log` 是抛 "not mocked" 的桩。
+     * 同 `EmailLoginViewModel.logWarn` 的做法。
+     */
+    private val logWarn: (String, Throwable?) -> Unit = { msg, t -> Log.w(TAG, msg, t) },
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(
@@ -119,6 +128,64 @@ class HomeViewModel(
     }
 
     /**
+     * 打开筛选抽屉。
+     *
+     * 顺手拉标签目录 —— **失败不阻塞抽屉打开**（抽屉里还有性别与重置可用）。
+     * RN 的 `hydrateTags` 也是 `console.warn` 后咽掉（`config_persist.ts:321`）。
+     */
+    fun onFilterDrawerOpen() {
+        _state.value = _state.value.copy(isFilterDrawerOpen = true)
+        if (_state.value.tagCatalog.isNotEmpty()) return
+        workScope.launch {
+            val tags = runCatching { api.fetchTags(_state.value.nsfw) }
+                .onFailure { logWarn("标签目录拉取失败，抽屉只显示性别筛选", it) }
+                .getOrNull()
+                ?: return@launch
+            _state.value = _state.value.copy(tagCatalog = tags)
+        }
+    }
+
+    fun onFilterDrawerDismiss() {
+        _state.value = _state.value.copy(isFilterDrawerOpen = false)
+    }
+
+    /**
+     * 应用标签勾选。
+     *
+     * 语义与 [onGenderSelected] 一致：**清所有系列的游标与已加载数据**，
+     * 因为标签是跨系列的筛选条件。相同勾选直接返回，避免无谓重拉。
+     *
+     * ⚠️ 只保留仍在目录里的 id（对齐 `HomeFilterDrawer.tsx:80` 的
+     * `filter((id) => visibleTagIds.has(id))`）—— 目录随 nsfw 变化，
+     * 留着不存在的 id 会让请求带上后端不认识的标签，静默返回空列表。
+     */
+    fun onTagsApplied(tagIds: List<String>) {
+        val visible = _state.value.tagCatalog.mapTo(HashSet()) { it.id }
+        val next = tagIds.filter { it in visible }
+        if (next == _state.value.selectedTagIds) {
+            _state.value = _state.value.copy(isFilterDrawerOpen = false)
+            return
+        }
+        inFlight?.cancel()
+        // ⚠️ **只清受标签影响的系列**，不是 cursors.clear()。
+        // Following / World 不发标签，它们的结果不会因改标签而变 —— 一起清掉
+        // 会让用户切回去时白等一次加载，而拿到的内容完全一样（RN 侧靠 SWR key
+        // 不含 tags 自然保留，这里要显式做到同一效果）
+        cursors.keys.retainAll { !it.supportsTagFilter }
+        loaded.keys.retainAll { !it.supportsTagFilter }
+        val current = _state.value.selectedSeries
+        _state.value = _state.value.copy(
+            selectedTagIds = next,
+            isFilterDrawerOpen = false,
+            // 当前系列不受标签影响时（理论上抽屉不该开着）保留其列表
+            items = if (current.supportsTagFilter) emptyList() else _state.value.items,
+            hasReachedEnd = if (current.supportsTagFilter) false else _state.value.hasReachedEnd,
+            errorMessage = null,
+        )
+        loadIfNeeded(current)
+    }
+
+    /**
      * 下拉刷新：**换 session**、从第 0 页重来。
      *
      * 保留旧内容直到新数据到达（`isRefreshing` 而非清空）—— 清空会让下拉时
@@ -199,12 +266,16 @@ class HomeViewModel(
         // 顺序照 `HomeCard.tsx` 的对象字面量序 —— 后端按字符串存，顺序变化会
         // 让同一筛选在报表里被当成两种
         val gender = _state.value.gender.storedValue
-        val filterJson = """{"gender":"$gender","selectedTags":[]}"""
+        // ⚠️ 埋点里的 selectedTags 是**用户的勾选原样**，不按系列过滤
+        // （`home.tsx:1398` 直接传 `selectedTags.tags`）—— 即使 Following
+        // 请求时不带标签，埋点里仍记着用户当时勾了什么。按系列清空会让归因失真
+        val tagsJson = JSONArray(_state.value.selectedTagIds).toString()
+        val filterJson = """{"gender":"$gender","selectedTags":$tagsJson}"""
         val common = mapOf(
             "scene" to series.key,
             "filter" to filterJson,
             "gender" to gender,
-            "selectedTags" to "[]",
+            "selectedTags" to tagsJson,
             "banner" to "",
         )
         return when (item) {
@@ -261,7 +332,7 @@ class HomeViewModel(
      */
     private suspend fun loadPageChain(series: HomeSeries, isRefresh: Boolean) {
         while (true) {
-            val filterKey = currentFilterKey()
+            val filterKey = currentFilterKey(series)
             val cursor = cursors[series]
                 ?.takeIf { it.filterKey == filterKey }
                 ?: SeriesCursor(sessionId = newSessionId(), filterKey = filterKey)
@@ -272,7 +343,10 @@ class HomeViewModel(
                 gender = _state.value.gender,
                 nsfw = _state.value.nsfw,
                 languageCode = languageProvider(),
-                tagIds = emptyList(), // 标签筛选属下一包
+                // ⚠️ Following / World **不带标签**（`useHomeCharacterLists.ts:89`
+                // 的 `isFollowing ? [] : tags`）。带上会把关注列表筛掉大半，
+                // 而这两个系列 UI 上没有筛选入口，用户无从发现自己被筛了
+                tagIds = if (series.supportsTagFilter) _state.value.selectedTagIds else emptyList(),
                 contentType = null,
                 sessionId = cursor.sessionId,
             )
@@ -367,9 +441,16 @@ class HomeViewModel(
      * 只含 gender+tags+contentTypes，nsfw 与语言靠"离开首页再回来"重置；
      * 壳内 Home 是常驻 Fragment，没有那个挂载周期可依赖（见 [SeriesCursor] 注释）。
      */
-    private fun currentFilterKey(): String {
+    private fun currentFilterKey(series: HomeSeries): String {
         val s = _state.value
-        return "${s.gender.storedValue}|${s.nsfw}|${languageProvider()}"
+        // 标签进指纹：勾选变化必须换 session，否则新筛选会复用旧推荐池，
+        // 表现是「筛了标签但结果没怎么变」。
+        //
+        // ⚠️ **按系列算**：Following / World 不发标签（见 loadPageChain 的说明），
+        // 所以它们的指纹里也不能含标签 —— 含了会让「改标签」白白作废这两个系列
+        // 已缓存的列表与页码，用户切回去要重新加载，且结果完全一样
+        val tags = if (series.supportsTagFilter) s.selectedTagIds.joinToString(",") else ""
+        return "${s.gender.storedValue}|${s.nsfw}|${languageProvider()}|$tags"
     }
 
     /** 对齐 RN 的 `client_${uuid()}` 前缀 —— 后端按前缀区分客户端生成的 session。 */
@@ -392,5 +473,7 @@ class HomeViewModel(
          * 结果所有语言都显示英文（进度文档 §2.20 已为登录页记过同一条）。
          */
         const val FALLBACK_ERROR_KEY = "Please try again later"
+
+        private const val TAG = "HomeViewModel"
     }
 }

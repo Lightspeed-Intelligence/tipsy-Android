@@ -7,6 +7,7 @@ import ai.lightspeed.tipsy.shell.pages.home.HomeFeedSource
 import ai.lightspeed.tipsy.shell.pages.home.HomeFilters
 import ai.lightspeed.tipsy.shell.pages.home.HomeGender
 import ai.lightspeed.tipsy.shell.pages.home.HomeSeries
+import ai.lightspeed.tipsy.shell.pages.home.HomeTag
 import ai.lightspeed.tipsy.shell.pages.home.HomeViewModel
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -374,6 +375,196 @@ class HomeViewModelTest {
         assertEquals(listOf("a"), vm.state.value.items.map { it.stableKey })
     }
 
+    // ── 标签筛选 ──────────────────────────────────────────
+
+    @Test
+    fun `勾选标签后请求带上 tag_ids 且换 session`() = runTest {
+        val api = RecordingApi()
+        api.tags = listOf(HomeTag("t1", "浪漫"), HomeTag("t2", "校园"))
+        api.pages = listOf(page(character("a")), page(character("b")))
+        val vm = viewModel(api)
+        vm.onFirstAppear()
+        advanceUntilIdle()
+        val before = api.calls.last().sessionId
+
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+        vm.onTagsApplied(listOf("t1"))
+        advanceUntilIdle()
+
+        assertEquals(listOf("t1"), api.calls.last().tagIds)
+        // 不换 session 的话新筛选复用旧推荐池 → 「筛了但结果没怎么变」
+        assertTrue("勾选标签必须换 session", api.calls.last().sessionId != before)
+    }
+
+    @Test
+    fun `Following 不带标签`() = runTest {
+        // `useHomeCharacterLists.ts:89` 的 isFollowing ? [] : tags。
+        // 带上会把关注列表筛掉大半，而该系列 UI 上没有筛选入口
+        val api = RecordingApi()
+        api.tags = listOf(HomeTag("t1", "浪漫"))
+        api.pages = listOf(page(character("a")), page(character("b")))
+        val vm = viewModel(api)
+        vm.onFirstAppear()
+        advanceUntilIdle()
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+        vm.onTagsApplied(listOf("t1"))
+        advanceUntilIdle()
+
+        vm.onSeriesSelected(HomeSeries.FOLLOWING)
+        advanceUntilIdle()
+
+        val followingCall = api.calls.last { it.series == HomeSeries.FOLLOWING }
+        assertEquals(emptyList<String>(), followingCall.tagIds)
+    }
+
+    @Test
+    fun `World 不带标签`() = runTest {
+        val api = RecordingApi()
+        api.tags = listOf(HomeTag("t1", "浪漫"))
+        api.pages = listOf(page(character("a")), page(character("b")))
+        val vm = viewModel(api)
+        vm.onFirstAppear()
+        advanceUntilIdle()
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+        vm.onTagsApplied(listOf("t1"))
+        advanceUntilIdle()
+
+        vm.onSeriesSelected(HomeSeries.WORLD)
+        advanceUntilIdle()
+
+        assertEquals(emptyList<String>(), api.calls.last { it.series == HomeSeries.WORLD }.tagIds)
+    }
+
+    @Test
+    fun `改标签不作废 World 已缓存的列表`() = runTest {
+        // filterKey 按系列算：World 不发标签，指纹里也不能含标签。
+        // 含了会让「改标签」白白清掉 World 的游标，切回去要重新加载且结果相同
+        val api = RecordingApi()
+        api.tags = listOf(HomeTag("t1", "浪漫"))
+        api.pages = listOf(page(character("a")), page(character("w")), page(character("b")))
+        val vm = viewModel(api)
+        vm.onFirstAppear()
+        advanceUntilIdle()
+        vm.onSeriesSelected(HomeSeries.WORLD)
+        advanceUntilIdle()
+        val worldSession = api.calls.last { it.series == HomeSeries.WORLD }.sessionId
+
+        vm.onSeriesSelected(HomeSeries.FOR_YOU)
+        advanceUntilIdle()
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+        vm.onTagsApplied(listOf("t1"))
+        advanceUntilIdle()
+        vm.onSeriesSelected(HomeSeries.WORLD)
+        advanceUntilIdle()
+
+        assertEquals(
+            "World 的 session 不应因改标签而变",
+            worldSession,
+            api.calls.last { it.series == HomeSeries.WORLD }.sessionId,
+        )
+    }
+
+    @Test
+    fun `不在目录里的勾选 id 被丢弃`() = runTest {
+        // 目录随 nsfw 变化；留着不存在的 id 会让请求带上后端不认识的标签，
+        // 静默返回空列表（对齐 HomeFilterDrawer.tsx:80 的 visibleTagIds 过滤）
+        val api = RecordingApi()
+        api.tags = listOf(HomeTag("t1", "浪漫"))
+        api.pages = listOf(page(character("a")), page(character("b")))
+        val vm = viewModel(api)
+        vm.onFirstAppear()
+        advanceUntilIdle()
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+
+        vm.onTagsApplied(listOf("t1", "已下线的标签"))
+        advanceUntilIdle()
+
+        assertEquals(listOf("t1"), vm.state.value.selectedTagIds)
+        assertEquals(listOf("t1"), api.calls.last().tagIds)
+    }
+
+    @Test
+    fun `重复应用同一勾选不重发请求`() = runTest {
+        val api = RecordingApi()
+        api.tags = listOf(HomeTag("t1", "浪漫"))
+        api.pages = listOf(page(character("a")), page(character("b")))
+        val vm = viewModel(api)
+        vm.onFirstAppear()
+        advanceUntilIdle()
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+        vm.onTagsApplied(listOf("t1"))
+        advanceUntilIdle()
+        val calls = api.calls.size
+
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+        vm.onTagsApplied(listOf("t1"))
+        advanceUntilIdle()
+
+        assertEquals("同一勾选不应重拉", calls, api.calls.size)
+        assertTrue("但抽屉要关上", !vm.state.value.isFilterDrawerOpen)
+    }
+
+    @Test
+    fun `标签目录只拉一次`() = runTest {
+        val api = RecordingApi()
+        api.tags = listOf(HomeTag("t1", "浪漫"))
+        api.pages = listOf(page(character("a")))
+        val vm = viewModel(api)
+        vm.onFirstAppear()
+        advanceUntilIdle()
+
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+        vm.onFilterDrawerDismiss()
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+
+        assertEquals(1, api.tagFetchCount)
+    }
+
+    @Test
+    fun `标签目录拉取失败不阻塞抽屉打开`() = runTest {
+        // RN 的 hydrateTags 也是 console.warn 后咽掉（config_persist.ts:321）
+        val api = RecordingApi()
+        api.tagError = ApiException.Transport(java.io.IOException("boom"))
+        api.pages = listOf(page(character("a")))
+        val vm = viewModel(api)
+        vm.onFirstAppear()
+        advanceUntilIdle()
+
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+
+        assertTrue("抽屉仍应打开", vm.state.value.isFilterDrawerOpen)
+        assertTrue(vm.state.value.tagCatalog.isEmpty())
+        assertNull("不应把标签失败当成列表错误", vm.state.value.errorMessage)
+    }
+
+    @Test
+    fun `埋点的 selectedTags 是用户勾选原样`() = runTest {
+        // home.tsx:1398 直接传 selectedTags.tags —— 即使 Following 请求不带标签，
+        // 埋点里仍记着用户当时勾了什么。按系列清空会让归因失真
+        val api = RecordingApi()
+        api.tags = listOf(HomeTag("t1", "浪漫"))
+        api.pages = listOf(page(character("a")), page(character("b")))
+        val vm = viewModel(api)
+        vm.onFirstAppear()
+        advanceUntilIdle()
+        vm.onFilterDrawerOpen()
+        advanceUntilIdle()
+        vm.onTagsApplied(listOf("t1"))
+        advanceUntilIdle()
+
+        assertEquals(listOf("t1"), vm.state.value.selectedTagIds)
+    }
+
     // ── fixture ───────────────────────────────────────────
 
     private fun TestScope.viewModel(
@@ -384,6 +575,8 @@ class HomeViewModelTest {
         filters = FakeFilters(),
         languageProvider = languageProvider,
         scope = this,
+        // 单测里不碰 android.util.Log（那是抛 "not mocked" 的桩）
+        logWarn = { _, _ -> },
     )
 
     private fun page(vararg items: HomeFeedItem) =
@@ -459,6 +652,17 @@ class HomeViewModelTest {
             val indexForSeries = calls.count { it.series == series } - 1
             return pages.getOrNull(indexForSeries)
                 ?: HomeFeedPage(emptyList(), rawItemCount = 0, hasMore = null)
+        }
+
+        /** 标签目录：默认空表。测标签筛选的用例自己塞值。 */
+        var tags: List<HomeTag> = emptyList()
+        var tagFetchCount: Int = 0
+        var tagError: Throwable? = null
+
+        override suspend fun fetchTags(nsfw: Boolean): List<HomeTag> {
+            tagFetchCount++
+            tagError?.let { throw it }
+            return tags
         }
     }
 

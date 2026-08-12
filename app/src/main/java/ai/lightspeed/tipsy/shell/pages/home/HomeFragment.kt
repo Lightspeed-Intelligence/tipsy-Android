@@ -123,7 +123,8 @@ class HomeFragment : Fragment() {
                         onItemExposed = viewModel::onItemExposed,
                         onSearchClick = ::onSearchClick,
                         onSubscriptionClick = ::onSubscriptionClick,
-                        onFilterClick = ::onFilterClick,
+                        onFilterClick = viewModel::onFilterDrawerOpen,
+                        onTagsApplied = viewModel::onTagsApplied,
                         listBottomPadding = listBottomPadding(safeBottomDp),
                         // 系统 inset 直接给 dp，不乘 scaleFactor
                         statusBarPadding = safeTopDp.dp,
@@ -235,10 +236,6 @@ class HomeFragment : Fragment() {
             mapOf("landing_page" to "subscribe"),
         )
         app.requestRoute(AppRoute.GemsPurchase(), AppRouter.Source.IN_APP)
-    }
-
-    private fun onFilterClick() {
-        Log.w(TAG, "标签筛选抽屉未实现（HomeFilterDrawer 382 行，下一包）")
     }
 
     companion object {

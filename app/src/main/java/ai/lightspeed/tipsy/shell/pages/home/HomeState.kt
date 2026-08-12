@@ -15,6 +15,22 @@ data class HomeState(
     val gender: HomeGender = HomeGender.ALL,
     /** 后端 `user.nsfw` 的本地镜像。**壳只读不写**（方案 §8.1 筛选持久化行）。 */
     val nsfw: Boolean = false,
+    /**
+     * 标签目录（筛选抽屉的可选项）。来自 `POST /character/tags`，不持久化。
+     *
+     * 与 [selectedTagIds] 分开：目录是**服务端的**，勾选是**用户的**。
+     */
+    val tagCatalog: List<HomeTag> = emptyList(),
+    /**
+     * 已勾选的标签 id。
+     *
+     * ⚠️ **刻意不持久化** —— RN 的勾选存在无 persist 中间件的 `session.ts`
+     * （`selectedTags`，已核实 `grep -c persist` = 0），杀进程即归零。
+     * 写进 `config-persist-storage` 会让原生版比 RN 多记住筛选，不报错但行为不同。
+     */
+    val selectedTagIds: List<String> = emptyList(),
+    /** 筛选抽屉是否打开（对齐 `session.ts` 的 `homeFilterDrawerOpen`）。 */
+    val isFilterDrawerOpen: Boolean = false,
     val items: List<HomeFeedItem> = emptyList(),
     /** 首屏加载中（列表为空且在请求）—— 与 [isRefreshing] / [isLoadingMore] 互斥展示。 */
     val isInitialLoading: Boolean = false,

@@ -155,6 +155,8 @@ internal fun parsePublicListForTest(
 internal fun parseWorldListForTest(data: JSONObject): HomeFeedPage =
     HomeFeedParser.parseWorldList(data)
 
+internal fun parseTagsForTest(data: JSONObject): List<HomeTag> = HomeTagParser.parse(data)
+
 /** JSON → 模型的解析。**宽松逐值**，单个字段坏不整页丢（对齐 `LocaleTable` 的策略）。 */
 internal object HomeFeedParser {
 

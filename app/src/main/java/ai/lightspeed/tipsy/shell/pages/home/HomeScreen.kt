@@ -82,6 +82,8 @@ internal fun HomeScreen(
     onSearchClick: () -> Unit,
     onSubscriptionClick: () -> Unit,
     onFilterClick: () -> Unit,
+    /** 抽屉关闭（点 ✓ / 遮罩 / 返回键）时提交勾选 —— 三者语义相同，见抽屉注释。 */
+    onTagsApplied: (List<String>) -> Unit,
     /** 列表底部留白 = safeBottom + 50（`home.tsx:257` Android 分支）。 */
     listBottomPadding: Dp,
     /**
@@ -156,6 +158,16 @@ internal fun HomeScreen(
                 )
             }
         }
+    }
+
+    // 抽屉走 Dialog，铺在整个 Column 之外 —— 放进 Column 里会被它的
+    // padding 约束住，且遮罩盖不住状态栏
+    if (state.isFilterDrawerOpen) {
+        HomeFilterDrawer(
+            catalog = state.tagCatalog,
+            selectedTagIds = state.selectedTagIds,
+            onApply = onTagsApplied,
+        )
     }
 }
 
