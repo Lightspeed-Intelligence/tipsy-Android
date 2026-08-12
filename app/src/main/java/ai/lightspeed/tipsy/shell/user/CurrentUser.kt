@@ -30,12 +30,17 @@ import org.json.JSONObject
  * @property nickname 昵称，可空 —— 新注册用户可能还没设
  * @property avatarUrl 头像 URL，可空 —— 空时 UI 走占位图
  * @property backgroundImgUrl 主页背景图 URL，可空 —— 空时走内置默认图
+ *   （`user-profile.tsx:418-423` fallback 到 `profile_bg.png`）
+ * @property bio 个人简介（`bio`，`store/user.ts:195`），可空 —— 空时 UI 显示
+ *   "No bio yet. Add one now." 空态文案。**带默认值**是为了既有构造点不受
+ *   字段追加影响（测试 fixture 等），parse 永远显式传
  */
 data class CurrentUser(
     val userId: String,
     val nickname: String?,
     val avatarUrl: String?,
     val backgroundImgUrl: String?,
+    val bio: String? = null,
 ) {
     companion object {
 
@@ -60,6 +65,7 @@ data class CurrentUser(
                 avatarUrl = ScalarCoercion.optString(data, FIELD_AVATAR_URL)?.takeIf { it.isNotBlank() },
                 backgroundImgUrl = ScalarCoercion.optString(data, FIELD_BACKGROUND_IMG_URL)
                     ?.takeIf { it.isNotBlank() },
+                bio = ScalarCoercion.optString(data, FIELD_BIO)?.takeIf { it.isNotBlank() },
             )
         }
 
@@ -67,5 +73,6 @@ data class CurrentUser(
         private const val FIELD_NICKNAME = "nickname"
         private const val FIELD_AVATAR_URL = "avatar_url"
         private const val FIELD_BACKGROUND_IMG_URL = "background_img_url"
+        private const val FIELD_BIO = "bio"
     }
 }

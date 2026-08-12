@@ -1,7 +1,9 @@
 package ai.lightspeed.tipsy.shell.pages.profile
 
+import ai.lightspeed.tipsy.shell.R
 import ai.lightspeed.tipsy.shell.i18n.rememberLocalizedString
 import ai.lightspeed.tipsy.shell.user.CurrentUser
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,25 +22,31 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 
 /**
- * Profile 顶部：头像 / 昵称 / UID / 四个统计数字 / Edit Profile 按钮。
+ * Profile 顶部：头像 / 昵称 / Edit Profile 按钮 / 四个统计数字 / bio 区。
  *
- * ## 本刀未做的两处视觉
+ * **UID 不在这里** —— RN 把它放在悬浮顶栏左侧（`user-profile.tsx:656-674`，
+ * 带复制图标），见 `ProfileScreen` 的 `ProfileTopBar`。第一刀曾放在昵称下方，
+ * 是没核实位置的错，P2 已按实测挪走。
  *
- * 1. **渐隐背景图**（`ProfileBackground.tsx` 用 MaskedView + LinearGradient
- *    locations `[0.36,0.9,1]`）—— 需要 Compose 侧的遮罩方案，且 RN 那里
- *    「点空白处即换背景」（`ProfileHeader.tsx:172` 整个 header 包在
- *    `TouchableWithoutFeedback`），换背景走相册选择，属编辑动作，不在本刀
+ * ## 本刀未做的两处
+ *
+ * 1. **点头像/空白处换背景**（`ProfileHeader.tsx:172` 整个 header 包在
+ *    `TouchableWithoutFeedback`，走相册选择）—— 属编辑动作包；
+ *    渐隐背景图本体已在 `ProfileScreen` 落地
  * 2. **滚动驱动的悬浮 header**（`user-profile.tsx:488-535`：scrollY 150→450
  *    插值，背景色渐显、小号头像+昵称渐入、UID 渐出）—— 纯视觉增强，
- *    先把数据链路跑通
+ *    静态版顶栏已就位
  *
  * ## ⚠️ 头像框（avatar decoration）未做
  *
@@ -47,18 +55,22 @@ import coil3.compose.AsyncImage
  * 而进度 §2.19 记了那三个 hydrate **静默捕获失败**、失败表现为「头像框空掉」
  * （全新安装必现，升级安装因 MMKV 残留被掩蔽）。Profile 是头像框最显眼的页面。
  * 本刀不做，避免在一个已知会静默失败的配置源上再叠一层。
+ *
+ * @param topPadding 头像行距屏顶的补偿间距，由 `ProfileScreen` 按
+ *   「屏顶 250dp 锚点」换算（RN 是悬浮 header + `paddingTop: 250 - headerOffset`
+ *   的配合，`ProfileHeader.tsx:173`，让头像行固定落在背景图下部）
  */
 @Composable
 fun ProfileHeaderSection(
     user: CurrentUser?,
     stats: ProfileStats,
+    topPadding: Dp,
     onEditProfileClick: () -> Unit,
-    onUidClick: () -> Unit,
     onFollowersClick: () -> Unit,
     onFollowingClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier.fillMaxWidth().padding(top = HEADER_TOP_PADDING.dp)) {
+    Column(modifier = modifier.fillMaxWidth().padding(top = topPadding)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -88,20 +100,6 @@ fun ProfileHeaderSection(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (user != null) {
-                    Spacer(Modifier.height(UID_TOP_GAP.dp))
-                    // ⚠️ `UID: ` 前缀**不进 i18n** —— RN 侧是裸文本不走 t()
-                    //（`user-profile.tsx:665`），翻了反而与现网不一致。
-                    // 截断规则在 ProfileText.formatUid（前 3 + 后 3，对齐 utils/func.ts:277）
-                    Text(
-                        text = "UID: " + ProfileText.formatUid(user.userId),
-                        color = ProfileStyle.TEXT_TERTIARY,
-                        fontSize = UID_FONT.sp,
-                        modifier = Modifier
-                            .clickable(onClick = onUidClick)
-                            .testTag("profile_uid"),
-                    )
-                }
             }
 
             Text(
@@ -128,6 +126,52 @@ fun ProfileHeaderSection(
             stats = stats,
             onFollowersClick = onFollowersClick,
             onFollowingClick = onFollowingClick,
+        )
+
+        Spacer(Modifier.height(BIO_TOP_GAP.dp))
+        ProfileBioRow(bio = user?.bio, onEditClick = onEditProfileClick)
+        Spacer(Modifier.height(BIO_BOTTOM_GAP.dp))
+    }
+}
+
+/**
+ * bio 区（`renderBio.tsx`）：白 8% 圆角容器，一行截断，右侧编辑铅笔。
+ *
+ * 空态文案 `No bio yet. Add one now.`（key = 英文原文，词条已在 SHELL_KEYS）。
+ * RN 只有**铅笔可点**（`Pressable` 只包 Image），整行不可点 —— 保持一致。
+ * 点击目标与 Edit Profile 按钮相同：RN 都是 `setUserProfileOpen(true)` 开
+ * `EditProfileDrawer`，壳侧统一走 `AppRoute.EditProfile`（当前明确拒绝）。
+ */
+@Composable
+private fun ProfileBioRow(bio: String?, onEditClick: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = BIO_MARGIN_H.dp)
+            .clip(RoundedCornerShape(BIO_RADIUS.dp))
+            .background(BIO_BACKGROUND)
+            .padding(BIO_PADDING.dp)
+            .testTag("profile_bio"),
+    ) {
+        Text(
+            text = bio?.takeIf { it.isNotBlank() }
+                ?: rememberLocalizedString("No bio yet. Add one now."),
+            color = ProfileStyle.TEXT_SECONDARY,
+            fontSize = BIO_FONT.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = BIO_TEXT_GAP.dp),
+        )
+        Image(
+            painter = painterResource(R.drawable.ic_profile_bio_edit),
+            contentDescription = rememberLocalizedString("Edit Profile"),
+            modifier = Modifier
+                .size(BIO_EDIT_ICON.dp)
+                .clickable(onClick = onEditClick)
+                .testTag("profile_bio_edit"),
         )
     }
 }
@@ -184,13 +228,23 @@ private fun StatItem(labelKey: String, count: Long, onClick: (() -> Unit)?, tag:
     }
 }
 
-private const val HEADER_TOP_PADDING = 12
 private const val AVATAR_TEXT_GAP = 12
 private const val NICKNAME_FONT = 18
-private const val UID_FONT = 12
-private const val UID_TOP_GAP = 4
 private const val EDIT_BUTTON_FONT = 12
 private const val EDIT_BUTTON_RADIUS = 16
 private const val EDIT_BUTTON_H_PADDING = 12
 private const val EDIT_BUTTON_V_PADDING = 6
 private const val STATS_TOP_GAP = 16
+
+// bio 区尺寸照 `renderBio.tsx` styles：marginH 10 / mb 12 / radius 8 / padding 10
+private const val BIO_TOP_GAP = 8
+private const val BIO_BOTTOM_GAP = 12
+private const val BIO_MARGIN_H = 10
+private const val BIO_RADIUS = 8
+private const val BIO_PADDING = 10
+private const val BIO_FONT = 14
+private const val BIO_TEXT_GAP = 8
+private const val BIO_EDIT_ICON = 24
+
+/** `rgba(255,255,255,0.08)`（`renderBio.tsx` bioContainer）。 */
+private val BIO_BACKGROUND = Color(0x14FFFFFF)
