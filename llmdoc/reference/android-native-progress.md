@@ -23,7 +23,7 @@
 - **波次进度**：W0 完成；W1 的契约层全部落地且已在 CI 组合验证（§2.22），只剩 §12 实例关闭链与 P9；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 已开工**：Profile 第一刀（§2.25）。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`**。
 - **submodule**：pin `95760a6622424bc9be238e7790fdbf38fe7c7fb2`（远端分支 `feat/android-native`，**未合进 main/release**，按约定靠子模块指针引用）。W2 首包与 W3 Profile 第一刀**都不动 submodule**（Profile 词条已全在 SHELL_KEYS，§2.25）。
-- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W3 侧本机同序列：lint 无新增、`assembleGooglePlayDebug`/`assembleDirectApkDebug`、**app 单测 568 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿。Profile 真机七项冒烟 + 头部视觉截图对照均 PASS（§2.25 / §2.26）。
+- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W3 侧本机同序列：lint 无新增、`assembleGooglePlayDebug`/`assembleDirectApkDebug`、**app 单测 581 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿。Profile 真机七项冒烟 + 头部视觉截图对照 + 钱包三出口拒绝日志均 PASS（§2.25–§2.27）。
 - **不存在 / 未验**：Screen / ChatList 两个 Tab 仍是占位页（Profile 已是真页，页内角色卡/收藏/点赞三个 tab 走 "Coming soon" 占位）；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。P9 前生产路由白名单为空，ChatDetail 保持 disabled。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
 
 ## 1. 波次状态
@@ -33,7 +33,7 @@
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟡 **契约层已收口且 CI 已验；§12 关闭链 + P9 未完** | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17 已并） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
-| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 第一刀 + P2 头部视觉已落地并真机验证（§2.25 / §2.26）；后续包 P3 钱包 / P4 卡片角标 / P5 菜单动作 / P6 三 tab；ChatList / Search / Settings 未动 | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #21 G1 已过待并；P2 在 `feat/android-w3-profile-p2`） |
+| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 第一刀 + P2 头部视觉 + P3 钱包卡已落地并真机验证（§2.25–§2.27）；后续包 P4 卡片角标 / P5 菜单动作 / P6 三 tab；ChatList / Search / Settings 未动 | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #21 已并；#22 待并；P3 在 `feat/android-w3-profile-p2` 追加） |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | ⬜ 阻塞于 W3 | — | — |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
 
@@ -1539,6 +1539,50 @@ cancel。被打断且未完成首屏的 tab **整体复位**（否则 `isInitial
 - **NOT RUN**：背景 URL 为空的默认图分支（测试账号有背景图；分支只是
   painterResource 换 AsyncImage，风险低）、非空 bio 的显示（账号无 bio；
   同一 `Text` 只是数据分支）
+
+### 2.27 W3 Profile P3：钱包三栏卡（2026-08-12）
+
+头部最后一块大件。`ProfileWalletApi` + `ProfileWalletCard`，接进 header
+（bio 之下、tab 栏之上，`CharacterGrid.tsx:1434` 的位置）。
+
+- **数据 = 两接口合成**：`/wallet/info`（宝石/免费条数/金币，`subscribe.ts:91`）
+  + `/subscription/get/active`（档位 → 中栏标题与配色，`subscribe.ts:102`），
+  都是 `axiosAuth` → REQUIRED。**各自失败各自保留旧值**（同 stats 纪律），
+  两个都失败整块不动。`membership_rights/info` **刻意不拉** —— 卡片不消费
+  权益字段，RN 在此组件只用它做预取。
+- **只解析上屏的五个字段**：`useUserWallet` 派生的十几个值（汇率/提现/佣金/
+  生图余量）消费方是 UserCoins/提现页，都不迁（§8.0）。
+- **两套新数字规则**（本页第四、五套，`ProfileWalletTest` 13 条锁死）：
+  钱包整数 = 裸千分位**无 K/M 换算**（`formatMessageAmount`）；
+  金币 = 去尾一位小数 + 千分位 + **恒带 `.0`**（`formatCoinAmount` 的
+  `floor(x*10+1e-8)/10`，0.19 → `0.1`、0 → `0.0`）。
+- **⚠️ 反直觉但对等的两处**：`has_inf_msg=true` 时中栏显示**硬编码 100**
+  （`UserProfileGems.tsx:371` 的三元，不是 Unlimited —— 现网行为，别修）；
+  RN 整栏和胶囊按钮**同一动作都可点**（外层 TouchableOpacity + 内层按钮
+  都调 `onButtonPress`）—— 壳整栏可点。
+- **三出口对齐 RN 三个 handler**：宝石+ → `GemsPurchase(initialTab=buy_gems)`、
+  升级 → `GemsPurchase(initialTab=subscription)`、金币→ → `UserCoins`。
+  真机逐个点过，全部走 Router 明确拒绝日志（`GemsPurchase`×2 + `UserCoins`）。
+- **档位名映射**（`MemberShipTierName`）：0-5 → Free/Get a Taste/Standard/
+  Premium/Deluxe/On Trial（key = 英文原文**全在 SHELL_KEYS**，含宝石 ⓘ 的整段
+  说明文案 —— P2/P3 连续三包零 submodule 改动）。未知档位回落 Free。
+- **刻意不做**：会员栏 ⓘ 的到期/续费信息（要 `expires_date` + 日期格式化，
+  Free 账号不可见）、金币 USD 汇率首次引导气泡（依赖 guide-status store，
+  属 Onboarding 域）。
+- 资产：`gem_{red,blue,coin}` + `info` 直搬 PNG；`plus`/`arrow` 是 RN 内联
+  SVG，转写成 vector drawable（两笔描边，逐 path 对照）。
+
+#### 验证
+
+- app 单测 **581 条**（+13：`ProfileWalletTest` 9 解析/档位/两套格式化 +
+  `ProfileViewModelTest` 4 合成/失败保留/单独失败/登出清空）、failures=0、
+  skipped=0；lint 无新增；`assembleDirectApkDebug` 通过
+- **真机 `PASS`**（同 §2.25 环境）：三栏卡上屏（真实数据 1,234,567 千分位 /
+  Free 0 + Upgrade / Coins `0.0` 恒一位小数）、三个出口点击均落明确拒绝日志、
+  无崩溃
+- **NOT RUN**：`has_inf_msg` 显示 100 的分支、非 Free 档位的蓝色数字与档位名
+  （测试账号 Free 且无订阅 —— 纯数据分支，解析侧已有 JVM 覆盖）、ⓘ 气泡的
+  Popup 视觉（点击路径无真机截图，组件为标准 Compose Popup）
 
 ## 3. 横切能力
 
