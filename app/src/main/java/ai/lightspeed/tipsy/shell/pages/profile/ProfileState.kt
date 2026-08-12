@@ -20,6 +20,8 @@ data class ProfileState(
     val user: CurrentUser? = null,
     /** 四个统计数字。⚠️ 字段与标签交叉，见 [ProfileStats] 类注释。 */
     val stats: ProfileStats = ProfileStats.EMPTY,
+    /** 钱包三栏卡（宝石/免费/金币 + 订阅档位）。拉取失败保留旧值，同 stats。 */
+    val wallet: ProfileWallet = ProfileWallet.EMPTY,
     /** 当前选中的 tab。⚠️ 顺序即埋点的 `active_tab_index`，见 [ProfileTab]。 */
     val selectedTab: ProfileTab = ProfileTab.CREATED,
     /** `tab → 分页状态`。缺键视为初始态（见 [pagingOf]）。 */

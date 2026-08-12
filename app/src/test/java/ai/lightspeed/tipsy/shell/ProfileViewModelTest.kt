@@ -9,6 +9,8 @@ import ai.lightspeed.tipsy.shell.pages.profile.ProfileStats
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileTab
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileTabPaging
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileViewModel
+import ai.lightspeed.tipsy.shell.pages.profile.ProfileWallet
+import ai.lightspeed.tipsy.shell.pages.profile.ProfileWalletSource
 import ai.lightspeed.tipsy.shell.user.CurrentUser
 import ai.lightspeed.tipsy.shell.user.CurrentUserStore
 import ai.lightspeed.tipsy.shell.user.UserInfoSource
@@ -554,12 +556,89 @@ class ProfileViewModelTest {
         assertEquals("统计要刷", stats + 1, api.statsCalls.size)
     }
 
+    // ── 钱包 ────────────────────────────────────────
+
+    @Test
+    fun `钱包由两个接口合成`() = runTest {
+        val api = FakeProfileApi(pages = listOf(page(items = emptyList(), total = 0)))
+        val walletApi = FakeWalletApi(
+            wallet = ProfileWallet(gemAmount = 12, leftFreeAmount = 3, coinAmount = 4.5),
+            planId = ProfileWallet.PLAN_PREMIUM,
+        )
+        val vm = viewModel(api, walletApi = walletApi)
+        vm.onAppear()
+        advanceUntilIdle()
+
+        val w = vm.state.value.wallet
+        assertEquals(12L, w.gemAmount)
+        assertEquals(ProfileWallet.PLAN_PREMIUM, w.planId)
+        assertEquals("Premium", w.planNameKey)
+    }
+
+    @Test
+    fun `钱包接口失败保留旧值`() = runTest {
+        // 一次网络抖动不该把用户正看着的余额清零（同 stats 的纪律）
+        val api = FakeProfileApi(pages = List(2) { page(items = emptyList(), total = 0) })
+        val walletApi = FakeWalletApi(
+            wallet = ProfileWallet(gemAmount = 12),
+            planId = ProfileWallet.PLAN_STANDARD,
+        )
+        val vm = viewModel(api, walletApi = walletApi)
+        vm.onAppear()
+        advanceUntilIdle()
+        assertEquals(12L, vm.state.value.wallet.gemAmount)
+
+        walletApi.failWallet = true
+        walletApi.failPlan = true
+        vm.onRefresh()
+        advanceUntilIdle()
+
+        assertEquals("失败后余额要保留", 12L, vm.state.value.wallet.gemAmount)
+        assertEquals(ProfileWallet.PLAN_STANDARD, vm.state.value.wallet.planId)
+    }
+
+    @Test
+    fun `档位接口单独失败时余额仍更新`() = runTest {
+        val api = FakeProfileApi(pages = List(2) { page(items = emptyList(), total = 0) })
+        val walletApi = FakeWalletApi(
+            wallet = ProfileWallet(gemAmount = 12),
+            planId = ProfileWallet.PLAN_DELUXE,
+        )
+        val vm = viewModel(api, walletApi = walletApi)
+        vm.onAppear()
+        advanceUntilIdle()
+
+        walletApi.wallet = ProfileWallet(gemAmount = 99)
+        walletApi.failPlan = true
+        vm.onRefresh()
+        advanceUntilIdle()
+
+        assertEquals(99L, vm.state.value.wallet.gemAmount)
+        assertEquals("档位保留旧值", ProfileWallet.PLAN_DELUXE, vm.state.value.wallet.planId)
+    }
+
+    @Test
+    fun `登出清空钱包`() = runTest {
+        val api = FakeProfileApi(pages = listOf(page(items = emptyList(), total = 0)))
+        val walletApi = FakeWalletApi(wallet = ProfileWallet(gemAmount = 12))
+        val vm = viewModel(api, walletApi = walletApi)
+        vm.onAppear()
+        advanceUntilIdle()
+        assertEquals(12L, vm.state.value.wallet.gemAmount)
+
+        vm.onAuthChanged(loggedIn = false)
+        advanceUntilIdle()
+
+        assertEquals(ProfileWallet.EMPTY, vm.state.value.wallet)
+    }
+
     // ── fixtures ────────────────────────────────────
 
     private fun TestScope.viewModel(
         api: FakeProfileApi,
         language: () -> String = { "en" },
         failUserInfo: Boolean = false,
+        walletApi: FakeWalletApi = FakeWalletApi(),
     ): ProfileViewModel {
         val userSource = object : UserInfoSource {
             override suspend fun fetchCurrentUser(): CurrentUser? {
@@ -569,11 +648,29 @@ class ProfileViewModelTest {
         }
         return ProfileViewModel(
             api = api,
+            walletApi = walletApi,
             userStore = CurrentUserStore(userSource, logWarn = { _, _ -> }),
             languageProvider = language,
             scope = this,
             logWarn = { _, _ -> },
         )
+    }
+
+    private class FakeWalletApi(
+        var wallet: ProfileWallet = ProfileWallet.EMPTY,
+        var planId: Int = ProfileWallet.PLAN_FREE,
+        var failWallet: Boolean = false,
+        var failPlan: Boolean = false,
+    ) : ProfileWalletSource {
+        override suspend fun fetchWallet(): ProfileWallet {
+            if (failWallet) throw RuntimeException("wallet boom")
+            return wallet
+        }
+
+        override suspend fun fetchSubscriptionPlanId(): Int {
+            if (failPlan) throw RuntimeException("plan boom")
+            return planId
+        }
     }
 
     private class FakeProfileApi(

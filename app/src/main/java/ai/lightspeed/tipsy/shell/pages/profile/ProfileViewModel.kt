@@ -20,12 +20,14 @@ import kotlinx.coroutines.launch
  * ## 本刀做了什么 / 没做什么
  *
  * **已做**：资料头部（`/user/info`）、四个统计数字（`/user/stats_info`）、
+ * 钱包三栏卡（`/wallet/info` + `/subscription/get/active`）、
  * 创作 tab 三列网格分页（`/user/created/list`）、记忆 tab 单列大卡分页
  * （`/plot/list/self`）、五图标 tab 栏（未接数据源的 tab 走占位）。
  *
- * **未做**（后续包）：角色卡/收藏/点赞三个 tab、钱包区、
+ * **未做**（后续包）：角色卡/收藏/点赞三个 tab、
  * 创作任务弹窗那条五个 `useEffect` 协调的状态链、所有编辑/删除/置顶动作、
- * 他人主页（`isSelf = false` 分支，注意它的 stats 走 `OPPORTUNISTIC`）、
+ * 他人主页（`isSelf = false` 分支，注意它的 stats 走 `OPPORTUNISTIC`；
+ * 他人主页**无钱包卡**，`CharacterGrid.tsx:1431` 的 `isSelf &&`）、
  * 创作列表首屏缓存（`profileCreatedListCache`，见下）、
  * `onFirstTabDataReady` 一族页面性能参数（`user-profile.tsx:137`，属性能埋点包）。
  *
@@ -58,6 +60,7 @@ import kotlinx.coroutines.launch
  */
 class ProfileViewModel(
     private val api: ProfileSource,
+    private val walletApi: ProfileWalletSource,
     private val userStore: CurrentUserStore,
     private val languageProvider: () -> String,
     /** 注入是为了测试；生产用 viewModelScope。 */
@@ -340,11 +343,39 @@ class ProfileViewModel(
                     if (it is CancellationException) throw it
                     logWarn("拉取 /user/stats_info 失败，保留已有统计", it)
                 }
-                .getOrNull() ?: return@launch
-            _state.value = _state.value.copy(stats = stats)
+                .getOrNull()
+            if (stats != null) {
+                _state.value = _state.value.copy(stats = stats)
+            }
+            refreshWallet()
         }
         userStatsJob = job
         return job
+    }
+
+    /**
+     * 钱包 = 两个接口合成：`/wallet/info` 的余额 + `/subscription/get/active`
+     * 的档位。**各自失败各自保留旧值**（同 stats 的纪律：一次网络抖动不该把
+     * 用户正看着的余额清零），两个都失败则整块不动。
+     */
+    private suspend fun refreshWallet() {
+        val current = _state.value.wallet
+        val wallet = runCatching { walletApi.fetchWallet() }
+            .onFailure {
+                if (it is CancellationException) throw it
+                logWarn("拉取 /wallet/info 失败，保留已有钱包", it)
+            }
+            .getOrNull()
+        val planId = runCatching { walletApi.fetchSubscriptionPlanId() }
+            .onFailure {
+                if (it is CancellationException) throw it
+                logWarn("拉取 /subscription/get/active 失败，保留已有档位", it)
+            }
+            .getOrNull()
+        if (wallet == null && planId == null) return
+        _state.value = _state.value.copy(
+            wallet = (wallet ?: current).copy(planId = planId ?: current.planId),
+        )
     }
 
     private fun onPageFailed(tab: ProfileTab, error: Throwable) {

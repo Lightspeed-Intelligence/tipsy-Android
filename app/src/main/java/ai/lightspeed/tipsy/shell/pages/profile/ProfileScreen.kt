@@ -1,16 +1,21 @@
 package ai.lightspeed.tipsy.shell.pages.profile
 
+import ai.lightspeed.tipsy.shell.R
 import ai.lightspeed.tipsy.shell.i18n.rememberLocalizedString
+import ai.lightspeed.tipsy.shell.pages.home.HomeText
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -31,24 +36,44 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.layout.Arrangement
+import coil3.compose.AsyncImage
 
 /**
- * Profile（自己视角）首屏，W3 第一刀（创作 + 记忆两个 tab 已接数据源）。
+ * Profile（自己视角）首屏，W3 第一刀（创作 + 记忆两个 tab 已接数据源）+
+ * P2 头部视觉（渐隐背景图 / bio / 顶栏 UID 与设置图标）。
+ *
+ * ## 渐隐背景图在最底层，内容滚在它上面
+ *
+ * RN 的 `ProfileBackground` 是 absolute 定位在列表**后面**（`user-profile.tsx:564`），
+ * 列表内容滚动时背景不动。壳等价：根 Box 第一层画背景（宽 = 屏宽、1:1、
+ * 三段 alpha 渐隐），LazyVerticalGrid 全透明滚在上面。
+ *
+ * ## 头像行锚定屏顶 250dp
+ *
+ * RN 用「悬浮 header 高度 `headerOffset = top + 50`」+「header 内
+ * `paddingTop: 250 - headerOffset`」配合，让头像行固定落在屏顶 250dp
+ * （`ProfileHeader.tsx:173`）。壳的顶栏在普通布局流里，等价换算：
+ * header item 的补偿间距 = 250 - statusBar - 顶栏高。
  *
  * ## 头部与 tab 栏都随列表滚动，tab 栏滚出屏顶后浮出一份
  *
- * 头部和 tab 栏是 `LazyVerticalGrid` 的两个 full-span item —— 对齐 RN 的
- * `ListHeaderComponent`（`CharacterGrid.tsx:1421-1447`）。tab 栏滚出可视区后
- * 在顶部浮出同一个组件（RN 的 `renderTabBar(floating)` + `stickyTabsY`
- * 判定，`CharacterGrid.tsx:1215/1322`）。RN 浮层带 LinearGradient 背景，
- * 壳先用纯色近似（视觉 diff 属验收阶段）。
+ * 对齐 RN 的 `ListHeaderComponent`（`CharacterGrid.tsx:1421-1447`）与
+ * `renderTabBar(floating)` + `stickyTabsY` 判定（`CharacterGrid.tsx:1215/1322`）。
+ * RN 浮层带 LinearGradient 背景，壳先用纯色近似（视觉 diff 属验收阶段）。
  *
  * ## tab 栏纯图标无文字
  *
@@ -68,6 +93,7 @@ fun ProfileScreen(
     onFollowersClick: () -> Unit,
     onFollowingClick: () -> Unit,
     onSettingsClick: () -> Unit,
+    onWalletAction: (ProfileWalletAction) -> Unit,
     /** 状态栏高度；与 `HomeScreen` 一样是实际 dp，不参与 `.s` 缩放。 */
     statusBarPadding: Dp,
     modifier: Modifier = Modifier,
@@ -102,45 +128,55 @@ fun ProfileScreen(
         }
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(ProfileStyle.APP_BACKGROUND)
-            .padding(top = statusBarPadding),
-    ) {
-        ProfileTopBar(onSettingsClick = onSettingsClick)
+    Box(modifier = modifier.fillMaxSize().background(ProfileStyle.APP_BACKGROUND)) {
+        // 背景图垫底，延伸到状态栏之后（内容 Column 才做 statusBar 缩进）
+        ProfileBackgroundImage(
+            url = state.user?.backgroundImgUrl,
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
 
-        PullToRefreshBox(
-            isRefreshing = state.isRefreshing,
-            onRefresh = onRefresh,
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            if (state.user == null && state.isInitialLoading) {
-                // 冷启动首屏：头部也还没有数据，整页转圈。
-                // 之后的 tab 首拉走网格内的行内转圈（头部要留在屏上）
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
-            } else {
-                Box(Modifier.fillMaxSize()) {
-                    ProfileGrid(
-                        state = state,
-                        gridState = gridState,
-                        onTabSelected = onTabSelected,
-                        onEditProfileClick = onEditProfileClick,
-                        onUidClick = onUidClick,
-                        onFollowersClick = onFollowersClick,
-                        onFollowingClick = onFollowingClick,
-                    )
-                    if (showFloatingTabBar) {
-                        ProfileTabBar(
-                            selected = state.selectedTab,
+        Column(Modifier.fillMaxSize().padding(top = statusBarPadding)) {
+            ProfileTopBar(
+                userId = state.user?.userId,
+                onUidClick = onUidClick,
+                onSettingsClick = onSettingsClick,
+            )
+
+            PullToRefreshBox(
+                isRefreshing = state.isRefreshing,
+                onRefresh = onRefresh,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                if (state.user == null && state.isInitialLoading) {
+                    // 冷启动首屏：头部也还没有数据，整页转圈。
+                    // 之后的 tab 首拉走网格内的行内转圈（头部要留在屏上）
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                } else {
+                    Box(Modifier.fillMaxSize()) {
+                        ProfileGrid(
+                            state = state,
+                            gridState = gridState,
+                            // 头像行锚点换算，见类注释。列表首屏内容不足时至少留一点呼吸
+                            headerTopPadding = (AVATAR_TOP_ANCHOR.dp - statusBarPadding -
+                                TOP_BAR_HEIGHT.dp).coerceAtLeast(MIN_HEADER_TOP.dp),
                             onTabSelected = onTabSelected,
-                            modifier = Modifier
-                                .align(Alignment.TopCenter)
-                                .background(ProfileStyle.APP_BACKGROUND)
-                                .testTag("profile_tab_bar_floating"),
+                            onEditProfileClick = onEditProfileClick,
+                            onFollowersClick = onFollowersClick,
+                            onFollowingClick = onFollowingClick,
+                            onWalletAction = onWalletAction,
                         )
+                        if (showFloatingTabBar) {
+                            ProfileTabBar(
+                                selected = state.selectedTab,
+                                onTabSelected = onTabSelected,
+                                modifier = Modifier
+                                    .align(Alignment.TopCenter)
+                                    .background(ProfileStyle.APP_BACKGROUND)
+                                    .testTag("profile_tab_bar_floating"),
+                            )
+                        }
                     }
                 }
             }
@@ -148,15 +184,59 @@ fun ProfileScreen(
     }
 }
 
+/**
+ * 渐隐背景图（`ProfileBackground.tsx`）：宽 = 屏宽、1:1、
+ * 三段 alpha 遮罩（36% 前全显 → 90% 处 0.1 → 尾部 0）。
+ *
+ * 用 `DstIn` 混合精确复刻 RN 的 MaskedView + LinearGradient；
+ * `CompositingStrategy.Offscreen` 是让混合只作用于本层的前提。
+ * URL 为空走内置默认图（`user-profile.tsx:418-423` fallback 到 `profile_bg.png`，
+ * 资产已搬为 `ic_profile_bg_default`）。
+ */
+@Composable
+private fun ProfileBackgroundImage(url: String?, modifier: Modifier = Modifier) {
+    val maskedModifier = modifier
+        .fillMaxWidth()
+        .aspectRatio(1f)
+        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+        .drawWithContent {
+            drawContent()
+            drawRect(
+                brush = Brush.verticalGradient(
+                    BG_FADE_FULL to Color.Black,
+                    BG_FADE_LOW to Color.Black.copy(alpha = BG_FADE_LOW_ALPHA),
+                    1f to Color.Transparent,
+                ),
+                blendMode = BlendMode.DstIn,
+            )
+        }
+    if (url.isNullOrBlank()) {
+        Image(
+            painter = painterResource(R.drawable.ic_profile_bg_default),
+            contentDescription = null, // 纯装饰背景
+            contentScale = ContentScale.Crop,
+            modifier = maskedModifier,
+        )
+    } else {
+        AsyncImage(
+            model = HomeText.transformImageUrl(url),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = maskedModifier,
+        )
+    }
+}
+
 @Composable
 private fun ProfileGrid(
     state: ProfileState,
     gridState: LazyGridState,
+    headerTopPadding: Dp,
     onTabSelected: (ProfileTab) -> Unit,
     onEditProfileClick: () -> Unit,
-    onUidClick: () -> Unit,
     onFollowersClick: () -> Unit,
     onFollowingClick: () -> Unit,
+    onWalletAction: (ProfileWalletAction) -> Unit,
 ) {
     val tab = state.selectedTab
     LazyVerticalGrid(
@@ -173,10 +253,12 @@ private fun ProfileGrid(
             ProfileHeaderSection(
                 user = state.user,
                 stats = state.stats,
+                wallet = state.wallet,
+                topPadding = headerTopPadding,
                 onEditProfileClick = onEditProfileClick,
-                onUidClick = onUidClick,
                 onFollowersClick = onFollowersClick,
                 onFollowingClick = onFollowingClick,
+                onWalletAction = onWalletAction,
             )
         }
 
@@ -352,31 +434,64 @@ private val ProfileTab.emptyTextKey: String
     }
 
 /**
- * 顶部栏：只有一个设置入口（右侧）。
+ * 顶栏：左 UID（带复制图标）、右设置图标 —— 对齐 RN 悬浮 header 的静态形态
+ * （`user-profile.tsx:656-674` 自己视角 UID 在左，`700-730` 图标在右）。
+ * 滚动驱动的 UID 渐出 / 小头像渐入属后续增强包。
  *
- * ## ⚠️ GooglePlay 包**不显示** Discord 与 FollowUs 图标
+ * ## ⚠️ GooglePlay 包**不显示** Discord 与 More 图标
  *
  * `user-profile.tsx:707` 是 `{!isGooglePlay && (...)}` —— `isGooglePlay` 的定义是
  * `Platform.OS === 'android' && !isAndroidAPK && !isRuStore`（`constants/common.ts:18`，
  * 靠 applicationId 判渠道）。也就是 GooglePlay 包上**只剩设置图标**，
- * APK / RuStore 三个都显示。
- *
- * 本刀只做 GooglePlay 形态（当前构建的 flavor）。补另外两个渠道时要接一个
- * 渠道判定，不能照 iOS 或 APK 包无条件显示三个图标。
- * （RN 用的是图标资产；壳的设置图标资产未搬，先用文字入口 —— 换资产时
- * 把 "Settings" 从词条集合里撤掉。）
+ * APK / RuStore 两个渠道要多 Discord + More。本刀只做全渠道共有的设置图标；
+ * 补渠道差异时要接渠道判定，不能无条件显示三个。
  */
 @Composable
-private fun ProfileTopBar(onSettingsClick: () -> Unit, modifier: Modifier = Modifier) {
-    Box(modifier = modifier.fillMaxWidth().padding(horizontal = TOP_BAR_PADDING.dp)) {
-        Text(
-            text = rememberLocalizedString("Settings"),
-            color = ProfileStyle.TEXT_SECONDARY,
-            fontSize = TOP_BAR_FONT.sp,
+private fun ProfileTopBar(
+    userId: String?,
+    onUidClick: () -> Unit,
+    onSettingsClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .fillMaxWidth()
+            .height(TOP_BAR_HEIGHT.dp)
+            .padding(horizontal = TOP_BAR_PADDING.dp),
+    ) {
+        if (!userId.isNullOrBlank()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clickableNoRipple(onUidClick)
+                    .testTag("profile_uid"),
+            ) {
+                // ⚠️ `UID: ` 前缀**不进 i18n** —— RN 侧是裸文本不走 t()
+                //（`user-profile.tsx:665` 有 i18n-ignore 注释），翻了反而不对等。
+                // 截断规则在 ProfileText.formatUid（前 3 + 后 3）
+                Text(
+                    text = "UID: " + ProfileText.formatUid(userId),
+                    color = ProfileStyle.TEXT_SECONDARY,
+                    fontSize = UID_FONT.sp,
+                )
+                Image(
+                    painter = painterResource(R.drawable.ic_profile_uid_copy),
+                    contentDescription = null, // 与文字同一个点击目标，语义已由文字承担
+                    alpha = UID_COPY_ALPHA,
+                    modifier = Modifier
+                        .padding(start = UID_COPY_GAP.dp)
+                        .size(UID_COPY_ICON.dp),
+                )
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        Image(
+            painter = painterResource(R.drawable.ic_profile_setting),
+            contentDescription = rememberLocalizedString("Settings"),
             modifier = Modifier
-                .align(Alignment.CenterEnd)
+                .size(TOP_BAR_ICON.dp)
                 .clickableNoRipple(onSettingsClick)
-                .padding(vertical = TOP_BAR_PADDING.dp)
                 .testTag("profile_settings"),
         )
     }
@@ -409,7 +524,25 @@ private const val CT_MEMORY = "memory"
 private const val CT_CREATED = "created"
 
 private const val TOP_BAR_PADDING = 12
-private const val TOP_BAR_FONT = 14
+private const val TOP_BAR_HEIGHT = 44
+private const val TOP_BAR_ICON = 32
+private const val UID_FONT = 12
+private const val UID_COPY_ICON = 20
+private const val UID_COPY_GAP = 4
+private const val UID_COPY_ALPHA = 0.8f
+
+/**
+ * 头像行的屏顶锚点 250dp（`ProfileHeader.tsx:173` `paddingTop: 250 - headerOffset`
+ * 与悬浮 header 高度 `top + 50` 相加的定值）。
+ */
+private const val AVATAR_TOP_ANCHOR = 250
+private const val MIN_HEADER_TOP = 12
+
+// 遮罩三段（`ProfileBackground.tsx` locations [0.36, 0.9, 1] + alpha [1, 0.1, 0]）
+private const val BG_FADE_FULL = 0.36f
+private const val BG_FADE_LOW = 0.9f
+private const val BG_FADE_LOW_ALPHA = 0.1f
+
 private const val EMPTY_PADDING = 32
 private const val EMPTY_FONT = 14
 private const val TAB_ICON_SIZE = 24
