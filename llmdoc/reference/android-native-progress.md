@@ -12,9 +12,9 @@
 > ｜ **P7 Qt / P8 Sentry 已决定推迟到业务迁移后**（2026-08-11，见 §2.17）｜ **P9 未开始**
 > ｜ **原生登录页：邮箱验证码链路真机已验**（§2.20）—— Google/Apple 受 §12.8 签名指纹阻塞未接
 >
-> **W2 已开工**：五 Tab shell + Home 首屏接真实接口已落地（§2.23）——
-> **单测与构建全绿，主链路真机已验**（tab 切换 / 五个 series tab 真实列表 / 翻页；
-> 下拉刷新与性别筛选仍未验）。
+> **W2 进行中**：五 Tab shell + Home 首屏（§2.23，主链路真机已验）+ 标签筛选抽屉
+> 与 For You 冷启动种子（§2.24，**真机 `NOT RUN`**）。
+> Home 剩 banner / 彩蛋弹窗 / mp4 封面三项（前两项评估留 RN Surface）。
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
@@ -23,8 +23,8 @@
 - **波次进度**：W0 完成；W1 的契约层全部落地且已在 CI 组合验证（§2.22），只剩 §12 实例关闭链与 P9；P2 剩余/P3/P7/P8 均已决策推迟。**W2 已开工**：五 Tab + Home 首屏（§2.23）。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + **`analytics/`** + **`tabs/`** + **`pages/login/`、`pages/home/`**。**已有第一批业务代码**（登录页 + Home）。
 - **submodule**：pin `95760a6622424bc9be238e7790fdbf38fe7c7fb2`（远端分支 `feat/android-native`，**未合进 main/release**，按约定靠子模块指针引用）。W2 首包**不动 submodule**。
-- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W2 首包本机跑过同序列：lint 无新增、`assembleGooglePlayDebug`、**app 单测 431 条 + 桥单测 15 条，failures=0 / skipped=0**。release 权限数仍 **51**（未因 coil 增加）。
-- **不存在 / 未验**：Screen / ChatList / Profile 三个 Tab 仍是占位页；标签筛选抽屉是 stub（下一包）；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。P9 前生产路由白名单为空，ChatDetail 保持 disabled。真机侧**下拉刷新、性别筛选、进程重建恢复仍未验**（§2.23）。
+- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W2 两包本机都跑过同序列：lint 无新增、`assembleGooglePlayDebug`、**app 单测 474 条，failures=0 / skipped=0**。release 权限数仍 **51**（未因 coil 增加）。
+- **不存在 / 未验**：Screen / ChatList / Profile 三个 Tab 仍是占位页；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。P9 前生产路由白名单为空，ChatDetail 保持 disabled。真机侧**下拉刷新、性别筛选、进程重建恢复**（§2.23）与**筛选抽屉、冷启动种子**（§2.24）仍未验。
 
 ## 1. 波次状态
 
@@ -32,7 +32,7 @@
 | --- | --- | --- | --- | --- | --- |
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟡 **契约层已收口且 CI 已验；§12 关闭链 + P9 未完** | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17 已并） |
-| W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **进行中**：Login 邮箱链路已验、五 Tab + Home 首屏已落地（§2.20 / §2.23） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | — |
+| W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **进行中**：Login 邮箱链路已验、五 Tab + Home 首屏已落地、筛选抽屉 + 冷启动种子已落地（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面 | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 已并） |
 | W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | ⬜ 阻塞于 W2 | — | — |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | ⬜ 阻塞于 W3 | — | — |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
@@ -1121,9 +1121,23 @@ nightly，未建）、真机验收（§2.19 的 `NOT RUN` 依然成立）。
 已做：6 个系列（**含 World** —— 见下）、真实分页、下拉刷新（系统控件，对齐 RN 的
 Android 分支）、性别筛选与持久化、session 语义、翻页去重 + 限次续拉、5 个页面级埋点。
 
-未做（下一包）：冷启动缓存（`useForYouListCache` 的信封 + authScope 门禁 + 7 天 TTL）、
-标签筛选抽屉（382 行）、banner（946 行，方案 §8.1 评估留 RN Surface）、每日彩蛋弹窗、
-可见性驱动的曝光去重、mp4 动图封面。
+未做（下一包）：banner（946 行，方案 §8.1 评估留 RN Surface）、每日彩蛋弹窗、
+mp4 动图封面。
+
+✅ **标签筛选抽屉与 For You 冷启动种子已做**（§2.24）。
+
+⚠️ **「可见性驱动的曝光去重」这条原是误记，已核实不存在**（2026-08-12）：
+`character_page_exposure` 在 RN 侧由 **mount `useEffect`** 发出
+（`HomeCard.tsx:182-196`），**不经 viewability**。壳侧 `LaunchedEffect(item.stableKey)`
+已是同一语义，且 `LazyVerticalGrid` 的 `key = stableKey` 保证复用 slot 不重报
+（正是方案 §8.4「曝光去重集合与列表更新解耦」要求的）—— **这条已满足，不是待办**。
+
+`home.tsx` 里那两套 `viewabilityConfig` 各有别的用途，别误当成本事件的门禁：
+- `itemVisiblePercentThreshold: 1` → `VisibleItemsContext`，管 **mp4 封面播放**
+  （`AnimatedCoverMedia.tsx`）
+- `itemVisiblePercentThreshold: 50` + 连续可见 ≥100ms → **另一条批量上报管道**，
+  POST `/recommend_report/tracking/report_batch` 报停留时长
+  （`lib/recommendTracking/`），不是埋点事件。这条属推荐反馈，未迁，也不在 W2 范围
 
 #### ✅ 开放问题 §12.4 可以关闭：Android **显示** World
 
@@ -1211,6 +1225,75 @@ RN bundler 自己把它们打进 `drawable-mdpi` —— 说明 RN 完全不参�
 `HomeApiContractTest`(10，真实 HTTP 验实际请求体)、`HomeFeedParserTest`(15)、
 `ShellTabBarTest`(16)、`AnalyticsTest`(12，含"sink 内再次 track 不死锁")、
 `HomeFilterEnvelopeTest`(4)。
+
+### 2.24 W2 第二刀：标签筛选抽屉 + For You 冷启动种子（2026-08-12）
+
+W2 的 Home 收尾。**单测与构建全绿，真机 `NOT RUN`**。
+
+#### 标签筛选抽屉（`HomeFragment.onFilterClick` 的 stub 已删除）
+
+- `HomeTag` + `HomeTagParser`：`POST /character/tags`（**只发 `{nsfw}`**，不带
+  `language_code`）。按 `sort_order` 稳定排序；**`show_in_filter !== false`** 才进
+  筛选（不是 `== true` —— 字段缺失时要显示，写反会让标签集体消失）；
+  label 取 `desc` 回落 `alias`
+- `HomeFilterDrawer`：`Dialog` + 底部面板。高 630 / 圆角 20 / header 49 /
+  chip 30 高 18 内距 / 选中色 `#AD403B`（品牌主色）
+- ✓ 图标用 `Canvas` 两条线段画 —— RN 用 AntDesign 字体图标，壳没有那套字体，
+  为一个对勾引 `material-icons-extended`（约 2MB）不值得
+
+⚠️ **应用时机是「关闭抽屉」而不是「点确认按钮」**（`TipsyDrawer.tsx:338` 的 ✓ 调的
+就是 `handleClose`，`onClose` 回调里才 `setSelectedTags`）：点 ✓ / 点遮罩 / 按返回键
+**三者都应用**。照「确认才生效、点外面丢弃」实现与现网相反。
+
+**两处按系列分流**（都容易漏）：
+- Following / World 请求**不带 `tag_ids`**（`useHomeCharacterLists.ts:89`）
+- 它们的 `filterKey` 也**不含标签**，且 `onTagsApplied` 只清受影响系列的游标。
+  第一版写 `cursors.clear()`，被 `改标签不作废 World 已缓存的列表` 这条测试挡下
+
+#### For You 冷启动种子（方案 §4.6 的信封）
+
+`HomeForYouCache`：`{version, authScope, gender, savedAt, items}`，
+authScope 门禁（`guest` / `user:<id>`）+ 7 天 TTL + 只存**前 5 条**
+（`LOCKED_HOME_CACHE_SIZE = 5`）。**语言刻意不做门禁**（§4.6 的反直觉修正）。
+
+⚠️ **壳写自己的 key（`shell-for-you-seed`），不读也不写 RN 的 `for-you-cache`**。
+RN 那份是**裸数组**（`JSON.stringify(items)`，无信封）—— 已核实它因此
+**不按账号隔离 / 无 TTL / logout 不清**（全仓没有清该 key 的代码）。§4.6 要求壳不
+继承这三点，所以两份并存：读 RN 的等于继承跨账号复用，写 RN 的会让 RN 侧解析到
+非预期结构。代价是首次装壳版没有种子。
+
+存**原始响应片段**而非解析后模型 —— 读写都复用 `HomeFeedParser`，
+不必再写一套序列化（那会是第二个真值来源）。
+
+种子与真实数据的衔接（两条都是被测试逼出来的）：
+- 种子**不写进 `loaded`** —— `loadIfNeeded` 靠它判「已有数据就不拉」，
+  写进去会让首屏永远停在种子上、真实数据一次都不拉
+- `loadIfNeeded` **不能无条件置 `isInitialLoading = true`** —— 会在种子之上再盖
+  全屏 spinner，种子白读。第一版就是这么写的，`有种子时先显示种子且不显示 spinner`
+  这条挡下了
+
+真实第 0 页到达后种子作为**锁定头**在前、真实数据去重追加
+（对齐 `home.tsx:711` 的 `unionBy(cachedList, flatList)`）；下拉刷新丢弃种子
+（RN 的 `setShowForYouCache(false)` 同义）。
+
+#### 顺带修的两处文档失真
+
+1. 方案 §8.1「筛选持久化」称含 `tags` —— 实际 `config-persist-storage` 的 `tags` 是
+   **标签目录**，用户勾选存在**无 persist 中间件**的 `session.ts`
+   （已核实 `grep -c persist` = 0）。**杀进程后勾选归零，只有 gender 存活**。
+   照文档实现会让原生版比 RN 多记住筛选
+2. 「可见性驱动的曝光去重」是误记，见 §2.23 的更正 —— 该条已满足，不是待办
+
+#### 验证
+
+- app 单测 **474 条**（新增 43）、failures=0、**skipped=0**
+- lint 无新增（baseline 仍 5 条）、`assembleGooglePlayDebug` 通过
+- **真机 `NOT RUN`** —— 抽屉的打开/勾选/应用、种子的冷启动表现**都还没上真机**。
+  种子尤其需要真机验：它依赖 MMKV 实际可写，而 §2.23 刚修过
+  `LegacyMmkvStore` 全新安装不可用的缺陷
+
+新增测试：`HomeTagParserTest`(11)、`HomeForYouCacheTest`(16，三道门禁 + 坏数据)、
+`HomeViewModelTest` +16（标签分流 9 + 种子 7）。
 
 ## 3. 横切能力
 

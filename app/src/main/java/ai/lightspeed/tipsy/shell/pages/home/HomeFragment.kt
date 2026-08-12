@@ -60,6 +60,11 @@ class HomeFragment : Fragment() {
                 api = HomeApi(app.apiClient),
                 filters = HomeFilterStore(app.sharedMmkvStore),
                 languageProvider = { L10n.current },
+                cache = HomeForYouCache(MmkvHomeCacheStorage(app.sharedMmkvStore)),
+                // authScope 门禁的输入。⚠️ 用 currentUserId() 而不是缓存一个值：
+                // 换号后 ViewModel 可能还活着（Fragment 常驻），拿旧 uid 会让
+                // 新账号读到上一账号的种子
+                userIdProvider = { app.tokenStore.currentUserId() },
             ) as T
         }
     }

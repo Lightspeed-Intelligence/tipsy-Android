@@ -39,6 +39,12 @@ class HomeViewModel(
     /** 注入是为了测试；生产用 viewModelScope。 */
     private val scope: CoroutineScope? = null,
     /**
+     * For You 冷启动种子缓存。null = 不启用（测试里多数用例不关心种子）。
+     */
+    private val cache: HomeForYouCache? = null,
+    /** 当前 userId，用于 authScope 门禁。未登录返回 null。 */
+    private val userIdProvider: () -> String? = { null },
+    /**
      * 失败诊断日志。默认走 `android.util.Log`。
      *
      * 注入而非直接调用：JVM 单测里 `android.util.Log` 是抛 "not mocked" 的桩。
@@ -62,6 +68,16 @@ class HomeViewModel(
     private val loaded = mutableMapOf<HomeSeries, List<HomeFeedItem>>()
 
     /**
+     * 冷启动种子的「锁定头」（For You 专用）。
+     *
+     * 真实第 0 页到达时把它放在最前、再 union 真实数据（对齐 RN 的
+     * `unionBy(displayCachedList, flatList, key)`，`home.tsx:711`）——
+     * **不是直接丢弃种子**：那会让首屏内容在真实数据到达瞬间整屏跳变。
+     * 首页之后（翻页 / 刷新）不再参与，置 null。
+     */
+    private var lockedHead: List<HomeFeedItem> = emptyList()
+
+    /**
      * 当前在飞的请求。切系列/刷新时取消 ——
      * 不取消的表现是「切到 B 系列后 A 的响应到达并覆盖了 B 的列表」。
      */
@@ -73,7 +89,35 @@ class HomeViewModel(
     fun onFirstAppear() {
         Analytics.track("page_exposure", mapOf("page_name" to "discover", "platform" to "app"))
         trackSubpageExposure(_state.value.selectedSeries)
+        seedFromCache()
         loadIfNeeded(_state.value.selectedSeries)
+    }
+
+    /**
+     * 冷启动种子：先显示上次的前 5 条，避免白屏（方案 §4.6）。
+     *
+     * ⚠️ **只在 For You 且列表为空时**。种子是按 For You 拉的，显示在其他系列
+     * 下就是错数据。三个门禁（version / authScope / TTL）在 [HomeForYouCache] 里。
+     *
+     * 种子进 `items` 但**不建游标** —— 真实第一页到达后走 [mergeSeed] 覆盖，
+     * 不能让种子把 `nextPage` 顶成 1，否则首屏永远从第 2 页开始拉。
+     */
+    private fun seedFromCache() {
+        val cache = cache ?: return
+        if (_state.value.selectedSeries != HomeSeries.FOR_YOU) return
+        if (_state.value.items.isNotEmpty()) return
+        val seed = cache.read(
+            authScope = HomeForYouCache.authScopeOf(userIdProvider()),
+            gender = _state.value.gender,
+        )
+        if (seed.isEmpty()) return
+        // ⚠️ 种子**不写进 `loaded`** —— `loadIfNeeded` 用
+        // `loaded[series]?.isNotEmpty()` 判「已有数据就不拉」，写进去会让
+        // 首屏永远停在种子上、真实数据一次都不拉。存 [lockedHead] 里，
+        // 第 0 页到达时作为锁定头参与合并
+        lockedHead = seed
+        // isInitialLoading 置 false：有种子就不该显示全屏 spinner
+        _state.value = _state.value.copy(items = seed, isInitialLoading = false)
     }
 
     /** Tab 重新获得焦点（切走再切回）。RN 的 `isFocused` effect 会重报子页曝光。 */
@@ -311,7 +355,14 @@ class HomeViewModel(
     /** 没有数据且没在飞就拉第一页；已有数据直接返回（对齐 SWR 的缓存命中）。 */
     private fun loadIfNeeded(series: HomeSeries) {
         if (loaded[series]?.isNotEmpty() == true) return
-        _state.value = _state.value.copy(isInitialLoading = true, errorMessage = null)
+        _state.value = _state.value.copy(
+            // ⚠️ 已有种子（或任何已显示内容）时**不置** isInitialLoading ——
+            // 那会在种子之上再盖一个全屏 spinner，等于种子白读了。
+            // 这条被 `有种子时先显示种子且不显示 spinner` 逼出来：
+            // 第一版无条件置 true，种子刚设好就被覆盖
+            isInitialLoading = _state.value.items.isEmpty(),
+            errorMessage = null,
+        )
         load(series, isRefresh = false)
     }
 
@@ -355,10 +406,17 @@ class HomeViewModel(
             // （items 为空但 rawItemCount > 0 说明这页全是暂不支持的类型，还有下一页）
             val reachedEnd = page.hasMore?.let { !it } ?: (page.rawItemCount == 0)
 
-            val existing = if (isRefresh && cursor.nextPage == 0) {
-                emptyList()
-            } else {
-                loaded[series].orEmpty()
+            val existing = when {
+                // 下拉刷新的第 0 页：清空重来，**种子也不留**
+                // （用户主动刷新就是要新内容，RN 的 setShowForYouCache(false) 同义）
+                isRefresh && cursor.nextPage == 0 -> {
+                    lockedHead = emptyList()
+                    emptyList()
+                }
+                // 冷启动第 0 页：种子作为锁定头在前（`home.tsx:711` 的 unionBy 顺序），
+                // 真实数据去重后追加。种子里已有的角色不会重复出现
+                cursor.nextPage == 0 -> lockedHead
+                else -> loaded[series].orEmpty()
             }
             // 去重按 stableKey（含 requestId 的那个）。For You 翻页实测每页
             // 1~3 条重复，全量替换会让可见卡片重配（方案 §8.4 第 1 条）
@@ -377,6 +435,22 @@ class HomeViewModel(
                 hasReachedEnd = reachedEnd,
                 emptyAfterDedupeStreak = streak,
             )
+
+            // 写种子：只有 For You 的第 0 页（对齐 `useHomeCharacterLists.ts:163-169`
+            // 的 `forYouFirstPage` effect）。用**原始响应片段**而不是模型，见
+            // HomeForYouCache 类注释
+            if (series == HomeSeries.FOR_YOU && cursor.nextPage == 0) {
+                page.rawList?.let { raw ->
+                    cache?.write(
+                        authScope = HomeForYouCache.authScopeOf(userIdProvider()),
+                        gender = _state.value.gender,
+                        rawItems = raw,
+                    )
+                }
+                // 第 0 页已落地，锁定头的使命结束 —— 留着会让后续刷新把
+                // 旧种子又插回列表头
+                lockedHead = emptyList()
+            }
 
             if (series == _state.value.selectedSeries) {
                 _state.value = _state.value.copy(

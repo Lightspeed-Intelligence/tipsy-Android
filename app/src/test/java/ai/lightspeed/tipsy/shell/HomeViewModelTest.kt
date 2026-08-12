@@ -1,10 +1,12 @@
 package ai.lightspeed.tipsy.shell
 
 import ai.lightspeed.tipsy.shell.network.ApiException
+import ai.lightspeed.tipsy.shell.pages.home.HomeCacheStorage
 import ai.lightspeed.tipsy.shell.pages.home.HomeFeedItem
 import ai.lightspeed.tipsy.shell.pages.home.HomeFeedPage
 import ai.lightspeed.tipsy.shell.pages.home.HomeFeedSource
 import ai.lightspeed.tipsy.shell.pages.home.HomeFilters
+import ai.lightspeed.tipsy.shell.pages.home.HomeForYouCache
 import ai.lightspeed.tipsy.shell.pages.home.HomeGender
 import ai.lightspeed.tipsy.shell.pages.home.HomeSeries
 import ai.lightspeed.tipsy.shell.pages.home.HomeTag
@@ -565,22 +567,189 @@ class HomeViewModelTest {
         assertEquals(listOf("t1"), vm.state.value.selectedTagIds)
     }
 
+    // ── 冷启动种子 ────────────────────────────────────────
+
+    @Test
+    fun `有种子时先显示种子且不显示 spinner`() = runTest {
+        val api = RecordingApi()
+        api.pages = listOf(page(character("real")))
+        val storage = SeedStorage()
+        seed(storage, "a", "b")
+        val vm = viewModel(api, cache = cacheOf(storage))
+
+        vm.onFirstAppear()
+        // 还没 advance：种子应该已经在了（同步读盘）
+        assertEquals(2, vm.state.value.items.size)
+        assertTrue("有种子就不该显示全屏 spinner", !vm.state.value.isInitialLoading)
+    }
+
+    @Test
+    fun `种子不阻止真实请求`() = runTest {
+        // 种子若写进 loaded，loadIfNeeded 会判「已有数据」而永不请求 ——
+        // 表现是首屏永远停在上次的 5 条上
+        val api = RecordingApi()
+        api.pages = listOf(page(character("real")))
+        val storage = SeedStorage()
+        seed(storage, "a")
+        val vm = viewModel(api, cache = cacheOf(storage))
+
+        vm.onFirstAppear()
+        advanceUntilIdle()
+
+        assertEquals("必须仍发出第 0 页请求", 1, api.calls.size)
+        assertEquals(0, api.calls.single().page)
+    }
+
+    @Test
+    fun `真实数据到达后种子在前、真实数据追加`() = runTest {
+        // 对齐 RN 的 unionBy(cachedList, flatList)：种子在前，不是整屏跳变
+        val api = RecordingApi()
+        api.pages = listOf(page(character("real")))
+        val storage = SeedStorage()
+        seed(storage, "a")
+        val vm = viewModel(api, cache = cacheOf(storage))
+
+        vm.onFirstAppear()
+        advanceUntilIdle()
+
+        val keys = vm.state.value.items.map { it.stableKey }
+        assertEquals("种子应在最前", "r-a-a", keys.first())
+        assertTrue("真实数据应追加在后", keys.contains("real"))
+    }
+
+    @Test
+    fun `种子里已有的角色不重复出现`() = runTest {
+        val api = RecordingApi()
+        // 真实第 0 页里也含 a（用与种子相同的 stableKey）
+        api.pages = listOf(page(characterWithRequestId("a", "r-a"), character("real")))
+        val storage = SeedStorage()
+        seed(storage, "a")
+        val vm = viewModel(api, cache = cacheOf(storage))
+
+        vm.onFirstAppear()
+        advanceUntilIdle()
+
+        val keys = vm.state.value.items.map { it.stableKey }
+        assertEquals("a 只应出现一次", 1, keys.count { it == "r-a-a" })
+    }
+
+    @Test
+    fun `下拉刷新丢弃种子`() = runTest {
+        // 用户主动刷新就是要新内容（RN 的 setShowForYouCache(false) 同义）
+        val api = RecordingApi()
+        api.pages = listOf(page(character("real1")), page(character("real2")))
+        val storage = SeedStorage()
+        seed(storage, "a")
+        val vm = viewModel(api, cache = cacheOf(storage))
+        vm.onFirstAppear()
+        advanceUntilIdle()
+
+        vm.onRefresh()
+        advanceUntilIdle()
+
+        val keys = vm.state.value.items.map { it.stableKey }
+        assertTrue("刷新后种子不应还在", !keys.contains("r-a-a"))
+    }
+
+    @Test
+    fun `第 0 页成功后写入种子`() = runTest {
+        val api = RecordingApi()
+        api.pages = listOf(page(character("real")))
+        val storage = SeedStorage()
+        val vm = viewModel(api, cache = cacheOf(storage))
+
+        vm.onFirstAppear()
+        advanceUntilIdle()
+
+        assertTrue("应写出种子", storage.value != null)
+    }
+
+    @Test
+    fun `非 For You 系列不读种子`() = runTest {
+        // 种子是按 For You 拉的，显示在其他系列下就是错数据
+        val api = RecordingApi()
+        api.pages = listOf(page(character("a")), page(character("weekly")))
+        val storage = SeedStorage()
+        seed(storage, "seeded")
+        val vm = viewModel(api, cache = cacheOf(storage))
+        vm.onFirstAppear()
+        advanceUntilIdle()
+
+        vm.onSeriesSelected(HomeSeries.WEEKLY_PICKS)
+        advanceUntilIdle()
+
+        val keys = vm.state.value.items.map { it.stableKey }
+        assertTrue("Weekly Picks 不该出现种子", !keys.contains("r-seeded-seeded"))
+    }
+
     // ── fixture ───────────────────────────────────────────
+
+    /** 内存版种子存储。 */
+    private class SeedStorage(var value: String? = null) : HomeCacheStorage {
+        override fun getString(key: String): String? = value
+        override fun putString(key: String, value: String): Boolean {
+            this.value = value
+            return true
+        }
+    }
+
+    private fun cacheOf(storage: SeedStorage) =
+        HomeForYouCache(storage, nowMs = { NOW }, logWarn = { _, _ -> })
+
+    /** 往 storage 里塞一份 guest / ALL 的有效种子。 */
+    private fun seed(storage: SeedStorage, vararg ids: String) {
+        val raw = org.json.JSONArray()
+        ids.forEach { id ->
+            raw.put(
+                org.json.JSONObject(
+                    """{"type":"character","request_id":"r-$id","data":{"character":{
+                       "character_id":"$id","nickname":"n","introduction":"",
+                       "image_url":"u","creator_id":"c"}}}""",
+                ),
+            )
+        }
+        cacheOf(storage).write("guest", HomeGender.ALL, raw)
+    }
 
     private fun TestScope.viewModel(
         api: RecordingApi,
         languageProvider: () -> String = { "en" },
+        cache: HomeForYouCache? = null,
     ) = HomeViewModel(
         api = api,
         filters = FakeFilters(),
         languageProvider = languageProvider,
         scope = this,
+        cache = cache,
+        // 种子测试统一用 guest 作用域
+        userIdProvider = { null },
         // 单测里不碰 android.util.Log（那是抛 "not mocked" 的桩）
         logWarn = { _, _ -> },
     )
 
-    private fun page(vararg items: HomeFeedItem) =
-        HomeFeedPage(items = items.toList(), rawItemCount = items.size, hasMore = null)
+    /**
+     * 一页数据。
+     *
+     * `rawList` 带一个占位数组 —— 种子写入需要它非空（生产里由
+     * `HomeFeedParser.parseForYou` 填真实响应片段）。给 null 的话
+     * 「第 0 页后写种子」永远不触发，测试会假绿。
+     */
+    private fun page(vararg items: HomeFeedItem) = HomeFeedPage(
+        items = items.toList(),
+        rawItemCount = items.size,
+        hasMore = null,
+        rawList = org.json.JSONArray().apply {
+            items.forEach { item ->
+                put(
+                    org.json.JSONObject(
+                        """{"type":"character","data":{"character":{
+                           "character_id":"${item.stableKey}","nickname":"n",
+                           "introduction":"","image_url":"u","creator_id":"c"}}}""",
+                    ),
+                )
+            }
+        },
+    )
 
     private fun character(id: String) = HomeFeedItem.Character(
         characterId = id,
@@ -600,6 +769,17 @@ class HomeViewModelTest {
         isChatted = false,
         recommendation = null,
     )
+
+    /** 带 requestId 的角色 —— stableKey 变成 `${requestId}-${id}`，用于测种子去重。 */
+    private fun characterWithRequestId(id: String, requestId: String) =
+        character(id).copy(
+            recommendation = HomeFeedItem.Recommendation(
+                requestId = requestId,
+                expId = null,
+                position = 0,
+                sessionId = "s",
+            ),
+        )
 
     private fun world(id: String) = HomeFeedItem.World(
         projectId = id,
@@ -678,4 +858,10 @@ class HomeViewModelTest {
             return true
         }
     }
+
+    private companion object {
+        /** 种子测试的固定"当前时间"。任意值都行，只要读写用同一个。 */
+        const val NOW = 1_000_000L
+    }
+
 }
