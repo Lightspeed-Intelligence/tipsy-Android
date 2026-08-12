@@ -29,6 +29,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import coil3.compose.LocalPlatformContext
+import coil3.request.ImageRequest
+import coil3.request.transformations
 
 /**
  * 记忆 tab 的单列大卡（`PlotItem.tsx` 的展示部分）。
@@ -41,15 +44,14 @@ import coil3.compose.AsyncImage
  *   stub 抽屉那次真机误判的形态。
  * - **审核失败的 Edit 按钮不接**：编辑/删除动作属后续「卡片菜单」包
  *   （方案 §8.1 卡片菜单行）。
- * - **NSFW 模糊不做**：RN 对 `!nsfw && plot.nsfw` 盖 BlurView
- *   （`PlotItem.tsx:47,170`）。与 [ProfileGridItem] 的 NSFW 注释同一个待决事项
- *   （Compose 模糊要 `RenderEffect`/API 31+，minSdk 24），两处要一起做。
  *
  * ## 布局对照（`PlotItem.tsx:334-`）
  *
  * 高 340 / 圆角 10 / 底 margin 8；背景图 = `character.image_url` 全出血；
  * RN 的两层压暗渐变（`159-167`）近似成一层三段渐变，目的一样 ——
- * 白字在任意封面上可读。审核状态点的 SVG 资产未搬，本刀文字版。
+ * 白字在任意封面上可读。`!nsfw偏好 && plot.nsfw` 时背景模糊
+ * （`PlotItem.tsx:47,170`，P4 起与创作卡同一套 [CoverBlurTransformation]，
+ * nsfw 偏好恒 false → 18+ 记忆一律模糊）。审核状态点的 SVG 资产未搬，本刀文字版。
  */
 @Composable
 fun ProfileMemoryCard(item: ProfileMemoryItem, modifier: Modifier = Modifier) {
@@ -63,8 +65,16 @@ fun ProfileMemoryCard(item: ProfileMemoryItem, modifier: Modifier = Modifier) {
     ) {
         // 背景图用 image_url —— face_url 是头像位，两个字段别混（见 item KDoc）
         if (!item.characterImageUrl.isNullOrBlank()) {
+            val url = HomeText.transformImageUrl(item.characterImageUrl)
             AsyncImage(
-                model = HomeText.transformImageUrl(item.characterImageUrl),
+                model = if (item.nsfw) {
+                    ImageRequest.Builder(LocalPlatformContext.current)
+                        .data(url)
+                        .transformations(CoverBlurTransformation())
+                        .build()
+                } else {
+                    url
+                },
                 contentDescription = item.title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),

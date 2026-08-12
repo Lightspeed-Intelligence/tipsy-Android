@@ -3,10 +3,12 @@ package ai.lightspeed.tipsy.shell
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileCreatedItem
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileCreatedPage
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileItemType
+import ai.lightspeed.tipsy.shell.pages.profile.ProfileReviewBadge
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileStats
 import ai.lightspeed.tipsy.shell.user.CurrentUser
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -306,4 +308,131 @@ class ProfileParserTest {
     fun `data 为 null 时用户返回 null`() {
         assertNull(CurrentUser.parse(null))
     }
+
+    // ── P4：角标与遮罩派生（值都取自嵌套层）────────────
+
+    @Test
+    fun `审核角标 rejected 优先于 pending`() {
+        // minor_review_status 与 review_stage 都可能触发，rejected 吃掉 pending
+        //（CharacterGridItem.tsx:355-374 的判定顺序）
+        val both = createdItem(
+            """{"item_type":"character","item_id":"a",
+                "character":{"nickname":"n","minor_review_status":"final_rejected",
+                             "review_stage":"un_reviewed"}}""",
+        )
+        assertEquals(ProfileReviewBadge.REJECTED, both.reviewBadge)
+
+        val pending = createdItem(
+            """{"item_type":"character","item_id":"a",
+                "character":{"nickname":"n","review_stage":"un_reviewed"}}""",
+        )
+        assertEquals(ProfileReviewBadge.PENDING, pending.reviewBadge)
+
+        val approved = createdItem(
+            """{"item_type":"character","item_id":"a",
+                "character":{"nickname":"n","review_stage":"pass",
+                             "minor_review_status":"approved"}}""",
+        )
+        assertNull("通过态不渲染角标", approved.reviewBadge)
+    }
+
+    @Test
+    fun `封面模糊三条件任一命中`() {
+        // ① nsfw（壳内偏好恒 false → 18+ 一律模糊）
+        assertTrue(
+            createdItem(
+                """{"item_type":"character","item_id":"a",
+                    "character":{"nsfw":true}}""",
+            ).shouldBlurCover,
+        )
+        // ② final_hit & 8
+        assertTrue(
+            createdItem(
+                """{"item_type":"character","item_id":"a",
+                    "character":{"final_hit":10}}""",
+            ).shouldBlurCover,
+        )
+        // ③ 未成年审核拦截
+        assertTrue(
+            createdItem(
+                """{"item_type":"character","item_id":"a",
+                    "character":{"minor_review_status":"pending"}}""",
+            ).shouldBlurCover,
+        )
+        // 全不中不模糊（final_hit 缺失按 0）
+        assertFalse(
+            createdItem(
+                """{"item_type":"character","item_id":"a",
+                    "character":{"nsfw":false,"review_stage":"pass"}}""",
+            ).shouldBlurCover,
+        )
+    }
+
+    @Test
+    fun `final_hit 小于 2 整卡不可用`() {
+        assertTrue(
+            createdItem(
+                """{"item_type":"character","item_id":"a","character":{"final_hit":1}}""",
+            ).isMaskedUnavailable,
+        )
+        assertFalse(
+            createdItem(
+                """{"item_type":"character","item_id":"a","character":{"final_hit":2}}""",
+            ).isMaskedUnavailable,
+        )
+        // ⚠️ 缺失不算不可用（RN 是 `final_hit != null && < 2`）——
+        // 反过来写会把老数据整页蒙掉
+        assertFalse(
+            createdItem(
+                """{"item_type":"character","item_id":"a","character":{}}""",
+            ).isMaskedUnavailable,
+        )
+    }
+
+    @Test
+    fun `18+ 标签只在审核通过时显示`() {
+        // 待审时左上位置属于审核角标，18+ 不重复出现（CharacterGridItem.tsx:528-531）
+        val pending = createdItem(
+            """{"item_type":"character","item_id":"a",
+                "character":{"nsfw":true,"review_stage":"un_reviewed"}}""",
+        )
+        assertFalse(pending.showNsfwTag)
+
+        val passed = createdItem(
+            """{"item_type":"character","item_id":"a",
+                "character":{"nsfw":true,"review_stage":"pass"}}""",
+        )
+        assertTrue(passed.showNsfwTag)
+    }
+
+    @Test
+    fun `置顶与私密与消息数取嵌套层`() {
+        val item = createdItem(
+            """{"item_type":"character","item_id":"a",
+                "character":{"nickname":"n","is_pinned":true,"is_public":false,
+                             "total_messages":7,
+                             "stats":{"total_messages":42,"exposure_count":9}}}""",
+        )
+        assertTrue(item.isPinned)
+        assertFalse(item.isPublic)
+        assertEquals("stats 优先于顶层 total_messages", 42L, item.messageCount)
+        assertEquals(9L, item.exposureCount)
+        assertTrue("story 类型标记", createdItem(
+            """{"item_type":"character","item_id":"a","character":{"character_type":2}}""",
+        ).showStoryTag)
+    }
+
+    @Test
+    fun `is_public 缺失按公开处理`() {
+        // 多画一把锁比漏画显眼 —— 缺失按 true（不画锁），见 parse 注释
+        val item = createdItem(
+            """{"item_type":"character","item_id":"a","character":{"nickname":"n"}}""",
+        )
+        assertTrue(item.isPublic)
+        assertFalse(item.isPinned)
+        assertEquals(0L, item.messageCount)
+    }
+
+    private fun createdItem(json: String): ProfileCreatedItem =
+        ProfileCreatedItem.parse(JSONObject(json))!!
 }

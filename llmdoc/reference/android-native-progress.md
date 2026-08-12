@@ -23,7 +23,7 @@
 - **波次进度**：W0 完成；W1 的契约层全部落地且已在 CI 组合验证（§2.22），只剩 §12 实例关闭链与 P9；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 已开工**：Profile 第一刀（§2.25）。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`**。
 - **submodule**：pin `95760a6622424bc9be238e7790fdbf38fe7c7fb2`（远端分支 `feat/android-native`，**未合进 main/release**，按约定靠子模块指针引用）。W2 首包与 W3 Profile 第一刀**都不动 submodule**（Profile 词条已全在 SHELL_KEYS，§2.25）。
-- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W3 侧本机同序列：lint 无新增、`assembleGooglePlayDebug`/`assembleDirectApkDebug`、**app 单测 581 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿。Profile 真机七项冒烟 + 头部视觉截图对照 + 钱包三出口拒绝日志均 PASS（§2.25–§2.27）。
+- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W3 侧本机同序列：lint 无新增、`assembleGooglePlayDebug`/`assembleDirectApkDebug`、**app 单测 590 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿。Profile 真机验证累计：七项冒烟、头部视觉对照、钱包三出口拒绝、卡片角标与模糊对照（§2.25–§2.28）。
 - **不存在 / 未验**：Screen / ChatList 两个 Tab 仍是占位页（Profile 已是真页，页内角色卡/收藏/点赞三个 tab 走 "Coming soon" 占位）；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。P9 前生产路由白名单为空，ChatDetail 保持 disabled。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
 
 ## 1. 波次状态
@@ -33,7 +33,7 @@
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟡 **契约层已收口且 CI 已验；§12 关闭链 + P9 未完** | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17 已并） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
-| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 第一刀 + P2 头部视觉 + P3 钱包卡已落地并真机验证（§2.25–§2.27）；后续包 P4 卡片角标 / P5 菜单动作 / P6 三 tab；ChatList / Search / Settings 未动 | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #21 已并；#22 待并；P3 在 `feat/android-w3-profile-p2` 追加） |
+| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 第一刀 + P2 头部 + P3 钱包 + P4 卡片角标/模糊已落地并真机验证（§2.25–§2.28）；后续包 P5 菜单动作 / P6 三 tab / P7 增强；ChatList / Search / Settings 未动 | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #21/#22 已并；P4 在 `feat/android-w3-profile-p4`） |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | ⬜ 阻塞于 W3 | — | — |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
 
@@ -1583,6 +1583,54 @@ cancel。被打断且未完成首屏的 tab **整体复位**（否则 `isInitial
 - **NOT RUN**：`has_inf_msg` 显示 100 的分支、非 Free 档位的蓝色数字与档位名
   （测试账号 Free 且无订阅 —— 纯数据分支，解析侧已有 JVM 覆盖）、ⓘ 气泡的
   Popup 视觉（点击路径无真机截图，组件为标准 Compose Popup）
+
+### 2.28 W3 Profile P4：卡片角标 + 封面模糊（2026-08-12）
+
+创作网格与线上的最后一块显著差距。`ProfileCreatedItem` 补 9 个字段与 5 个
+派生判定，`ProfileGridItem` 重写为五层结构，`CoverBlurTransformation` 落地。
+
+- **⚠️ 订正第一刀的一处解析错**：`review_stage` 等状态字段 RN 从**嵌套对象**取
+  （`character.review_stage`），第一刀解析的顶层同名字段实测不总在 ——
+  已改为嵌套优先、顶层兜底（`nestedThenTop`）。
+- **左上角标三选一**（优先级 = RN 的三元链，`CharacterGridItem.tsx:780-812`）：
+  审核角标（rejected/pending，approved **不渲染**）＞ 私密锁（`!is_public`）＞
+  story/18+ 标签。18+ 标签只在**审核通过**时出现（待审时位置属于审核角标）。
+  右上：置顶 Pin。rejected 判定并合 `minor_review_status`（rejected/
+  final_rejected）与 `review_stage=failed`，rejected 优先于 pending。
+- **封面模糊三条件**（`CharacterGridItem.tsx:571-577` 注释照录）：
+  ① nsfw（壳内偏好恒 false → **18+ 一律模糊**）② `final_hit & 8`
+  ③ 未成年审核拦截。记忆卡（`plot.nsfw`）同一套变换复用。
+- **模糊选型：Coil 位图变换，不是 `Modifier.blur`** —— 后者 RenderEffect
+  只在 API 31+ 生效、**低版本静默不模糊**，而 minSdk 24 是冒烟矩阵真实一档，
+  18+ 封面在低版本露出是内容合规问题。实现走了三版：一步 16× 上采样有块状
+  锯齿、两段式仍不够 → **渐进 2× 逐级上采样**（叠加双线性近似高斯）真机
+  对照与 BlurView 磨砂观感一致。cacheKey 带版本号，模糊与原图各占缓存。
+- **`final_hit < 2` 整卡不可用遮罩**：锁 + `Currently unavailable`。
+  ⚠️ 该词条是 key≠value 实例（en 值 "More to come"）——正好验证「运行时
+  不得拿 key 当英文文案」。**缺失不算不可用**（RN 是 `!= null && < 2`，
+  反过来会把老数据整页蒙掉）。
+- **计数行**：曝光数仅 character 卡且 `is_public`（`stats.exposure_count`）；
+  消息数 character 卡走 `formatCountMaxThreeDigits`（**第六套数字规则**：
+  三位有效数字 K/M/B/T/Q，`4730 → 4.73K` 两位小数、`999950 → 1M` 晋位，
+  行为对齐 RN 自带单测），story/game 卡走 `formatNumber`（= Home 的
+  `formatMessageCount`，直接复用）。`stats.total_messages` 优先于顶层。
+- **`is_public` 缺失按 true**（不画锁）：多画锁比漏画显眼，方向刻意。
+- 资产 8 个：pending/fail/lock/Pin/message/tag_story/tag_18_plus/exposure 直搬。
+- **仍不做**：⋮ 菜单与动作（P5，届时菜单按钮必须可点击组件吃事件——iOS 的
+  点击穿透坑）、卡片点击进详情（目标页未启用）、winner 徽章与水印（运营
+  配置源）。
+
+#### 验证
+
+- app 单测 **590 条**（+9：角标优先级/模糊三条件/final_hit 边界/18+ 仅过审/
+  嵌套层取值/is_public 缺省 + 计数格式化 3）、failures=0、skipped=0；
+  lint 无新增（`Bitmap.scale` KTX 替换后）；googlePlay + directApk assemble 通过
+- **真机截图对照 `PASS`**（同 §2.25 环境，账号 6 创作含全部形态）：
+  Pending 徽标（黑胶囊+沙漏）、置顶 Pin 右上、私密锁 + 封面磨砂模糊
+  （Leeke 卡与线上观感一致）、评论数、story 卡创作者名注①，五层结构与线上同构
+- **NOT RUN**：rejected 徽标（账号无被驳内容）、`final_hit` 遮罩与 &8 模糊
+  （无命中数据）、game 卡（账号无 game）—— 判定全部有 JVM 覆盖，纯数据分支
+- 注①：story 卡的创作者名是 P4 前已有的底行内容，本包未动它
 
 ## 3. 横切能力
 
