@@ -13,7 +13,7 @@
 > ｜ **原生登录页：邮箱验证码链路真机已验**（§2.20）—— Google/Apple 受 §12.8 签名指纹阻塞未接
 >
 > **W2 进行中**：五 Tab shell + Home 首屏（§2.23，主链路真机已验）+ 标签筛选抽屉
-> 与 For You 冷启动种子（§2.24，**真机 `NOT RUN`**）。
+> 与 For You 冷启动种子（§2.24，**抽屉真机已验；种子写入门禁与离线渲染未验**）。
 > Home 剩 banner / 彩蛋弹窗 / mp4 封面三项（前两项评估留 RN Surface）。
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
@@ -24,7 +24,7 @@
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + **`analytics/`** + **`tabs/`** + **`pages/login/`、`pages/home/`**。**已有第一批业务代码**（登录页 + Home）。
 - **submodule**：pin `95760a6622424bc9be238e7790fdbf38fe7c7fb2`（远端分支 `feat/android-native`，**未合进 main/release**，按约定靠子模块指针引用）。W2 首包**不动 submodule**。
 - **已验证**：G1 在 main 上 22 步全绿（§2.22）。W2 两包本机都跑过同序列：lint 无新增、`assembleGooglePlayDebug`、**app 单测 474 条，failures=0 / skipped=0**。release 权限数仍 **51**（未因 coil 增加）。
-- **不存在 / 未验**：Screen / ChatList / Profile 三个 Tab 仍是占位页；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。P9 前生产路由白名单为空，ChatDetail 保持 disabled。真机侧**下拉刷新、性别筛选、进程重建恢复**（§2.23）与**筛选抽屉、冷启动种子**（§2.24）仍未验。
+- **不存在 / 未验**：Screen / ChatList / Profile 三个 Tab 仍是占位页；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。P9 前生产路由白名单为空，ChatDetail 保持 disabled。真机侧**下拉刷新、性别筛选、进程重建恢复**（§2.23）与**种子写入门禁、离线渲染种子**（§2.24）仍未验；§2.24 的筛选抽屉本身已验。
 
 ## 1. 波次状态
 
@@ -32,7 +32,7 @@
 | --- | --- | --- | --- | --- | --- |
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟡 **契约层已收口且 CI 已验；§12 关闭链 + P9 未完** | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17 已并） |
-| W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **进行中**：Login 邮箱链路已验、五 Tab + Home 首屏已落地、筛选抽屉 + 冷启动种子已落地（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面 | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 已并） |
+| W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **进行中**：Login 邮箱链路已验、五 Tab + Home 首屏已落地、筛选抽屉 + 冷启动种子已落地（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面 | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 已并；**PR #20 待并**：抽屉 + 种子 + 标签污染种子的修复） |
 | W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | ⬜ 阻塞于 W2 | — | — |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | ⬜ 阻塞于 W3 | — | — |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
@@ -1228,7 +1228,16 @@ RN bundler 自己把它们打进 `drawable-mdpi` —— 说明 RN 完全不参�
 
 ### 2.24 W2 第二刀：标签筛选抽屉 + For You 冷启动种子（2026-08-12）
 
-W2 的 Home 收尾。**单测与构建全绿，真机 `NOT RUN`**。
+W2 的 Home 收尾。**单测与构建全绿**（476 条）。真机分两半：
+
+- ✅ **已验**（Pixel 10 模拟器 / Android 17）：抽屉拉取并渲染真实标签、选中高亮、
+  关抽屉后列表收敛到筛选结果
+- 🔴 **未验**：「选了标签不写种子」与「离线冷启动渲染种子」。⚠️ 我第一次报的
+  「已在真机确认」是**无效的** —— 为清种子删了 `mmkv.default`，那是 app 共用的
+  MMKV store（`token-storage` 也在里面），会话被清空、应用重启到登录页，
+  后续盲点坐标全落在登录页上，而我把登出后写的 `guest` 信封读成了通过。
+  **清种子要用下拉刷新**（`isRefresh && nextPage == 0` 会清 `lockedHead`），
+  不要删共享 store
 
 #### 标签筛选抽屉（`HomeFragment.onFilterClick` 的 stub 已删除）
 
@@ -1264,6 +1273,23 @@ RN 那份是**裸数组**（`JSON.stringify(items)`，无信封）—— 已核�
 
 存**原始响应片段**而非解析后模型 —— 读写都复用 `HomeFeedParser`，
 不必再写一套序列化（那会是第二个真值来源）。
+
+⚠️ **信封刻意不含 tags，代价是「选了标签时不写种子」**（2026-08-12 自测发现，
+PR #20 修）。写进去也能当门禁，但那样带标签这一次的种子对下次无标签的冷启动
+永远失效，等于白存 —— 所以选择不写。
+
+这条不是洁癖，缺了它是真缺陷：标签勾选存在**无 persist 的 session store**，
+杀进程后归零，于是「筛选出的 2 条」会被当作未筛选的 For You 首屏渲染，
+**三道门禁全过、本地完全看不出异常**。改前真机抓到两份信封作证 ——
+12:52 未筛选 5 条，12:57 应用 Action 后只剩 2 条却仍标着 `gender: All`。
+
+同一处还有第二个缺陷：`onTagsApplied` 里必须丢掉 `lockedHead`。合并列表时读
+`lockedHead` **早于**第 0 页落地后清空它，所以首屏失败（种子保留 —— 失败不清
+列表是对的）之后改标签，那几条未筛选的角色会混进筛选结果，用户无从分辨。
+
+**RN 侧同样有这两个缺陷**：`getForYouListReq` 带 `tag_ids`
+（`useHomeCharacterLists.ts:59`），而 cache 写入 effect 只看 `forYouFirstPage`
+变化、不看筛选状态（同文件 `163-169`）。按 §4.6 壳不继承缓存缺陷。
 
 种子与真实数据的衔接（两条都是被测试逼出来的）：
 - 种子**不写进 `loaded`** —— `loadIfNeeded` 靠它判「已有数据就不拉」，
