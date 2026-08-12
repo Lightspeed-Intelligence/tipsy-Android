@@ -40,35 +40,32 @@ enum class ProfileTab(
         iconSelected = R.drawable.ic_profile_tab_char_press,
     ),
 
-    /** 记忆（plot）—— 本刀实现（[ProfileMemoryItem]）。 */
+    /** 记忆（plot）—— 已实现（[ProfileMemoryItem]）。 */
     MEMORY(
         pageSize = 20,
         icon = R.drawable.ic_profile_tab_memory,
         iconSelected = R.drawable.ic_profile_tab_memory_press,
     ),
 
-    /** 角色卡 —— 后续包。 */
+    /** 角色卡 —— P6 实现（[ProfileRoleCardItem]，单列横条卡）。 */
     ROLE_CARD(
         pageSize = 10,
         icon = R.drawable.ic_profile_tab_rolecard,
         iconSelected = R.drawable.ic_profile_tab_rolecard_press,
     ),
 
-    /** 收藏 —— 后续包。 */
+    /** 收藏 —— P6 实现（[ProfileFavoriteItem]，⚠️ 到底判定走**页数**轨）。 */
     FAVORITES(
         pageSize = 20,
         icon = R.drawable.ic_profile_tab_favor,
         iconSelected = R.drawable.ic_profile_tab_favor_press,
     ),
 
-    /** 点赞 —— 后续包。 */
+    /** 点赞 —— P6 实现（复用 [ProfileFavoriteItem]，接口不同响应同形）。 */
     LIKED(
         pageSize = 20,
         icon = R.drawable.ic_profile_tab_like,
         iconSelected = R.drawable.ic_profile_tab_like_press,
     ),
     ;
-
-    /** 本刀是否已接数据源；未接的 tab 走"敬请期待"占位而不是空转 loading。 */
-    val isImplemented: Boolean get() = this == CREATED || this == MEMORY
 }

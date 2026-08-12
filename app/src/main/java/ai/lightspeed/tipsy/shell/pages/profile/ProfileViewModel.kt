@@ -162,8 +162,6 @@ class ProfileViewModel(
      *
      * 当前 tab 保留旧内容直到新数据到达（`isRefreshing` 而非清空）——
      * 清空会让下拉时整屏闪白，且失败后用户什么都看不到（同 `HomeViewModel.onRefresh`）。
-     *
-     * 占位 tab（未接数据源）上也能下拉：只刷用户信息与统计，完成即收圈。
      */
     fun onRefresh() {
         if (_state.value.isRefreshing) return
@@ -174,16 +172,9 @@ class ProfileViewModel(
             isRefreshing = true,
             paging = current.paging.filterKeys { it == tab },
         )
-        val statsJob = refreshUserAndStats()
-        if (tab.isImplemented) {
-            updatePaging(tab) { it.copy(errorMessage = null) }
-            loadPages(tab, fromPage = 0)
-        } else {
-            coroutineScope.launch {
-                statsJob.join()
-                _state.value = _state.value.copy(isRefreshing = false)
-            }
-        }
+        refreshUserAndStats()
+        updatePaging(tab) { it.copy(errorMessage = null) }
+        loadPages(tab, fromPage = 0)
     }
 
     /**
@@ -211,7 +202,7 @@ class ProfileViewModel(
     fun onLoadMore() {
         val s = _state.value
         val tab = s.selectedTab
-        if (!tab.isImplemented || s.isRefreshing) return
+        if (s.isRefreshing) return
         val p = s.pagingOf(tab)
         if (!p.hasLoadedOnce || p.hasReachedEnd || p.isInitialLoading || p.isLoadingMore) return
         if (p.emptyAfterDedupeStreak >= ProfileTabPaging.MAX_EMPTY_DEDUPE_STREAK) return
@@ -223,7 +214,6 @@ class ProfileViewModel(
     // ── 内部 ────────────────────────────────────────
 
     private fun loadFirstPageIfNeeded(tab: ProfileTab) {
-        if (!tab.isImplemented) return
         val p = _state.value.pagingOf(tab)
         // hasLoadedOnce 而不是 items.isEmpty()：空列表（total=0）也算已加载，
         // 否则每次切回来都会为一个必然空的 tab 重发请求
@@ -295,10 +285,12 @@ class ProfileViewModel(
                 items = merged,
                 nextPage = pageIndex + 1,
                 total = page.total,
+                totalIsPages = page.totalIsPages,
                 emptyAfterDedupeStreak = streak,
                 hasLoadedOnce = true,
             )
-            val done = updated.reachedEnd(merged.size)
+            // 页数轨的 pagesLoaded = 已完成的页数 = pageIndex + 1（0-based）
+            val done = updated.reachedEnd(merged.size, pagesLoaded = pageIndex + 1)
             updatePaging(tab) { updated.copy(hasReachedEnd = done) }
             if (_state.value.isRefreshing) {
                 _state.value = _state.value.copy(isRefreshing = false)
@@ -312,8 +304,8 @@ class ProfileViewModel(
     }
 
     /**
-     * 归一化：不同 tab 的响应形状不同（创作是内联嵌套对象、记忆是关系型 join），
-     * 但翻页壳只需要 `items + total`。
+     * 归一化：不同 tab 的响应形状不同（创作是内联嵌套对象、记忆是关系型 join、
+     * 收藏/点赞的 total 是**页数**），但翻页壳只需要 `items + total (+量纲)`。
      */
     private suspend fun fetchPage(tab: ProfileTab, page: Int): TabPage = when (tab) {
         ProfileTab.CREATED ->
@@ -324,10 +316,19 @@ class ProfileViewModel(
             api.fetchMemoryPage(page = page)
                 .let { TabPage(it.items, it.total) }
 
-        // 走到这里说明 isImplemented 的判断被绕过了 —— 显式炸掉让实现错误可见
-        //（同 Router 对未接线分支的处理），不要静默返回空页
-        ProfileTab.ROLE_CARD, ProfileTab.FAVORITES, ProfileTab.LIKED ->
-            error("${tab.name} 未接数据源却发起了分页请求")
+        ProfileTab.ROLE_CARD ->
+            api.fetchRoleCardPage(page = page)
+                .let { TabPage(it.items, it.total) }
+
+        // ⚠️ totalIsPages：这两个接口给的是 total_pages，
+        // 判到底要用页数轨（ProfileTabPaging.reachedEnd）
+        ProfileTab.FAVORITES ->
+            api.fetchFavoritePage(page = page, liked = false)
+                .let { TabPage(it.items, it.totalPages, totalIsPages = true) }
+
+        ProfileTab.LIKED ->
+            api.fetchFavoritePage(page = page, liked = true)
+                .let { TabPage(it.items, it.totalPages, totalIsPages = true) }
     }
 
     private fun refreshUserAndStats(): Job {
@@ -412,8 +413,12 @@ class ProfileViewModel(
         _state.value = s.copy(paging = s.paging + (tab to transform(s.pagingOf(tab))))
     }
 
-    /** 一页的归一化形状，[fetchPage] 的返回值。 */
-    private data class TabPage(val items: List<ProfileListEntry>, val total: Long)
+    /** 一页的归一化形状，[fetchPage] 的返回值。[totalIsPages] 见 [ProfileTabPaging]。 */
+    private data class TabPage(
+        val items: List<ProfileListEntry>,
+        val total: Long,
+        val totalIsPages: Boolean = false,
+    )
 
     companion object {
         private const val TAG = "ProfileViewModel"

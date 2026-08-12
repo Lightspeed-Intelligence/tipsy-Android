@@ -23,6 +23,12 @@ data class ProfileTabPaging(
     val items: List<ProfileListEntry> = emptyList(),
     val nextPage: Int = 0,
     val total: Long = 0L,
+    /**
+     * [total] 的量纲：false = 条数（创作/记忆/角色卡），true = **页数**
+     * （收藏/点赞的 `total_pages`，`useProfileFavorites.ts:63-66` 的判定是
+     * `已拉页数 >= total_pages` —— 拿条数去比会在第一页就误判到底）。
+     */
+    val totalIsPages: Boolean = false,
     val isInitialLoading: Boolean = false,
     val isLoadingMore: Boolean = false,
     val hasReachedEnd: Boolean = false,
@@ -33,16 +39,17 @@ data class ProfileTabPaging(
     val hasLoadedOnce: Boolean = false,
 ) {
     /**
-     * 到底判定：**累计数 >= total**。
+     * 到底判定，按 [totalIsPages] 分两轨：
+     * - 条数轨：**已去重累计数 >= total**（`useCreatedList.ts:98-101`）
+     * - 页数轨：**已拉页数 >= total_pages**（`useProfileFavorites.ts:63-66`）
      *
-     * ⚠️ `total` 为 0 时算**已到底** —— RN 是
-     * `if (!createdData?.[0]?.total) return true`（`useCreatedList.ts:98`）、
-     * `if (!memoryData?.[0]?.length) return true`（`useProfileMemories.ts:112`）。
-     * 反过来写（0 当成"还没拿到总数、继续拉"）会让空列表无限翻页。
+     * ⚠️ `total` 为 0 时两轨都算**已到底** —— RN 是 `if (!total) return true` /
+     * `if (!total_pages) return true`。反过来写（0 当成"还没拿到总数、继续拉"）
+     * 会让空列表无限翻页。
      */
-    fun reachedEnd(loadedCount: Int): Boolean {
+    fun reachedEnd(loadedCount: Int, pagesLoaded: Int): Boolean {
         if (total <= 0L) return true
-        return loadedCount >= total
+        return if (totalIsPages) pagesLoaded >= total else loadedCount >= total
     }
 
     companion object {
