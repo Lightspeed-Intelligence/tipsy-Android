@@ -45,6 +45,19 @@ data class ProfileState(
     val memoryItems: List<ProfileMemoryItem>
         get() = current.items.filterIsInstance<ProfileMemoryItem>()
 
+    /**
+     * 当前 tab 的角色卡条目，**默认卡置顶**（`sortRoleCardsWithDefaultFirst`，
+     * 排序在派生层做 —— 分页累计保持接口顺序，置顶只是显示规则）。
+     * `sortedBy` 是稳定排序：非默认卡之间保持原始相对顺序。
+     */
+    val roleCardItems: List<ProfileRoleCardItem>
+        get() = current.items.filterIsInstance<ProfileRoleCardItem>()
+            .sortedBy { if (it.makeDefault) 0 else 1 }
+
+    /** 当前 tab 的收藏/点赞条目（两 tab 同模型）；其它 tab 时为空。 */
+    val favoriteItems: List<ProfileFavoriteItem>
+        get() = current.items.filterIsInstance<ProfileFavoriteItem>()
+
     /** 首屏加载中（列表为空且在请求）。 */
     val isInitialLoading: Boolean get() = current.isInitialLoading
     val isLoadingMore: Boolean get() = current.isLoadingMore

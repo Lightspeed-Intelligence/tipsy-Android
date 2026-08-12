@@ -23,7 +23,7 @@
 - **波次进度**：W0 完成；W1 的契约层全部落地且已在 CI 组合验证（§2.22），只剩 §12 实例关闭链与 P9；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 已开工**：Profile 第一刀（§2.25）。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`**。
 - **submodule**：pin `95760a6622424bc9be238e7790fdbf38fe7c7fb2`（远端分支 `feat/android-native`，**未合进 main/release**，按约定靠子模块指针引用）。W2 首包与 W3 Profile 第一刀**都不动 submodule**（Profile 词条已全在 SHELL_KEYS，§2.25）。
-- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W3 侧本机同序列：lint 无新增、`assembleGooglePlayDebug`/`assembleDirectApkDebug`、**app 单测 590 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿。Profile 真机验证累计：七项冒烟、头部视觉对照、钱包三出口拒绝、卡片角标与模糊对照（§2.25–§2.28）。
+- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W3 侧本机同序列：lint 无新增、`assembleGooglePlayDebug`/`assembleDirectApkDebug`、**app 单测 604 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿。Profile 真机验证累计：七项冒烟、头部视觉、钱包出口、卡片角标与模糊、五 tab 真实数据（§2.25–§2.29）。
 - **不存在 / 未验**：Screen / ChatList 两个 Tab 仍是占位页（Profile 已是真页，页内角色卡/收藏/点赞三个 tab 走 "Coming soon" 占位）；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。P9 前生产路由白名单为空，ChatDetail 保持 disabled。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
 
 ## 1. 波次状态
@@ -33,7 +33,7 @@
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟡 **契约层已收口且 CI 已验；§12 关闭链 + P9 未完** | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17 已并） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
-| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 第一刀 + P2 头部 + P3 钱包 + P4 卡片角标/模糊已落地并真机验证（§2.25–§2.28）；后续包 P5 菜单动作 / P6 三 tab / P7 增强；ChatList / Search / Settings 未动 | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #21/#22 已并；P4 在 `feat/android-w3-profile-p4`） |
+| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1 首刀 + P2 头部 + P3 钱包 + P4 角标/模糊 + P6 五 tab 全通，§2.25–§2.29，真机验证）；剩 P5 菜单动作 / P7 增强；ChatList / Search / Settings 未动 | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #21/#22/#23 已并；P6 在 `feat/android-w3-profile-p6`） |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | ⬜ 阻塞于 W3 | — | — |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
 
@@ -1631,6 +1631,54 @@ cancel。被打断且未完成首屏的 tab **整体复位**（否则 `isInitial
 - **NOT RUN**：rejected 徽标（账号无被驳内容）、`final_hit` 遮罩与 &8 模糊
   （无命中数据）、game 卡（账号无 game）—— 判定全部有 JVM 覆盖，纯数据分支
 - 注①：story 卡的创作者名是 P4 前已有的底行内容，本包未动它
+
+### 2.29 W3 Profile P6：角色卡/收藏/点赞三 tab（2026-08-12）
+
+五个内容 tab 全部接通真实数据源，"Coming soon" 占位与 `isImplemented`
+语义整体删除。新增 `ProfileRoleCardItem`/`ProfileFavoriteItem` 两个模型
+（收藏与点赞**同响应形状共用模型**，RN 侧也是共用 `FavoriteCharacterCard`）
+与两个卡片组件。
+
+- **接口**（全部 REQUIRED）：角色卡 `/user/profile_card/list`（size 10）；
+  收藏 `/user/followed/character/list` 与点赞 `/user/likes/character_list`
+  （size 20 + **`is_reverse: true` 硬编码**，两 hook 同款请求体只差路径）。
+- **⚠️ 到底判定出现第二条轨**：收藏/点赞的响应给 **`total_pages`（页数）**，
+  判定是 `已拉页数 >= total_pages`（`useProfileFavorites.ts:63-66`）——
+  与创作/记忆/角色卡的「累计条数 >= total」不同量纲。`ProfileTabPaging`
+  加 `totalIsPages` 标记分轨，拿条数比页数会**第一页就误判到底**
+  （JVM 测试 `收藏 tab 按 total_pages 判到底` 锁死两页场景）。
+- **角色卡默认卡置顶**：`sortRoleCardsWithDefaultFirst` 在**派生层**复刻
+  （`ProfileState.roleCardItems` 的 stable sort），分页累计保持接口顺序 ——
+  排序是显示规则不是数据规则。
+- **role_pic 三段解析**（`RoleCard.tsx:31-44`）：`role_pic_url` → `role_pic`
+  （http 直用 / 相对路径拼 `https://img.tipsy.chat/`）→ 占位。⚠️ 该 CDN 前缀
+  是 RN **组件里的硬编码**（两处重复定义）—— 照抄不改，与创作卡「不许拼
+  域名」不冲突（那边顶层相对路径无约定前缀）。
+- **`message_num` 是 TS 声明 string 的字段**：实测可返 number，走
+  ScalarCoercion 双形态容错（§4.5 标量漂移的又一实例）。
+- 收藏/点赞卡 = 创作卡同构减角标层；nsfw 模糊复用 `CoverBlurTransformation`
+  （RN 这里 intensity 25 与创作卡 40 不同，壳统一一档 —— 视觉 diff 属验收）。
+  角色卡横条：白 8% 底 / 64 圆头像 / Default 橙标 / meta `性别 | 年龄 | 标签`
+  全空显 None；性别 male/female 之外**全归 Other**（`RoleCard.tsx:68-73`）。
+- **仍不做**：角色卡 ⋮ 菜单（设默认/编辑/删除，编辑目标 `EditRoleCard` 是
+  不迁的 RN Surface）、超限提示（`isOverRoleCardLimit` 依赖 `RoleCardLimit`
+  全局弹窗，属 Surface 微根件）、收藏卡取消收藏/批量管理、卡片点击进详情。
+- 词条零新增（Default/None/Male/Female/Other 及三个空态 key 全在 SHELL_KEYS）；
+  **连续第四包零 submodule 改动**。
+
+#### 验证
+
+- app 单测 **604 条**（+14：`ProfileTabParserTest` 10（role_pic 三段/性别归一/
+  message_num 双形态/total_pages 语义/characters null）+ `ProfileViewModelTest`
+  净增 4（页数轨两条/点赞收藏分流/默认卡置顶；两条旧「占位 tab」测试改写为
+  真实数据链语义））、failures=0、**skipped=0**；lint 无新增；双 flavor
+  assemble 通过
+- **真机 `PASS`**（同 §2.25 环境）：五 tab 逐个切换 —— 角色卡横条（Lee +
+  Default 橙标 + `Male | 18`）、收藏网格（5555555）、点赞网格（Haruka /
+  Fire Mage / Marbles + 消息数），切换往返数据不重拉、无崩溃
+- **NOT RUN**：收藏/点赞翻页续拉与页数轨真机验证（账号数据不足一页；
+  判定有 JVM 两页场景覆盖）、角色卡多页（同）、收藏 nsfw 模糊（列表无
+  18+ 内容；变换与创作卡同一实现已真机验过）
 
 ## 3. 横切能力
 

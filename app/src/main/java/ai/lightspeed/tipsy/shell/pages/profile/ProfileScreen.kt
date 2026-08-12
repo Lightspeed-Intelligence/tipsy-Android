@@ -272,19 +272,6 @@ private fun ProfileGrid(
         }
 
         when {
-            // 未接数据源的 tab：占位说明而不是空白 —— 空白会让人以为挂载失败
-            //（同 TabPlaceholderFragment 的理由）
-            !tab.isImplemented -> item(
-                span = { GridItemSpan(maxLineSpan) },
-                key = KEY_STATUS,
-                contentType = CT_STATUS,
-            ) {
-                CenteredNote(
-                    text = rememberLocalizedString("Coming soon"),
-                    testTag = "profile_tab_placeholder",
-                )
-            }
-
             // tab 首拉：行内转圈（头部与 tab 栏留在屏上，别整页替换）
             state.isInitialLoading -> item(
                 span = { GridItemSpan(maxLineSpan) },
@@ -346,6 +333,31 @@ private fun ProfileGrid(
                         end = MEMORY_CARD_MARGIN.dp,
                         bottom = MEMORY_CARD_BOTTOM.dp,
                     ),
+                )
+            }
+
+            // 角色卡：单列横条（RoleCard.tsx 是 marginBottom 12 的列表）
+            tab == ProfileTab.ROLE_CARD -> items(
+                items = state.roleCardItems,
+                key = { it.dedupeKey },
+                span = { GridItemSpan(maxLineSpan) },
+                contentType = { CT_ROLE_CARD },
+            ) { item ->
+                ProfileRoleCardRow(
+                    item = item,
+                    modifier = Modifier.padding(bottom = ROLE_CARD_BOTTOM.dp),
+                )
+            }
+
+            // 收藏 / 点赞：三列网格（chunk(_, 3)，卡与创作同比例），共用组件
+            tab == ProfileTab.FAVORITES || tab == ProfileTab.LIKED -> items(
+                items = state.favoriteItems,
+                key = { it.dedupeKey },
+                contentType = { CT_FAVORITE },
+            ) { item ->
+                ProfileFavoriteCard(
+                    item = item,
+                    modifier = Modifier.aspectRatio(ProfileStyle.CARD_ASPECT_RATIO),
                 )
             }
 
@@ -522,6 +534,8 @@ private const val CT_TABS = "tabs"
 private const val CT_STATUS = "status"
 private const val CT_MEMORY = "memory"
 private const val CT_CREATED = "created"
+private const val CT_ROLE_CARD = "rolecard"
+private const val CT_FAVORITE = "favorite"
 
 private const val TOP_BAR_PADDING = 12
 private const val TOP_BAR_HEIGHT = 44
@@ -549,3 +563,4 @@ private const val TAB_ICON_SIZE = 24
 private const val TAB_BAR_PADDING = 10
 private const val MEMORY_CARD_MARGIN = 10
 private const val MEMORY_CARD_BOTTOM = 7
+private const val ROLE_CARD_BOTTOM = 11

@@ -104,9 +104,52 @@ class ProfileApi(private val apiClient: ApiClient) : ProfileSource {
         return ProfileMemoryPage.parse(envelope.data)
     }
 
+    /**
+     * 自己的角色卡列表一页（`/user/profile_card/list`，`apis/character.ts:270`）。
+     * 请求体只有 `page` + `size`（`getProfileCardListReq`）。
+     */
+    override suspend fun fetchRoleCardPage(page: Int): ProfileRoleCardPage {
+        val body = JSONObject()
+            .put(FIELD_PAGE, page)
+            .put(FIELD_SIZE, ProfileTab.ROLE_CARD.pageSize)
+        val envelope = apiClient.post(
+            path = PATH_ROLE_CARD_LIST,
+            jsonBody = body.toString(),
+            authMode = AuthMode.REQUIRED,
+        )
+        return ProfileRoleCardPage.parse(envelope.data)
+    }
+
+    /**
+     * 收藏（followed）/ 点赞（likes）列表一页 —— 两接口同请求体同响应形
+     * （`is_reverse: true` 是两 hook 的硬编码，`useProfileFavorites.ts:19` /
+     * `useProfileLiked.ts:17`），只差路径。
+     */
+    override suspend fun fetchFavoritePage(page: Int, liked: Boolean): ProfileFavoritePage {
+        val body = JSONObject()
+            .put(FIELD_PAGE, page)
+            .put(FIELD_SIZE, ProfileTab.FAVORITES.pageSize)
+            .put(FIELD_IS_REVERSE, true)
+        val envelope = apiClient.post(
+            path = if (liked) PATH_LIKES_LIST else PATH_FOLLOWED_LIST,
+            jsonBody = body.toString(),
+            authMode = AuthMode.REQUIRED,
+        )
+        return ProfileFavoritePage.parse(envelope.data)
+    }
+
     companion object {
         const val PATH_STATS_INFO = "/user/stats_info"
         const val PATH_CREATED_LIST = "/user/created/list"
+
+        /** 角色卡列表（`apis/character.ts:272`）。 */
+        const val PATH_ROLE_CARD_LIST = "/user/profile_card/list"
+
+        /** 收藏 = followed（`apis/profile.ts:185`）。 */
+        const val PATH_FOLLOWED_LIST = "/user/followed/character/list"
+
+        /** 点赞（`apis/profile.ts:210`）。 */
+        const val PATH_LIKES_LIST = "/user/likes/character_list"
 
         /**
          * 自己的记忆列表。
@@ -130,6 +173,7 @@ class ProfileApi(private val apiClient: ApiClient) : ProfileSource {
         private const val FIELD_LANGUAGE_CODE = "language_code"
         private const val FIELD_TYPES = "types"
         private const val FIELD_NSFW = "nsfw"
+        private const val FIELD_IS_REVERSE = "is_reverse"
     }
 }
 
@@ -140,6 +184,8 @@ interface ProfileSource {
     suspend fun fetchSelfStats(userId: String): ProfileStats
     suspend fun fetchCreatedPage(page: Int, languageCode: String): ProfileCreatedPage
     suspend fun fetchMemoryPage(page: Int): ProfileMemoryPage
+    suspend fun fetchRoleCardPage(page: Int): ProfileRoleCardPage
+    suspend fun fetchFavoritePage(page: Int, liked: Boolean): ProfileFavoritePage
 }
 
 /**

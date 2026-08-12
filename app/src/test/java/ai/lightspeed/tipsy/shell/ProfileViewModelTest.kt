@@ -2,8 +2,12 @@ package ai.lightspeed.tipsy.shell
 
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileCreatedItem
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileCreatedPage
+import ai.lightspeed.tipsy.shell.pages.profile.ProfileFavoriteItem
+import ai.lightspeed.tipsy.shell.pages.profile.ProfileFavoritePage
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileMemoryItem
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileMemoryPage
+import ai.lightspeed.tipsy.shell.pages.profile.ProfileRoleCardItem
+import ai.lightspeed.tipsy.shell.pages.profile.ProfileRoleCardPage
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileSource
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileStats
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileTab
@@ -435,8 +439,14 @@ class ProfileViewModelTest {
     }
 
     @Test
-    fun `未接数据源的 tab 只切选中态不发请求`() = runTest {
-        val api = FakeProfileApi(pages = listOf(page(items = listOf(item("a")), total = 1)))
+    fun `切到角色卡 tab 首拉走对应接口`() = runTest {
+        // P6 前这里验的是「占位 tab 不发请求」；五 tab 全接后改验数据链正确分流
+        val api = FakeProfileApi(
+            pages = listOf(page(items = listOf(item("a")), total = 1)),
+            roleCardPages = listOf(
+                ProfileRoleCardPage(items = listOf(roleCardItem("rc1")), total = 1),
+            ),
+        )
         val vm = viewModel(api)
         vm.onAppear()
         advanceUntilIdle()
@@ -444,12 +454,12 @@ class ProfileViewModelTest {
 
         vm.onTabSelected(ProfileTab.ROLE_CARD)
         advanceUntilIdle()
-        vm.onLoadMore()
-        advanceUntilIdle()
 
         assertEquals(ProfileTab.ROLE_CARD, vm.state.value.selectedTab)
-        assertEquals("占位 tab 不该发任何列表请求", created, api.createdCalls.size)
-        assertTrue(api.memoryCalls.isEmpty())
+        assertEquals(listOf(0), api.roleCardCalls)
+        assertEquals("切 tab 不该重拉创作", created, api.createdCalls.size)
+        assertEquals("rc1", vm.state.value.roleCardItems.single().profileCardId)
+        assertTrue("total=1 已到底", vm.state.value.hasReachedEnd)
     }
 
     @Test
@@ -538,8 +548,13 @@ class ProfileViewModelTest {
     }
 
     @Test
-    fun `占位 tab 上下拉刷新只刷用户与统计并收圈`() = runTest {
-        val api = FakeProfileApi(pages = listOf(page(items = listOf(item("a")), total = 1)))
+    fun `角色卡 tab 上下拉刷新走角色卡接口不动创作`() = runTest {
+        val api = FakeProfileApi(
+            pages = listOf(page(items = listOf(item("a")), total = 1)),
+            roleCardPages = List(2) {
+                ProfileRoleCardPage(items = listOf(roleCardItem("rc$it")), total = 1)
+            },
+        )
         val vm = viewModel(api)
         vm.onAppear()
         advanceUntilIdle()
@@ -552,8 +567,104 @@ class ProfileViewModelTest {
         advanceUntilIdle()
 
         assertFalse("刷新圈必须收起", vm.state.value.isRefreshing)
-        assertEquals("不发列表请求", created, api.createdCalls.size)
+        assertEquals("不发创作请求", created, api.createdCalls.size)
+        assertEquals("角色卡重拉第 0 页", listOf(0, 0), api.roleCardCalls)
         assertEquals("统计要刷", stats + 1, api.statsCalls.size)
+        assertEquals("rc1", vm.state.value.roleCardItems.single().profileCardId)
+    }
+
+    // ── P6：页数轨到底判定与角色卡排序 ────────────────
+
+    @Test
+    fun `收藏 tab 按 total_pages 判到底`() = runTest {
+        // total_pages=2：拉完第 2 页才到底 —— 拿条数比会在第一页就误判
+        val api = FakeProfileApi(
+            pages = listOf(page(items = listOf(item("a")), total = 1)),
+            favoritePages = listOf(
+                ProfileFavoritePage(items = listOf(favoriteItem("f1")), totalPages = 2),
+                ProfileFavoritePage(items = listOf(favoriteItem("f2")), totalPages = 2),
+            ),
+        )
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        vm.onTabSelected(ProfileTab.FAVORITES)
+        advanceUntilIdle()
+
+        assertFalse("第 1 页（共 2 页）不该到底", vm.state.value.hasReachedEnd)
+        vm.onLoadMore()
+        advanceUntilIdle()
+
+        assertTrue("拉完第 2 页到底", vm.state.value.hasReachedEnd)
+        assertEquals(listOf(0, 1), api.favoriteCalls)
+        assertEquals(listOf("f1", "f2"), vm.state.value.favoriteItems.map { it.characterId })
+    }
+
+    @Test
+    fun `收藏 total_pages 为 0 直接到底`() = runTest {
+        val api = FakeProfileApi(
+            pages = listOf(page(items = listOf(item("a")), total = 1)),
+            favoritePages = listOf(ProfileFavoritePage(items = emptyList(), totalPages = 0)),
+        )
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        vm.onTabSelected(ProfileTab.FAVORITES)
+        advanceUntilIdle()
+
+        assertTrue(vm.state.value.hasReachedEnd)
+        assertEquals(listOf(0), api.favoriteCalls)
+        vm.onLoadMore()
+        advanceUntilIdle()
+        assertEquals("到底后不再翻页", listOf(0), api.favoriteCalls)
+    }
+
+    @Test
+    fun `点赞与收藏走不同接口`() = runTest {
+        val api = FakeProfileApi(
+            pages = listOf(page(items = listOf(item("a")), total = 1)),
+            favoritePages = listOf(ProfileFavoritePage(listOf(favoriteItem("fav")), 1)),
+            likedPages = listOf(ProfileFavoritePage(listOf(favoriteItem("like")), 1)),
+        )
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        vm.onTabSelected(ProfileTab.FAVORITES)
+        advanceUntilIdle()
+        vm.onTabSelected(ProfileTab.LIKED)
+        advanceUntilIdle()
+
+        assertEquals(listOf(0), api.favoriteCalls)
+        assertEquals(listOf(0), api.likedCalls)
+        assertEquals("like", vm.state.value.favoriteItems.single().characterId)
+    }
+
+    @Test
+    fun `角色卡默认卡置顶且稳定`() = runTest {
+        val api = FakeProfileApi(
+            pages = listOf(page(items = listOf(item("a")), total = 1)),
+            roleCardPages = listOf(
+                ProfileRoleCardPage(
+                    items = listOf(
+                        roleCardItem("rc1"),
+                        roleCardItem("rc2", makeDefault = true),
+                        roleCardItem("rc3"),
+                    ),
+                    total = 3,
+                ),
+            ),
+        )
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        vm.onTabSelected(ProfileTab.ROLE_CARD)
+        advanceUntilIdle()
+
+        assertEquals(
+            "默认卡置顶，其余保持接口顺序",
+            listOf("rc2", "rc1", "rc3"),
+            vm.state.value.roleCardItems.map { it.profileCardId },
+        )
     }
 
     // ── 钱包 ────────────────────────────────────────
@@ -676,6 +787,9 @@ class ProfileViewModelTest {
     private class FakeProfileApi(
         private val pages: List<ProfileCreatedPage> = emptyList(),
         private val memoryPages: List<ProfileMemoryPage> = emptyList(),
+        private val roleCardPages: List<ProfileRoleCardPage> = emptyList(),
+        private val favoritePages: List<ProfileFavoritePage> = emptyList(),
+        private val likedPages: List<ProfileFavoritePage> = emptyList(),
         var failCreated: Boolean = false,
         private val failStats: Boolean = false,
     ) : ProfileSource {
@@ -683,6 +797,9 @@ class ProfileViewModelTest {
 
         val createdCalls = mutableListOf<CreatedCall>()
         val memoryCalls = mutableListOf<Int>()
+        val roleCardCalls = mutableListOf<Int>()
+        val favoriteCalls = mutableListOf<Int>()
+        val likedCalls = mutableListOf<Int>()
         val statsCalls = mutableListOf<String>()
 
         /** 置一个未完成的 Deferred 可让记忆请求挂起（测「切走取消在飞链」用）。 */
@@ -690,6 +807,9 @@ class ProfileViewModelTest {
 
         private var cursor = 0
         private var memoryCursor = 0
+        private var roleCardCursor = 0
+        private var favoriteCursor = 0
+        private var likedCursor = 0
 
         override suspend fun fetchSelfStats(userId: String): ProfileStats {
             statsCalls += userId
@@ -713,6 +833,27 @@ class ProfileViewModelTest {
             memoryCursor++
             return result ?: ProfileMemoryPage(emptyList(), 0L)
         }
+
+        override suspend fun fetchRoleCardPage(page: Int): ProfileRoleCardPage {
+            roleCardCalls += page
+            val result = roleCardPages.getOrNull(roleCardCursor) ?: roleCardPages.lastOrNull()
+            roleCardCursor++
+            return result ?: ProfileRoleCardPage(emptyList(), 0L)
+        }
+
+        override suspend fun fetchFavoritePage(page: Int, liked: Boolean): ProfileFavoritePage {
+            return if (liked) {
+                likedCalls += page
+                val result = likedPages.getOrNull(likedCursor) ?: likedPages.lastOrNull()
+                likedCursor++
+                result ?: ProfileFavoritePage(emptyList(), 0L)
+            } else {
+                favoriteCalls += page
+                val result = favoritePages.getOrNull(favoriteCursor) ?: favoritePages.lastOrNull()
+                favoriteCursor++
+                result ?: ProfileFavoritePage(emptyList(), 0L)
+            }
+        }
     }
 
     private fun page(items: List<ProfileCreatedItem>, total: Long) =
@@ -728,6 +869,17 @@ class ProfileViewModelTest {
 
     private fun memoryItem(id: String): ProfileMemoryItem =
         ProfileMemoryItem.parse(JSONObject().put("plot_id", id), null, null)!!
+
+    private fun roleCardItem(id: String, makeDefault: Boolean = false): ProfileRoleCardItem =
+        ProfileRoleCardItem.parse(
+            JSONObject().put("profile_card_id", id).put("nickname", id)
+                .put("make_default", makeDefault),
+        )!!
+
+    private fun favoriteItem(id: String): ProfileFavoriteItem =
+        ProfileFavoriteItem.parse(
+            JSONObject().put("character_id", id).put("nickname", id),
+        )!!
 
     private companion object {
         const val TEST_USER_ID = "u-self"
