@@ -20,11 +20,11 @@
 
 ## 0. 三十秒速览
 
-- **波次进度**：W0 完成；W1 的契约层全部落地且已在 CI 组合验证（§2.22），只剩 §12 实例关闭链与 P9；P2 剩余/P3/P7/P8 均已决策推迟。**W2 已开工**：五 Tab + Home 首屏（§2.23）。
-- **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + **`analytics/`** + **`tabs/`** + **`pages/login/`、`pages/home/`**。**已有第一批业务代码**（登录页 + Home）。
-- **submodule**：pin `95760a6622424bc9be238e7790fdbf38fe7c7fb2`（远端分支 `feat/android-native`，**未合进 main/release**，按约定靠子模块指针引用）。W2 首包**不动 submodule**。
-- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W2 两包本机都跑过同序列：lint 无新增、`assembleGooglePlayDebug`、**app 单测 476 条，failures=0 / skipped=0**。release 权限数仍 **51**（未因 coil 增加）。
-- **不存在 / 未验**：Screen / ChatList / Profile 三个 Tab 仍是占位页；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。P9 前生产路由白名单为空，ChatDetail 保持 disabled。真机侧 §2.23 三项（下拉刷新、性别筛选、进程重建恢复）与 §2.24 四项（筛选抽屉、种子写入门禁、离线渲染种子、种子与真实数据衔接）**均已真机验过**；⚠️ 其中**性别筛选持久化查出真实缺陷**（`config-persist-storage` 信封不存在时静默不写 → 全新安装用户改性别永不持久化，§2.23.1，**待 owner 定修法**）。
+- **波次进度**：W0 完成；W1 的契约层全部落地且已在 CI 组合验证（§2.22），只剩 §12 实例关闭链与 P9；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 已开工**：Profile 第一刀（§2.25）。
+- **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`**。
+- **submodule**：pin `95760a6622424bc9be238e7790fdbf38fe7c7fb2`（远端分支 `feat/android-native`，**未合进 main/release**，按约定靠子模块指针引用）。W2 首包与 W3 Profile 第一刀**都不动 submodule**（Profile 词条已全在 SHELL_KEYS，§2.25）。
+- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W3 第一刀本机同序列：lint 无新增、`assembleGooglePlayDebug`/`assembleDirectApkDebug`、**app 单测 563 条（新增 87），failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿。Profile 真机七项冒烟 PASS（§2.25）。
+- **不存在 / 未验**：Screen / ChatList 两个 Tab 仍是占位页（Profile 已是真页，页内角色卡/收藏/点赞三个 tab 走 "Coming soon" 占位）；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。P9 前生产路由白名单为空，ChatDetail 保持 disabled。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
 
 ## 1. 波次状态
 
@@ -32,8 +32,8 @@
 | --- | --- | --- | --- | --- | --- |
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟡 **契约层已收口且 CI 已验；§12 关闭链 + P9 未完** | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17 已并） |
-| W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **进行中**：Login 邮箱链路已验、五 Tab + Home 首屏已落地、筛选抽屉 + 冷启动种子已落地（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面 | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 已并；**PR #20 待并**：抽屉 + 种子 + 标签污染种子的修复） |
-| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | ⬜ 阻塞于 W2 | — | — |
+| W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
+| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 第一刀已落地并真机冒烟（§2.25：资料头部 + 统计 + 创作/记忆两 tab + 五图标 tab 栏）；ChatList / Search / Settings 未动 | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（分支 `feat/android-w3-profile-p1`，PR 待开） |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | ⬜ 阻塞于 W3 | — | — |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
 
@@ -1391,6 +1391,114 @@ PR #20 修）。写进去也能当门禁，但那样带标签这一次的种子�
 
 新增测试：`HomeTagParserTest`(11)、`HomeForYouCacheTest`(16，三道门禁 + 坏数据)、
 `HomeViewModelTest` +16（标签分流 9 + 种子 7）。
+
+### 2.25 W3 第一刀：Profile 自己视角（资料头部 + 创作/记忆两 tab，2026-08-12）
+
+W3 开工，Profile Tab 从占位换真页。新增 `pages/profile/`（16 文件）与 `user/`
+（`CurrentUser` / `CurrentUserStore` / `UserInfoApi`，进程内用户信息，**刻意不持久化**
+—— 壳只读不写 RN 的 `user-storage` 信封，冷启动首进 Profile 多一次 loading 是
+记录在案的代价，要消掉走「读信封作种子」而不是壳写信封）。
+
+**范围**：`/user/info` 资料头部、`/user/stats_info` 四统计、`/user/created/list`
+创作三列网格、`/plot/list/self` 记忆单列大卡、五图标 tab 栏（含滚出屏顶后浮出）、
+按 tab 分表的分页壳、四个出口路由类型（Settings / EditProfile / Follow / UserCoins，
+全部**未启用**，点击走 Router 明确拒绝）。
+
+**未做**（后续包）：角色卡/收藏/点赞三 tab、钱包区、卡片菜单与编辑/删除/置顶动作、
+记忆卡点击进 ChatMemory（属 ChatDetail 深栈）、他人主页（stats 走 OPPORTUNISTIC）、
+创作列表首屏缓存（`profileCreatedListCache` 的 key 带维度设计值得单独一刀，
+顺带印证 §2.23.1 的修法方向）、NSFW 封面模糊（等 Compose 模糊方案，两处卡片一起做）、
+头像框（配置源 hydrate 会静默失败，§2.19）、`onFirstTabDataReady` 一族性能埋点。
+
+#### 实测抓出的对等陷阱（写码前逐条核 RN 源码）
+
+- **`/user/stats_info` 字段与标签交叉**：Followers 标签下是 `followees_count`、
+  Following 标签下是 `followers_count`（`FollowInfo.tsx:52,66`，两行是反的）。
+  照字段名直译会标反且**本地几乎测不出来**（测试账号两数常相等）。
+  命名收口在 `ProfileStats.followersLabelCount / followingLabelCount`。
+- **`/plot/list/self` 是关系型响应**：`plots` + `characters`/`creators` 两个
+  id→对象 map 靠 join（`apis/plot.ts:86-88`），与创作列表的内联嵌套形状完全不同。
+  TS 类型与实测出入：`created_at` 声明 `string` 实为 Unix 秒**数字** → 走
+  `ScalarCoercion`。背景图用 `image_url`、头像位用 `face_url`，两个字段别混。
+- **同路径/同能力自己与他人各一条**：stats 是同路径不同鉴权（axiosAuth vs
+  axiosPublic）；记忆是不同路径（`/plot/list/self` vs `/plot/list/creator`）。
+  本刀只接自己那条（REQUIRED）；接他人主页时是 **OPPORTUNISTIC 不是 NONE**（§4.5）。
+- **整页 loading 不能照抄 RN**：RN 的 `isLoading` 接的是**不上屏的死请求**
+  `/character/list/self`（`useProfile.tsx:165-186` 注释确认）。壳直接接各 tab 列表请求。
+- **创作 tab 空态文案是 `No Character`**：空态分流 `tabIndex===0 → 'story'`
+  （`CharacterGrid.tsx:1063-1074`），`EMPTY_TEXT_MAP.story = 'No Character'`。
+  第一版杜撰过 "No creations yet"，已按实测改。
+- **分页 size 按 tab 配**：创作/角色卡 10、记忆/收藏/点赞 20、他人主页 200。
+  「5 tab 共用一个分页壳」指壳复用，size 不统一。
+- **`UID:` 前缀不进 i18n**：RN 是裸文本（`user-profile.tsx:665` 不走 `t()`），翻了反而不对等。
+- **下拉刷新 RN 把五个 tab 全 mutate**（`CharacterGrid.tsx:252-262`
+  `Promise.allSettled`）：壳的对应物 = 当前 tab 立即重拉 + 其它 tab 复位待重拉（见下）。
+- **记忆卡时间是恒 en-US 的 `h:mm a`**（`formatTimestampToAMPMTime` 调用点不传
+  locale），且创建时间只显示时:分不显示日期 —— 别顺手"修"。
+
+#### 并发模型：单在飞分页链（与 RN 的刻意差异）
+
+RN 每 tab 独立 `useSWRInfinite` 并行；壳采用 Home 同款**单 inFlight 链**：任一时刻
+至多一条分页链在飞且必属当前 tab，切 tab / 刷新 / 语言 settle / 登录态变化都先
+cancel。被打断且未完成首屏的 tab **整体复位**（否则 `isInitialLoading` 卡 true，
+`loadFirstPageIfNeeded` 永远跳过它）。代价是切 tab 偶尔废弃一个在飞请求；换来页级
+`isRefreshing` 无归属歧义、跨 tab 响应竞态整类消失。分页游标（`nextPage`/`total`/
+空页续拉 streak）按 tab 分表存 `ProfileState.paging` —— 裸字段会让切 tab 后
+从对方页码继续拉，首屏缺前 N 页。
+
+#### 顺带修掉的真实缺陷：`CurrentUserStore.refresh` 吞 CancellationException
+
+`runCatching` 不分流会让登出瞬间在飞的 `/user/info` 响应把旧账号资料写回已清空的
+状态（「登出串上一账号数据」的 Profile 变体：取消发生在挂起点，吞掉异常后非挂起
+代码照常执行到写状态）。已改为 rethrow，且 `ProfileViewModel.onAuthChanged` 同时
+取消 `userStatsJob`。JVM 测试用 gate 挂起在飞请求验证了取消语义
+（`切走打断在飞首屏后切回能重拉`）。
+
+#### i18n 与 testTag
+
+- 全部对等词条**已在 SHELL_KEYS**（Settings / Edit Profile / 四统计标签 /
+  No Character / No memories / Private / Failed / Pending / Passed / messages /
+  Please try again later），**本刀不动 tipsy-app、不 bump submodule**；ja 抽查有译文。
+- `Coming soon`（未接 tab 的壳专属占位）**刻意不进 SHELL_KEYS**：RN 无此词条，
+  加了也没有任何语言的译文，fallback 链（当前语言 → en → key）走到 key，
+  与加了行为一致；三个 tab 落地即删。
+- testTag 按 Login 的 snake_case 现行约定（方案 §9.4 的 `android.` 点分风格是
+  草案，代码先例是 `login_*`）：`profile_{avatar,uid,edit,settings,grid,loading,
+  empty,error,tab_placeholder}`、`profile_stat_*`、`profile_tab_*`、
+  `profile_created_card_<id>`、`profile_memory_card_<id>`。动态段只用服务端 id。
+- 审核状态徽标是**值与文案不同轴**：`un_reviewed/pass/failed`（`types/review.ts`）
+  → Pending/Passed/Failed，原始值不上屏，认不出的值不显示。
+
+#### 两个 owner 决策点（阻塞后续包，不阻塞本刀）
+
+1. **Follow 出口无处可去**：方案 §8.1 把 `follow`（445 行）列为「不迁、走 Surface」，
+   但 RN **不存在 FollowSurface**（已核实 `src/surfaces/` 无此文件，`follow.tsx`
+   是 ProfileStack 普通页）。要么 RN 侧新建 Surface、要么原生实现。
+   `AppRoute.Follow(userId, type)` 与 props 形状已按 `FollowInfo.tsx:57,71` 备好。
+2. **EditProfileSurface 过矩阵在 W3 还是 W4**：方案 §8.3 批次表列 W3、§9.1 矩阵把
+   「其余 10 个」标 W4，**方案自相矛盾**，需 owner 定夺后修方案文档。
+
+#### 验证
+
+- app 单测 **563 条**（新增 87：`ProfileViewModelTest` 30 含多 tab 游标隔离 /
+  切走取消在飞链 / 刷新复位其它 tab / 语言 settle / 占位 tab 刷新收圈；
+  `ProfileParserTest` 27；`ProfileMemoryParserTest` 15；`ProfileTextTest` 15）、
+  failures=0、**skipped=0**
+- `:tipsy-auth:testDebugUnitTest` 15 条全绿（含 `LiveAppSafetyTest`）
+- lint 无新增（baseline 仍 5 条）；`assembleGooglePlayDebug` 与
+  `assembleDirectApkDebug` 通过
+- **未动** manifest / RN 依赖 / flavor → release manifest diff 本刀不适用；
+  RuStore flavor 未单独 assemble（flavor 相关零改动）
+- **真机冒烟 `PASS`**（2026-08-12，Pixel 模拟器 / Android 17，directApk 覆盖安装
+  保留登录态）：① 头部 + 统计真实数据（0/1/0/70，交叉映射下 Following=1 与账号
+  实况一致）② 创作网格 6 卡全渲染 ③ 记忆卡关系 join 生效（角色名 Emi 来自
+  `characters` map）+ 三条预览气泡按角色/用户分流 + Pending 徽标 + `3 messages` +
+  `5:31 PM` ④ ROLE_CARD 显示 "Coming soon" 占位 ⑤ 切回创作即时显示不重拉
+  ⑥ Settings 点击明确拒绝（`拒绝导航：Settings —— 该目标在当前波次尚未启用`）
+  ⑦ 占位 tab 下拉刷新不卡圈不崩溃
+- **真机 NOT RUN**（数据或后续包具备时再验）：翻页触底续拉（账号仅 6 条创作，
+  不足一页）、tab 栏滚动浮出（列表不够长）、语言切换全 tab 复位重拉、
+  首屏错误态展示、进程重建恢复
 
 ## 3. 横切能力
 
