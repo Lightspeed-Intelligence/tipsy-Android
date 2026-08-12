@@ -23,7 +23,7 @@
 - **波次进度**：W0 完成；W1 的契约层全部落地且已在 CI 组合验证（§2.22），只剩 §12 实例关闭链与 P9；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 已开工**：Profile 第一刀（§2.25）。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`**。
 - **submodule**：pin `95760a6622424bc9be238e7790fdbf38fe7c7fb2`（远端分支 `feat/android-native`，**未合进 main/release**，按约定靠子模块指针引用）。W2 首包与 W3 Profile 第一刀**都不动 submodule**（Profile 词条已全在 SHELL_KEYS，§2.25）。
-- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W3 第一刀本机同序列：lint 无新增、`assembleGooglePlayDebug`/`assembleDirectApkDebug`、**app 单测 563 条（新增 87），failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿。Profile 真机七项冒烟 PASS（§2.25）。
+- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W3 侧本机同序列：lint 无新增、`assembleGooglePlayDebug`/`assembleDirectApkDebug`、**app 单测 568 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿。Profile 真机七项冒烟 + 头部视觉截图对照均 PASS（§2.25 / §2.26）。
 - **不存在 / 未验**：Screen / ChatList 两个 Tab 仍是占位页（Profile 已是真页，页内角色卡/收藏/点赞三个 tab 走 "Coming soon" 占位）；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。P9 前生产路由白名单为空，ChatDetail 保持 disabled。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
 
 ## 1. 波次状态
@@ -33,7 +33,7 @@
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟡 **契约层已收口且 CI 已验；§12 关闭链 + P9 未完** | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17 已并） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
-| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 第一刀已落地并真机冒烟（§2.25：资料头部 + 统计 + 创作/记忆两 tab + 五图标 tab 栏）；ChatList / Search / Settings 未动 | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（分支 `feat/android-w3-profile-p1`，PR 待开） |
+| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 第一刀 + P2 头部视觉已落地并真机验证（§2.25 / §2.26）；后续包 P3 钱包 / P4 卡片角标 / P5 菜单动作 / P6 三 tab；ChatList / Search / Settings 未动 | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #21 G1 已过待并；P2 在 `feat/android-w3-profile-p2`） |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | ⬜ 阻塞于 W3 | — | — |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
 
@@ -1500,7 +1500,48 @@ cancel。被打断且未完成首屏的 tab **整体复位**（否则 `isInitial
   不足一页）、tab 栏滚动浮出（列表不够长）、语言切换全 tab 复位重拉、
   首屏错误态展示、进程重建恢复
 
+### 2.26 W3 Profile P2：头部视觉对齐（渐隐背景 + bio + 顶栏，2026-08-12）
+
+对照线上截图补齐头部三大块，头部结构与现网一致（仍差钱包卡 = P3、
+头像框与渠道图标 = P7、卡片角标 = P4）。
+
+- **渐隐背景图**（`ProfileBackground.tsx`）：宽 = 屏宽、1:1，三段 alpha 遮罩
+  `locations [0.36, 0.9, 1]` × `alpha [1, 0.1, 0]`。Compose 用
+  `CompositingStrategy.Offscreen` + `drawWithContent` + `BlendMode.DstIn`
+  **精确复刻**（不是叠底色渐变的近似）。URL 空走内置默认图
+  （`user-profile.tsx:418-423` fallback `profile_bg.png`，已搬为
+  `ic_profile_bg_default`）。背景 absolute 垫底、列表滚在上面（对齐 RN）。
+- **⚠️ 订正第一刀的一处位置错**：UID **不在昵称下方** —— RN 把它放在悬浮
+  顶栏**左侧**（`user-profile.tsx:656-674`，带 `popover_copy` 复制图标、
+  alpha 0.8）。已挪到顶栏左，右侧同时把 "Settings" 文字占位换成
+  `profile_setting.png` 图标资产。
+- **头像行锚定屏顶 250dp**：RN 是「悬浮 header 高 `top+50`」+「header 内
+  `paddingTop: 250 - headerOffset`」（`ProfileHeader.tsx:173`）的配合。
+  壳顶栏在布局流里，等价换算 = 250 − statusBar − 顶栏高（44）。
+- **bio 区**（`renderBio.tsx`）：白 8% 圆角容器 / marginH 10 / padding 10 /
+  一行截断 + 右侧铅笔（仅铅笔可点，与 RN 一致），点击与 Edit Profile 同走
+  `AppRoute.EditProfile`（当前明确拒绝）。空态文案
+  `No bio yet. Add one now.` **已在 SHELL_KEYS** —— 本包仍零 submodule 改动。
+- `CurrentUser` 补 `bio` 字段（带默认值，既有构造点不受影响）；
+  统计排版经实测核对**无需改**（16/12sp、边距 15/10/8 与 `FollowInfo.tsx`
+  styles 一致，第一刀就抄对了）。
+- 新资产 4 个：`ic_profile_setting` / `ic_profile_uid_copy` /
+  `ic_profile_bio_edit` / `ic_profile_bg_default`（均单文件直搬 RN assets）。
+
+#### 验证
+
+- app 单测 **568 条**（新增 `CurrentUserParserTest` 5：残缺响应作废 / 可选字段
+  归一 null / bio 空串走空态 / 数字 id 容错）、failures=0、skipped=0；
+  lint 无新增；`assembleGooglePlayDebug` + `assembleDirectApkDebug` 通过
+- **真机截图对照 `PASS`**（同 §2.25 环境）：背景图渐隐上屏且与线上同构、
+  顶栏 UID+复制图标 / 设置齿轮、头像行落点与线上一致、bio 空态条完整渲染、
+  统计与网格不回归
+- **NOT RUN**：背景 URL 为空的默认图分支（测试账号有背景图；分支只是
+  painterResource 换 AsyncImage，风险低）、非空 bio 的显示（账号无 bio；
+  同一 `Text` 只是数据分支）
+
 ## 3. 横切能力
+
 
 | 能力 | 状态 | 落地处 |
 | --- | --- | --- |
