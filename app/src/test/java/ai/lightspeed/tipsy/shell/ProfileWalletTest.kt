@@ -108,4 +108,30 @@ class ProfileWalletTest {
         assertEquals("0.0", ProfileText.formatCoinAmount(-3.2))
         assertEquals("0.0", ProfileText.formatCoinAmount(Double.NaN))
     }
+
+    // ── 卡片计数（formatCountMaxThreeDigits：三位有效数字缩写）──
+
+    @Test
+    fun `卡片计数千内原样`() {
+        // 行为对齐 RN 自带单测 formatNumbers.test.ts
+        assertEquals("0", ProfileText.formatCountMaxThreeDigits(0))
+        assertEquals("7", ProfileText.formatCountMaxThreeDigits(7))
+        assertEquals("999", ProfileText.formatCountMaxThreeDigits(999))
+        assertEquals("0", ProfileText.formatCountMaxThreeDigits(null))
+    }
+
+    @Test
+    fun `卡片计数最多三位有效数字`() {
+        assertEquals("1K", ProfileText.formatCountMaxThreeDigits(1_000))
+        // ⚠️ 两位小数 —— 统计的 formatLargeNumber 只留一位，两套规则别混
+        assertEquals("4.73K", ProfileText.formatCountMaxThreeDigits(4_730))
+        assertEquals("12.5K", ProfileText.formatCountMaxThreeDigits(12_500))
+        assertEquals("574M", ProfileText.formatCountMaxThreeDigits(574_000_000))
+    }
+
+    @Test
+    fun `卡片计数四舍五入后晋位`() {
+        // 999950 → 1000K 必须晋成 1M（formatNumbers.ts:73-77 的二次处理）
+        assertEquals("1M", ProfileText.formatCountMaxThreeDigits(999_950))
+    }
 }

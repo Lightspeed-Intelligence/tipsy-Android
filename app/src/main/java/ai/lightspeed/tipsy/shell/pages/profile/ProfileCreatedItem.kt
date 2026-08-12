@@ -31,10 +31,30 @@ data class ProfileCreatedItem(
     /** 封面 —— 三种类型都是 `image_url`（game 还有 `game.assets` 回落，见 [parse]）。 */
     val coverUrl: String?,
     /**
-     * 审核阶段（`review_stage`）。UI 靠它显示待审/驳回角标
-     * （RN 侧 `ReviewStatusBadge.tsx` 78 行，本刀先只解析不渲染）。
+     * 审核阶段（嵌套层 `review_stage`，`un_reviewed/pass/failed`）。
+     * ⚠️ P4 订正：RN 从**嵌套对象**取（`character.review_stage`），
+     * 第一刀解析的顶层同名字段在实测响应里并不总在。
      */
     val reviewStage: String?,
+    /** 未成年审核状态（`minor_review_status`：approved/rejected/pending/final_rejected）。 */
+    val minorReviewStatus: String?,
+    /** 置顶（`is_pinned`）→ 右上 Pin 角标。 */
+    val isPinned: Boolean,
+    /** 公开（`is_public`）。自己主页上非公开显示锁角标。 */
+    val isPublic: Boolean,
+    /** 18+（`nsfw`）→ 封面模糊 + 审核通过时的 18+ 标签。 */
+    val nsfw: Boolean,
+    /** `character_type`，2 = 多角色 story（显示 story 标签）。 */
+    val characterType: Int?,
+    /**
+     * `final_hit` 位标记。已核实两处消费（`CharacterGridItem.tsx:98,576`）：
+     * `< 2` → 整卡遮罩不可用；`& 8` → 封面模糊。缺失按 null（不遮不糊）。
+     */
+    val finalHit: Int?,
+    /** 消息数（`stats.total_messages ?? total_messages`，嵌套 stats 优先）。 */
+    val messageCount: Long,
+    /** 曝光数（`stats.exposure_count`）。仅 character 卡 `is_public` 时显示。 */
+    val exposureCount: Long?,
     /** 该条原始 JSON。**编辑入口必须原封透传它**，见下。 */
     val rawJson: String,
 ) : ProfileListEntry {
@@ -51,6 +71,55 @@ data class ProfileCreatedItem(
             ProfileItemType.GAME -> "game_${gameId.orEmpty()}"
             else -> itemId.orEmpty()
         }
+
+    /**
+     * 左上审核角标（`CharacterGridItem.tsx:355-374` 的判定，三种卡同一函数形状）。
+     *
+     * rejected 优先于 pending；都不中返回 null（approved **不渲染角标**，
+     * RN 的 `getReviewStatusBadge` 对通过态返回 null）。
+     */
+    val reviewBadge: ProfileReviewBadge?
+        get() = when {
+            minorReviewStatus == MINOR_REJECTED ||
+                minorReviewStatus == MINOR_FINAL_REJECTED ||
+                reviewStage == REVIEW_FAILED -> ProfileReviewBadge.REJECTED
+
+            minorReviewStatus == MINOR_PENDING ||
+                reviewStage == REVIEW_UNREVIEWED -> ProfileReviewBadge.PENDING
+
+            else -> null
+        }
+
+    /** 未成年审核拦截（`CharacterGridItem.tsx:126-129`）—— 参与模糊判定。 */
+    private val isMinorReviewBlocked: Boolean
+        get() = minorReviewStatus == MINOR_REJECTED ||
+            minorReviewStatus == MINOR_PENDING ||
+            minorReviewStatus == MINOR_FINAL_REJECTED
+
+    /**
+     * 封面模糊，三条任一（`CharacterGridItem.tsx:571-577` 注释原文照录）：
+     * ① `!nsfw偏好 && item.nsfw` —— 壳内 nsfw 偏好恒 false（后端权威单向镜像），
+     *    故**所有 18+ 封面一律模糊**；② `final_hit & 8`；③ 未成年审核拦截。
+     */
+    val shouldBlurCover: Boolean
+        get() = nsfw || ((finalHit ?: 0) and FINAL_HIT_BLUR_BIT) != 0 || isMinorReviewBlocked
+
+    /**
+     * 整卡不可用遮罩（`CharacterGridItem.tsx:98`：`final_hit != null && < 2`）。
+     * 遮罩优先于一切内容与角标（RN 的 `isMasked ? maskCover : 正常内容`）。
+     */
+    val isMaskedUnavailable: Boolean
+        get() = finalHit != null && finalHit < FINAL_HIT_VISIBLE_MIN
+
+    /** story 标签（`character_type === 2`，`CharacterGridItem.tsx:527`）。 */
+    val showStoryTag: Boolean get() = characterType == CHARACTER_TYPE_STORY
+
+    /**
+     * 18+ 标签：nsfw 且**审核已通过**（`CharacterGridItem.tsx:528-531` ——
+     * 待审/驳回时左上位置让给审核角标，18+ 不再重复出现）。
+     */
+    val showNsfwTag: Boolean
+        get() = nsfw && reviewStage != REVIEW_FAILED && reviewStage != REVIEW_UNREVIEWED
 
     companion object {
 
@@ -70,17 +139,38 @@ data class ProfileCreatedItem(
             ) ?: return null
             // ⚠️ 展示字段在**嵌套对象**里，不在顶层 —— 见 [nestedPayload]
             val nested = nestedPayload(json)
+            val stats = nested?.optJSONObject(FIELD_STATS)
             return ProfileCreatedItem(
                 type = type,
                 itemId = ScalarCoercion.optString(json, FIELD_ITEM_ID)?.takeIf { it.isNotBlank() },
                 gameId = ScalarCoercion.optString(json, FIELD_GAME_ID)?.takeIf { it.isNotBlank() },
                 name = parseName(json, nested, type),
                 coverUrl = parseCoverUrl(json, nested),
-                reviewStage = ScalarCoercion.optString(json, FIELD_REVIEW_STAGE)
-                    ?.takeIf { it.isNotBlank() },
+                reviewStage = nestedThenTop(json, nested, FIELD_REVIEW_STAGE),
+                minorReviewStatus = nestedThenTop(json, nested, FIELD_MINOR_REVIEW_STATUS),
+                isPinned = nested?.optBoolean(FIELD_IS_PINNED, false) ?: false,
+                // 缺失按 true：把公开内容错标成私密（多画一把锁）比反过来
+                //（私密内容不标锁）更显眼、更容易被发现修掉
+                isPublic = nested?.optBoolean(FIELD_IS_PUBLIC, true) ?: true,
+                nsfw = nested?.optBoolean(FIELD_NSFW, false) ?: false,
+                characterType = nested?.let { ScalarCoercion.optInt(it, FIELD_CHARACTER_TYPE) },
+                finalHit = nested?.let { ScalarCoercion.optInt(it, FIELD_FINAL_HIT) },
+                messageCount = stats?.let { ScalarCoercion.optLong(it, FIELD_TOTAL_MESSAGES) }
+                    ?: nested?.let { ScalarCoercion.optLong(it, FIELD_TOTAL_MESSAGES) }
+                    ?: 0L,
+                exposureCount = stats?.let { ScalarCoercion.optLong(it, FIELD_EXPOSURE_COUNT) },
                 rawJson = json.toString(),
             )
         }
+
+        /** 嵌套层优先、顶层兜底（响应形状变化时不至于全空）。 */
+        private fun nestedThenTop(
+            json: JSONObject,
+            nested: JSONObject?,
+            field: String,
+        ): String? =
+            nested?.let { ScalarCoercion.optString(it, field)?.takeIf { s -> s.isNotBlank() } }
+                ?: ScalarCoercion.optString(json, field)?.takeIf { it.isNotBlank() }
 
         /**
          * 取嵌套的业务对象（`character` / `story` / `game`）。
@@ -183,8 +273,33 @@ data class ProfileCreatedItem(
         private const val FIELD_NESTED_GAME = "game"
         private const val FIELD_IMAGE_URL = "image_url"
         private const val FIELD_REVIEW_STAGE = "review_stage"
+        private const val FIELD_MINOR_REVIEW_STATUS = "minor_review_status"
+        private const val FIELD_IS_PINNED = "is_pinned"
+        private const val FIELD_IS_PUBLIC = "is_public"
+        private const val FIELD_NSFW = "nsfw"
+        private const val FIELD_CHARACTER_TYPE = "character_type"
+        private const val FIELD_FINAL_HIT = "final_hit"
+        private const val FIELD_STATS = "stats"
+        private const val FIELD_TOTAL_MESSAGES = "total_messages"
+        private const val FIELD_EXPOSURE_COUNT = "exposure_count"
+
+        private const val REVIEW_FAILED = "failed"
+        private const val REVIEW_UNREVIEWED = "un_reviewed"
+        private const val MINOR_REJECTED = "rejected"
+        private const val MINOR_PENDING = "pending"
+        private const val MINOR_FINAL_REJECTED = "final_rejected"
+        private const val CHARACTER_TYPE_STORY = 2
+
+        /** `final_hit` 第 4 位（&8）= 需媒体特殊处理 → 模糊。 */
+        private const val FINAL_HIT_BLUR_BIT = 8
+
+        /** `final_hit < 2` = 整卡不可用。 */
+        private const val FINAL_HIT_VISIBLE_MIN = 2
     }
 }
+
+/** 左上审核角标的两种可见态（approved 不渲染，`ReviewStatusBadge.tsx`）。 */
+enum class ProfileReviewBadge { PENDING, REJECTED }
 
 /** 创作列表的 item 类型（本刀三种；后续扩到 6 种，见 [ProfileCreatedItem] 注释）。 */
 enum class ProfileItemType(val wire: String) {

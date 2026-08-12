@@ -118,6 +118,55 @@ object ProfileText {
         return format.format(truncated)
     }
 
+    /**
+     * 卡片计数（曝光/消息）：**最多三位有效数字**的 K/M/B/T/Q 缩写
+     * （`formatCountMaxThreeDigits`，`utils/formatNumbers.ts:45-75`，
+     * 有 RN 侧单测锁行为）。本页**第六套**数字规则：
+     *
+     * | 输入 | 输出 | 与其它规则的分道处 |
+     * | --- | --- | --- |
+     * | 999 | `999` | 千内原样（同钱包） |
+     * | 1000 | `1K` | 千即缩写（钱包是 `1,000`） |
+     * | 4730 | `4.73K` | **两位小数**（统计的 formatLargeNumber 只留一位） |
+     * | 12500 | `12.5K` | 尾零剥掉 |
+     * | 999950 | `1M` | 四舍五入后 `1000K` 要晋位 |
+     *
+     * 非数/缺失显示 `0`（RN 的 `Number.isFinite` 守卫）。
+     */
+    fun formatCountMaxThreeDigits(count: Long?): String {
+        if (count == null) return "0"
+        val sign = if (count < 0) "-" else ""
+        var value = kotlin.math.abs(count.toDouble())
+        var unitIndex = 0
+        while (value >= 1000 && unitIndex < COUNT_UNITS.size - 1) {
+            value /= 1000
+            unitIndex++
+        }
+        var formatted = formatThreeDigits(value)
+        // 999.5K 四舍五入成 1000K 时晋位到 1M（formatNumbers.ts:73-77）
+        if (formatted.toDouble() >= 1000 && unitIndex < COUNT_UNITS.size - 1) {
+            value = formatted.toDouble() / 1000
+            unitIndex++
+            formatted = formatThreeDigits(value)
+        }
+        return sign + formatted + COUNT_UNITS[unitIndex]
+    }
+
+    /** 三位有效数字：整数位越多小数位越少，尾零剥掉（`formatValue`）。 */
+    private fun formatThreeDigits(number: Double): String {
+        val integerDigits = when {
+            number >= 100 -> 3
+            number >= 10 -> 2
+            number >= 1 -> 1
+            else -> 0
+        }
+        val decimalPlaces = (3 - integerDigits).coerceAtLeast(0)
+        val fixed = String.format(Locale.US, "%.${decimalPlaces}f", number)
+        return if (decimalPlaces > 0) fixed.trimEnd('0').trimEnd('.') else fixed
+    }
+
+    private val COUNT_UNITS = arrayOf("", "K", "M", "B", "T", "Q")
+
     private const val UID_HEAD = 3
     private const val UID_TAIL = 3
 }
