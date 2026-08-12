@@ -1,0 +1,638 @@
+package ai.lightspeed.tipsy.shell
+
+import ai.lightspeed.tipsy.shell.pages.profile.ProfileCreatedItem
+import ai.lightspeed.tipsy.shell.pages.profile.ProfileCreatedPage
+import ai.lightspeed.tipsy.shell.pages.profile.ProfileMemoryItem
+import ai.lightspeed.tipsy.shell.pages.profile.ProfileMemoryPage
+import ai.lightspeed.tipsy.shell.pages.profile.ProfileSource
+import ai.lightspeed.tipsy.shell.pages.profile.ProfileStats
+import ai.lightspeed.tipsy.shell.pages.profile.ProfileTab
+import ai.lightspeed.tipsy.shell.pages.profile.ProfileTabPaging
+import ai.lightspeed.tipsy.shell.pages.profile.ProfileViewModel
+import ai.lightspeed.tipsy.shell.user.CurrentUser
+import ai.lightspeed.tipsy.shell.user.CurrentUserStore
+import ai.lightspeed.tipsy.shell.user.UserInfoSource
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runTest
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * `ProfileViewModel` 的编排语义（W3 第一刀）。
+ *
+ * 测的是「错了不报错」的四件事：到底判定（total 为 0 的反直觉分支）、
+ * 翻页去重 + 空页续拉限次、失败不清列表、loading 不能照抄 RN 的死请求语义。
+ */
+class ProfileViewModelTest {
+
+    // ── 到底判定 ────────────────────────────────────
+
+    @Test
+    fun `total 为 0 时算已到底`() = runTest {
+        // RN 的 `if (!total) return true`。反过来写会让空列表无限翻页
+        val api = FakeProfileApi(pages = listOf(page(items = emptyList(), total = 0)))
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+
+        assertTrue("total=0 必须判为到底", vm.state.value.hasReachedEnd)
+        assertEquals(1, api.createdCalls.size)
+    }
+
+    @Test
+    fun `累计数达到 total 时到底`() = runTest {
+        val api = FakeProfileApi(pages = listOf(page(items = listOf(item("a"), item("b")), total = 2)))
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+
+        assertTrue(vm.state.value.hasReachedEnd)
+    }
+
+    @Test
+    fun `累计数未达 total 时不到底`() = runTest {
+        val api = FakeProfileApi(pages = listOf(page(items = listOf(item("a")), total = 5)))
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+
+        assertFalse(vm.state.value.hasReachedEnd)
+    }
+
+    @Test
+    fun `到底后不再翻页`() = runTest {
+        val api = FakeProfileApi(pages = listOf(page(items = listOf(item("a")), total = 1)))
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        vm.onLoadMore()
+        advanceUntilIdle()
+
+        assertEquals("到底后不该再发请求", 1, api.createdCalls.size)
+    }
+
+    // ── 翻页与去重 ──────────────────────────────────
+
+    @Test
+    fun `翻页页码递增且第 0 页开始`() = runTest {
+        val api = FakeProfileApi(
+            pages = listOf(
+                page(items = listOf(item("a")), total = 10),
+                page(items = listOf(item("b")), total = 10),
+            ),
+        )
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        vm.onLoadMore()
+        advanceUntilIdle()
+
+        assertEquals(listOf(0, 1), api.createdCalls.map { it.page })
+    }
+
+    @Test
+    fun `翻页重复条目被去重`() = runTest {
+        val api = FakeProfileApi(
+            pages = listOf(
+                page(items = listOf(item("a"), item("b")), total = 10),
+                // 第二页把 a 又返回一次
+                page(items = listOf(item("a"), item("c")), total = 10),
+            ),
+        )
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        vm.onLoadMore()
+        advanceUntilIdle()
+
+        assertEquals(listOf("a", "b", "c"), vm.state.value.createdItems.map { it.itemId })
+    }
+
+    @Test
+    fun `翻页不替换已有条目而是追加`() = runTest {
+        // 方案 §8.4 禁止全量替换：替换会让可见卡片重配
+        val api = FakeProfileApi(
+            pages = listOf(
+                page(items = listOf(item("a")), total = 10),
+                page(items = listOf(item("b")), total = 10),
+            ),
+        )
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        vm.onLoadMore()
+        advanceUntilIdle()
+
+        assertEquals(2, vm.state.value.items.size)
+        assertEquals("a", vm.state.value.createdItems.first().itemId)
+    }
+
+    @Test
+    fun `空页续拉有限次不会无限循环`() = runTest {
+        // 后端一直返回同一页时，不限次会打爆请求
+        val repeated = page(items = listOf(item("a")), total = 100)
+        val api = FakeProfileApi(pages = List(20) { repeated })
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        vm.onLoadMore()
+        advanceUntilIdle()
+
+        val calls = api.createdCalls.size
+        assertTrue("续拉必须被限次，实际发了 $calls 次", calls <= 1 + ProfileTabPaging.MAX_EMPTY_DEDUPE_STREAK + 1)
+    }
+
+    // ── 失败处理 ────────────────────────────────────
+
+    @Test
+    fun `首屏失败显示错误且不卡在 loading`() = runTest {
+        val api = FakeProfileApi(pages = emptyList(), failCreated = true)
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+
+        assertNotNull("首屏空列表失败要给错误", vm.state.value.errorMessage)
+        assertFalse(vm.state.value.isInitialLoading)
+    }
+
+    @Test
+    fun `翻页失败不清已有列表也不显错误`() = runTest {
+        // 方案 §8.4：把用户正在看的内容抹掉比翻页失败更糟
+        val api = FakeProfileApi(pages = listOf(page(items = listOf(item("a")), total = 10)))
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        api.failCreated = true
+        vm.onLoadMore()
+        advanceUntilIdle()
+
+        assertEquals("列表必须保留", 1, vm.state.value.items.size)
+        assertNull("已有数据时翻页失败不该弹错误", vm.state.value.errorMessage)
+        assertFalse(vm.state.value.isLoadingMore)
+    }
+
+    @Test
+    fun `统计拉取失败不影响列表`() = runTest {
+        val api = FakeProfileApi(
+            pages = listOf(page(items = listOf(item("a")), total = 1)),
+            failStats = true,
+        )
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+
+        assertEquals(1, vm.state.value.items.size)
+        assertEquals("统计失败时走 EMPTY", ProfileStats.EMPTY, vm.state.value.stats)
+    }
+
+    @Test
+    fun `用户信息拉取失败时不发统计请求`() = runTest {
+        // 没有 userId 就发 stats 是无意义请求
+        val api = FakeProfileApi(pages = listOf(page(items = emptyList(), total = 0)))
+        val vm = viewModel(api, failUserInfo = true)
+        vm.onAppear()
+        advanceUntilIdle()
+
+        assertEquals(0, api.statsCalls.size)
+        assertNull(vm.state.value.user)
+    }
+
+    // ── loading 语义 ────────────────────────────────
+
+    @Test
+    fun `首屏成功后 loading 结束`() = runTest {
+        // RN 的整页 loading 接的是不上屏的死请求 /character/list/self，
+        // 壳接 /user/created/list —— 照抄会得到永不消失的骨架屏
+        val api = FakeProfileApi(pages = listOf(page(items = listOf(item("a")), total = 1)))
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+
+        assertFalse(vm.state.value.isInitialLoading)
+        assertEquals(1, vm.state.value.items.size)
+    }
+
+    @Test
+    fun `已有数据时再次 onAppear 不重复拉首屏`() = runTest {
+        val api = FakeProfileApi(pages = listOf(page(items = listOf(item("a")), total = 10)))
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        vm.onAppear()
+        advanceUntilIdle()
+
+        assertEquals("列表已有数据就不该再拉第 0 页", 1, api.createdCalls.size)
+    }
+
+    @Test
+    fun `onAppear 每次都刷用户信息与统计`() = runTest {
+        // RN 侧 FollowInfo 是 isFocused 时 mutate：改完头像回到页面要立刻更新
+        val api = FakeProfileApi(pages = listOf(page(items = listOf(item("a")), total = 10)))
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        vm.onAppear()
+        advanceUntilIdle()
+
+        assertEquals(2, api.statsCalls.size)
+    }
+
+    // ── 下拉刷新 ────────────────────────────────────
+
+    @Test
+    fun `下拉刷新从第 0 页重新累计`() = runTest {
+        val api = FakeProfileApi(
+            pages = listOf(
+                page(items = listOf(item("a")), total = 10),
+                page(items = listOf(item("b")), total = 10),
+                page(items = listOf(item("c")), total = 10),
+            ),
+        )
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        vm.onLoadMore()
+        advanceUntilIdle()
+        assertEquals(2, vm.state.value.items.size)
+
+        vm.onRefresh()
+        advanceUntilIdle()
+
+        assertEquals("刷新后只剩新的第 0 页", 1, vm.state.value.items.size)
+        assertEquals("c", vm.state.value.createdItems.first().itemId)
+        assertEquals(listOf(0, 1, 0), api.createdCalls.map { it.page })
+    }
+
+    @Test
+    fun `刷新中重复触发被忽略`() = runTest {
+        val api = FakeProfileApi(pages = List(5) { page(items = listOf(item("a")), total = 10) })
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        val before = api.createdCalls.size
+        vm.onRefresh()
+        vm.onRefresh()
+        advanceUntilIdle()
+
+        assertEquals("第二次 onRefresh 不该再发请求", before + 1, api.createdCalls.size)
+    }
+
+    // ── 登录态变化 ──────────────────────────────────
+
+    @Test
+    fun `登出时清空且不发 REQUIRED 请求`() = runTest {
+        // AuthStateHub 硬约束：登出后 authorized 请求必然被前置拒绝。
+        // Profile 两个接口都是 REQUIRED —— 与 Home 的 OPPORTUNISTIC 不同，
+        // 照抄 HomeViewModel 的"无条件重拉"会打两个必然失败的请求
+        val api = FakeProfileApi(pages = listOf(page(items = listOf(item("a")), total = 10)))
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        val callsBefore = api.createdCalls.size
+        val statsBefore = api.statsCalls.size
+
+        vm.onAuthChanged(loggedIn = false)
+        advanceUntilIdle()
+
+        assertEquals("登出后不该再发列表请求", callsBefore, api.createdCalls.size)
+        assertEquals("登出后不该再发统计请求", statsBefore, api.statsCalls.size)
+        assertTrue("列表要清空", vm.state.value.items.isEmpty())
+        assertNull("用户信息要清空", vm.state.value.user)
+    }
+
+    @Test
+    fun `登录后重新拉取`() = runTest {
+        val api = FakeProfileApi(pages = List(3) { page(items = listOf(item("a")), total = 10) })
+        val vm = viewModel(api)
+        vm.onAuthChanged(loggedIn = true)
+        advanceUntilIdle()
+
+        assertTrue("登录后要拉列表", api.createdCalls.isNotEmpty())
+        assertTrue("登录后要拉统计", api.statsCalls.isNotEmpty())
+    }
+
+    @Test
+    fun `登出再登录不残留上一账号的列表`() = runTest {
+        val api = FakeProfileApi(
+            pages = listOf(
+                page(items = listOf(item("old")), total = 10),
+                page(items = listOf(item("new")), total = 10),
+            ),
+        )
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        assertEquals("old", vm.state.value.createdItems.single().itemId)
+
+        vm.onAuthChanged(loggedIn = false)
+        advanceUntilIdle()
+        vm.onAuthChanged(loggedIn = true)
+        advanceUntilIdle()
+
+        assertEquals("必须是新账号的数据", "new", vm.state.value.createdItems.single().itemId)
+    }
+
+    // ── 请求参数契约 ────────────────────────────────
+
+    @Test
+    fun `创作列表带上当前语言`() = runTest {
+        val api = FakeProfileApi(pages = listOf(page(items = emptyList(), total = 0)))
+        val vm = viewModel(api, language = { "ja" })
+        vm.onAppear()
+        advanceUntilIdle()
+
+        assertEquals("ja", api.createdCalls.first().languageCode)
+    }
+
+    @Test
+    fun `统计请求带自己的 userId`() = runTest {
+        val api = FakeProfileApi(pages = listOf(page(items = emptyList(), total = 0)))
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+
+        assertEquals(TEST_USER_ID, api.statsCalls.first())
+    }
+
+    // ── 多 tab：游标隔离与在飞链 ────────────────────
+
+    @Test
+    fun `切 tab 后游标互不污染`() = runTest {
+        // 这是分页状态按 tab 分表的存在理由：裸字段会让切回来的 tab
+        // 从对方的页码继续拉，首屏缺前 N 页（ProfileTabPaging 类注释）
+        val api = FakeProfileApi(
+            pages = listOf(
+                page(items = listOf(item("a")), total = 30),
+                page(items = listOf(item("b")), total = 30),
+                page(items = listOf(item("c")), total = 30),
+            ),
+            memoryPages = listOf(memoryPage(items = listOf(memoryItem("m1")), total = 30)),
+        )
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        vm.onLoadMore()
+        advanceUntilIdle()
+        // 创作已到第 2 页（nextPage=2）
+        vm.onTabSelected(ProfileTab.MEMORY)
+        advanceUntilIdle()
+        vm.onTabSelected(ProfileTab.CREATED)
+        advanceUntilIdle()
+        vm.onLoadMore()
+        advanceUntilIdle()
+
+        assertEquals("创作的翻页必须从自己的页码继续", listOf(0, 1, 2), api.createdCalls.map { it.page })
+        assertEquals("记忆只拉过首屏", listOf(0), api.memoryCalls)
+        assertEquals(listOf("a", "b", "c"), vm.state.value.createdItems.map { it.itemId })
+    }
+
+    @Test
+    fun `切回已加载的 tab 不重拉`() = runTest {
+        val api = FakeProfileApi(
+            pages = listOf(page(items = listOf(item("a")), total = 1)),
+            memoryPages = listOf(memoryPage(items = listOf(memoryItem("m1")), total = 1)),
+        )
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        vm.onTabSelected(ProfileTab.MEMORY)
+        advanceUntilIdle()
+        vm.onTabSelected(ProfileTab.CREATED)
+        advanceUntilIdle()
+        vm.onTabSelected(ProfileTab.MEMORY)
+        advanceUntilIdle()
+
+        assertEquals("记忆首屏只该拉一次", listOf(0), api.memoryCalls)
+        assertEquals("m1", vm.state.value.memoryItems.single().plotId)
+    }
+
+    @Test
+    fun `记忆 total 为 0 时判到底且不续拉`() = runTest {
+        val api = FakeProfileApi(
+            pages = listOf(page(items = listOf(item("a")), total = 1)),
+            memoryPages = listOf(memoryPage(items = emptyList(), total = 0)),
+        )
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        vm.onTabSelected(ProfileTab.MEMORY)
+        advanceUntilIdle()
+
+        assertTrue(vm.state.value.hasReachedEnd)
+        assertEquals(listOf(0), api.memoryCalls)
+        vm.onLoadMore()
+        advanceUntilIdle()
+        assertEquals("到底后不再翻页", listOf(0), api.memoryCalls)
+    }
+
+    @Test
+    fun `未接数据源的 tab 只切选中态不发请求`() = runTest {
+        val api = FakeProfileApi(pages = listOf(page(items = listOf(item("a")), total = 1)))
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        val created = api.createdCalls.size
+
+        vm.onTabSelected(ProfileTab.ROLE_CARD)
+        advanceUntilIdle()
+        vm.onLoadMore()
+        advanceUntilIdle()
+
+        assertEquals(ProfileTab.ROLE_CARD, vm.state.value.selectedTab)
+        assertEquals("占位 tab 不该发任何列表请求", created, api.createdCalls.size)
+        assertTrue(api.memoryCalls.isEmpty())
+    }
+
+    @Test
+    fun `切走打断在飞首屏后切回能重拉`() = runTest {
+        // 被取消的首屏若不复位，isInitialLoading 会永远卡 true，
+        // loadFirstPageIfNeeded 从此跳过这个 tab（ViewModel.cancelInFlight 注释）
+        val api = FakeProfileApi(
+            pages = listOf(page(items = listOf(item("a")), total = 1)),
+            memoryPages = listOf(memoryPage(items = listOf(memoryItem("m1")), total = 1)),
+        )
+        val gate = CompletableDeferred<Unit>()
+        api.memoryGate = gate
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+
+        vm.onTabSelected(ProfileTab.MEMORY)
+        advanceUntilIdle() // 在飞链挂在 gate 上
+        assertEquals(listOf(0), api.memoryCalls)
+
+        vm.onTabSelected(ProfileTab.CREATED) // 打断
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        val interrupted = vm.state.value.pagingOf(ProfileTab.MEMORY)
+        assertFalse("被打断的首屏必须复位", interrupted.isInitialLoading)
+        assertFalse(interrupted.hasLoadedOnce)
+        assertTrue("取消的响应不得落数据", interrupted.items.isEmpty())
+
+        api.memoryGate = null
+        vm.onTabSelected(ProfileTab.MEMORY)
+        advanceUntilIdle()
+
+        assertEquals("切回要重拉", listOf(0, 0), api.memoryCalls)
+        assertEquals("m1", vm.state.value.memoryItems.single().plotId)
+    }
+
+    @Test
+    fun `下拉刷新复位其它 tab 待重拉`() = runTest {
+        // RN 的 handleRefresh 把五个 tab 全 mutate（CharacterGrid.tsx:252-262）。
+        // 单在飞链的对应物：当前 tab 立即重拉，其它 tab 复位、下次进入重拉
+        val api = FakeProfileApi(
+            pages = List(3) { page(items = listOf(item("a$it")), total = 1) },
+            memoryPages = List(2) { memoryPage(items = listOf(memoryItem("m$it")), total = 1) },
+        )
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        vm.onTabSelected(ProfileTab.MEMORY)
+        advanceUntilIdle()
+        vm.onTabSelected(ProfileTab.CREATED)
+        advanceUntilIdle()
+        assertEquals(listOf(0), api.memoryCalls)
+
+        vm.onRefresh()
+        advanceUntilIdle()
+
+        assertFalse(vm.state.value.pagingOf(ProfileTab.MEMORY).hasLoadedOnce)
+        vm.onTabSelected(ProfileTab.MEMORY)
+        advanceUntilIdle()
+        assertEquals("刷新后再进记忆要重拉", listOf(0, 0), api.memoryCalls)
+        assertEquals("m1", vm.state.value.memoryItems.single().plotId)
+    }
+
+    @Test
+    fun `语言 settle 后全 tab 复位且当前 tab 带新语言重拉`() = runTest {
+        var lang = "en"
+        val api = FakeProfileApi(
+            pages = List(3) { page(items = listOf(item("a$it")), total = 1) },
+            memoryPages = listOf(memoryPage(items = listOf(memoryItem("m1")), total = 1)),
+        )
+        val vm = viewModel(api, language = { lang })
+        vm.onAppear()
+        advanceUntilIdle()
+        vm.onTabSelected(ProfileTab.MEMORY)
+        advanceUntilIdle()
+        vm.onTabSelected(ProfileTab.CREATED)
+        advanceUntilIdle()
+
+        lang = "ja"
+        vm.onLanguageSettled()
+        advanceUntilIdle()
+
+        assertEquals("ja", api.createdCalls.last().languageCode)
+        assertFalse("其它 tab 也要复位", vm.state.value.pagingOf(ProfileTab.MEMORY).hasLoadedOnce)
+    }
+
+    @Test
+    fun `占位 tab 上下拉刷新只刷用户与统计并收圈`() = runTest {
+        val api = FakeProfileApi(pages = listOf(page(items = listOf(item("a")), total = 1)))
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        vm.onTabSelected(ProfileTab.ROLE_CARD)
+        advanceUntilIdle()
+        val created = api.createdCalls.size
+        val stats = api.statsCalls.size
+
+        vm.onRefresh()
+        advanceUntilIdle()
+
+        assertFalse("刷新圈必须收起", vm.state.value.isRefreshing)
+        assertEquals("不发列表请求", created, api.createdCalls.size)
+        assertEquals("统计要刷", stats + 1, api.statsCalls.size)
+    }
+
+    // ── fixtures ────────────────────────────────────
+
+    private fun TestScope.viewModel(
+        api: FakeProfileApi,
+        language: () -> String = { "en" },
+        failUserInfo: Boolean = false,
+    ): ProfileViewModel {
+        val userSource = object : UserInfoSource {
+            override suspend fun fetchCurrentUser(): CurrentUser? {
+                if (failUserInfo) throw RuntimeException("boom")
+                return CurrentUser(TEST_USER_ID, "昵称", null, null)
+            }
+        }
+        return ProfileViewModel(
+            api = api,
+            userStore = CurrentUserStore(userSource, logWarn = { _, _ -> }),
+            languageProvider = language,
+            scope = this,
+            logWarn = { _, _ -> },
+        )
+    }
+
+    private class FakeProfileApi(
+        private val pages: List<ProfileCreatedPage> = emptyList(),
+        private val memoryPages: List<ProfileMemoryPage> = emptyList(),
+        var failCreated: Boolean = false,
+        private val failStats: Boolean = false,
+    ) : ProfileSource {
+        data class CreatedCall(val page: Int, val languageCode: String)
+
+        val createdCalls = mutableListOf<CreatedCall>()
+        val memoryCalls = mutableListOf<Int>()
+        val statsCalls = mutableListOf<String>()
+
+        /** 置一个未完成的 Deferred 可让记忆请求挂起（测「切走取消在飞链」用）。 */
+        var memoryGate: CompletableDeferred<Unit>? = null
+
+        private var cursor = 0
+        private var memoryCursor = 0
+
+        override suspend fun fetchSelfStats(userId: String): ProfileStats {
+            statsCalls += userId
+            if (failStats) throw RuntimeException("stats boom")
+            return ProfileStats(1, 2, 3, 4)
+        }
+
+        override suspend fun fetchCreatedPage(page: Int, languageCode: String): ProfileCreatedPage {
+            createdCalls += CreatedCall(page, languageCode)
+            if (failCreated) throw RuntimeException("created boom")
+            // 按调用顺序取，页码不作索引（刷新会回到 0 但要给新数据）
+            val result = pages.getOrNull(cursor) ?: pages.lastOrNull()
+            cursor++
+            return result ?: ProfileCreatedPage(emptyList(), 0, null)
+        }
+
+        override suspend fun fetchMemoryPage(page: Int): ProfileMemoryPage {
+            memoryCalls += page
+            memoryGate?.await()
+            val result = memoryPages.getOrNull(memoryCursor) ?: memoryPages.lastOrNull()
+            memoryCursor++
+            return result ?: ProfileMemoryPage(emptyList(), 0L)
+        }
+    }
+
+    private fun page(items: List<ProfileCreatedItem>, total: Long) =
+        ProfileCreatedPage(items = items, total = total, rawList = null)
+
+    private fun memoryPage(items: List<ProfileMemoryItem>, total: Long) =
+        ProfileMemoryPage(items = items, total = total)
+
+    private fun item(id: String): ProfileCreatedItem =
+        ProfileCreatedItem.parse(
+            JSONObject().put("item_type", "character").put("item_id", id).put("nickname", id),
+        )!!
+
+    private fun memoryItem(id: String): ProfileMemoryItem =
+        ProfileMemoryItem.parse(JSONObject().put("plot_id", id), null, null)!!
+
+    private companion object {
+        const val TEST_USER_ID = "u-self"
+    }
+}
