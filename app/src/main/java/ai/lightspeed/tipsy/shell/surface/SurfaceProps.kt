@@ -47,6 +47,12 @@ object SurfaceProps {
     const val USER_ID = "userId"
 
     /**
+     * Follow 列表的类型：`followers` / `following`
+     * （对齐 `FollowInfo.tsx:57,71` 传的 `type`）。
+     */
+    const val FOLLOW_TYPE = "type"
+
+    /**
      * 把 route 转成业务 props。
      *
      * @return 平铺的业务参数；无参数的 route 返回**空 map**。
@@ -79,9 +85,27 @@ object SurfaceProps {
 
         is AppRoute.UserProfile -> mapOf(USER_ID to route.userId)
 
+        /*
+         * Follow 列表需要 userId + type。
+         *
+         * ⚠️ 这两个 prop 现在**没有消费方** —— RN 侧不存在 FollowSurface
+         * （已核实 `tipsy-app/src/surfaces/` 下无该文件），`follow.tsx` 是
+         * ProfileStack 里的普通页面。这里先按 `FollowInfo.tsx:57,71` 的导航参数
+         * 形状备好，真正启用时要么建 Surface、要么改成原生页（需 owner 定）。
+         */
+        is AppRoute.Follow -> mapOf(
+            USER_ID to route.userId,
+            FOLLOW_TYPE to route.type,
+        )
+
         // 其余 route 的目标页尚未启用（Router 会先拦下）。
         // **不写 else -> null**：加新 route 时编译器要强制我来这里想一次
         // 「它需要什么 props」，而不是静默传空
+        //
+        // Settings / EditProfile / UserCoins 都是无参入口：
+        // - Settings 是原生列表（§8.1），根本不经 Surface props
+        // - EditProfile 在 RN 侧是同页 Drawer，无路由参数
+        // - UserCoins 页自己从 user store 取当前用户，不需要壳传 id
         is AppRoute.DailyGemEntry,
         is AppRoute.UserBalance,
         is AppRoute.Subscribe,
@@ -89,6 +113,9 @@ object SurfaceProps {
         is AppRoute.CreateProfileDetail,
         is AppRoute.GemsPurchase,
         is AppRoute.Login,
+        is AppRoute.Settings,
+        is AppRoute.EditProfile,
+        is AppRoute.UserCoins,
         -> emptyMap()
     }
 }

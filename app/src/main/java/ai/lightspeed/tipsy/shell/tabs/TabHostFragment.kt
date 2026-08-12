@@ -2,6 +2,7 @@ package ai.lightspeed.tipsy.shell.tabs
 
 import ai.lightspeed.tipsy.shell.R
 import ai.lightspeed.tipsy.shell.pages.home.HomeFragment
+import ai.lightspeed.tipsy.shell.pages.profile.ProfileFragment
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
@@ -135,11 +136,13 @@ class TabHostFragment : Fragment() {
 
     private fun createFragment(tab: ShellTab): Fragment = when (tab) {
         ShellTab.HOME -> HomeFragment.newInstance()
-        // 其余 Tab 的原生页属后续波次（Screen → W4，ChatList/Profile → W3）。
+        // Profile 是 W3 第一刀：资料头部 + 统计 + 创作/记忆两个内容 tab
+        //（其余 3 个内容 tab、钱包区、编辑动作属后续包，见 ProfileViewModel 类注释）
+        ShellTab.PROFILE -> ProfileFragment.newInstance()
+        // 其余 Tab 的原生页属后续波次（Screen → W4，ChatList → W3）。
         // 用带明确文案的占位而不是空白 —— 空白会让人以为挂载失败
         ShellTab.SCREEN -> TabPlaceholderFragment.newInstance(tab.routeName, "W4")
         ShellTab.CHAT_LIST -> TabPlaceholderFragment.newInstance(tab.routeName, "W3")
-        ShellTab.PROFILE -> TabPlaceholderFragment.newInstance(tab.routeName, "W3")
         // isRealTab 已在 onTabClick 拦下，走到这里说明有人改了那个判断
         ShellTab.CREATE -> error("Create 是伪 Tab，不应创建 Fragment")
     }
