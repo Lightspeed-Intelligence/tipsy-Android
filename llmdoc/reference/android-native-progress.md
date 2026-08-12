@@ -24,7 +24,7 @@
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + **`analytics/`** + **`tabs/`** + **`pages/login/`、`pages/home/`**。**已有第一批业务代码**（登录页 + Home）。
 - **submodule**：pin `95760a6622424bc9be238e7790fdbf38fe7c7fb2`（远端分支 `feat/android-native`，**未合进 main/release**，按约定靠子模块指针引用）。W2 首包**不动 submodule**。
 - **已验证**：G1 在 main 上 22 步全绿（§2.22）。W2 两包本机都跑过同序列：lint 无新增、`assembleGooglePlayDebug`、**app 单测 476 条，failures=0 / skipped=0**。release 权限数仍 **51**（未因 coil 增加）。
-- **不存在 / 未验**：Screen / ChatList / Profile 三个 Tab 仍是占位页；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。P9 前生产路由白名单为空，ChatDetail 保持 disabled。真机侧**下拉刷新、性别筛选、进程重建恢复**（§2.23）仍未验；§2.24 全部四项（筛选抽屉、种子写入门禁、离线渲染种子、种子与真实数据衔接）**真机已验**。
+- **不存在 / 未验**：Screen / ChatList / Profile 三个 Tab 仍是占位页；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。P9 前生产路由白名单为空，ChatDetail 保持 disabled。真机侧 §2.23 三项（下拉刷新、性别筛选、进程重建恢复）与 §2.24 四项（筛选抽屉、种子写入门禁、离线渲染种子、种子与真实数据衔接）**均已真机验过**；⚠️ 其中**性别筛选持久化查出真实缺陷**（`config-persist-storage` 信封不存在时静默不写 → 全新安装用户改性别永不持久化，§2.23.1，**待 owner 定修法**）。
 
 ## 1. 波次状态
 
@@ -1218,13 +1218,67 @@ RN bundler 自己把它们打进 `drawable-mdpi` —— 说明 RN 完全不参�
   - World 卡片的 `∞ 0` 是**真实数据**不是 bug：图标按 `character_type == 9` 分流
     走 `ic_card_world_interaction`，计数取 `stats.studio_chat_count`
     （`HomeFeedParserTest` 断言 42），测试环境多数 world 该字段确为 0。
-  - **仍未在真机上验**：下拉刷新、性别筛选（`All` 下拉）、进程重建恢复。
+  - ✅ **下拉刷新 / 性别筛选 / 进程重建恢复已补验**（2026-08-12，Pixel 10 模拟器 /
+    Android 17）—— 详见 §2.23.1。**性别筛选查出一处真实缺陷**（持久化静默失效）。
 
 新增测试按「错了不报错」的风险点组织：`HomeTextTest`(19，逐条对着 RN 实现取真值)、
 `HomeViewModelTest`(19，session 语义/去重续拉/失败不清列表)、
 `HomeApiContractTest`(10，真实 HTTP 验实际请求体)、`HomeFeedParserTest`(15)、
 `ShellTabBarTest`(16)、`AnalyticsTest`(12，含"sink 内再次 track 不死锁")、
 `HomeFilterEnvelopeTest`(4)。
+
+#### 2.23.1 补验三项真机（2026-08-12，Pixel 10 模拟器 / Android 17）
+
+§2.23 遗留的三项。**下拉刷新与进程重建通过；性别筛选查出一处真实缺陷。**
+
+**✅ 下拉刷新** —— 刷新前首屏 Elara / Niko / Ben，下拉后换成 Emi / test，
+一批新 `characterId` 重新曝光。种子信封同步被**覆盖**而非叠加：
+14:22:55 存 `[Elara, Niko, Kai, Ben, Dylan]` → 14:23:32 存 `[test, Emi, ...]`，
+与两次首屏一一对应，证明走的是 `isRefresh && nextPage == 0` 清 `lockedHead` 的路径。
+
+⚠️ 手势前提：列表**必须在顶部**下拉才触发。我第一次在滑到中段时下拉，无任何反应
+也无日志 —— 不是缺陷，但会让人误判成刷新没接线。
+
+**✅ 进程重建恢复** —— `KEYCODE_HOME` 后台化 + `kill -9`（保留 task，比
+`force-stop` 更接近系统回收），PID 13267 → 14089，恢复后**无 FATAL / ANR**，
+首屏渲染 Emi / test 即 14:23:32 那份种子，说明冷启动读种子在进程重建路径同样成立。
+
+⚠️ **series 选择不恢复是设计如此，不是缺陷**：kill 前停在 Trending，恢复回 For You。
+已核实 `selectedSeries` 无任何持久化、也不进 `SavedStateHandle`（全仓 grep 无命中），
+RN 侧同样不持久化 series。
+
+**🔴 性别筛选：内存态正确，持久化静默失效**
+
+内存态没问题：选 Female 后顶部标签变 `Female`、列表换成 Esmeralda / Iris，
+新种子信封也正确记为 `gender: 'Female'`（14:26:50）。
+
+但 `config-persist-storage` 这个 key 在设备上**始终不存在**（dump `mmkv.default`
+确认 0 命中），于是 `kill -9` 重启后性别**退回 All**。
+
+根因是 `mergeGenderIntoEnvelope` 的刻意设计：信封缺 `state` 子对象就
+`return null` → 调用方不写（`HomeFilterStore.kt:109-117`）。这个保守策略本身是对的
+（§2.23 记了整体覆盖会重置用户二十多项设置），**但它假设信封已由 RN 建好**。
+
+已核实这不是壳的路径写错：RN 的 `zustandStorage` 用 `createMMKV()` **无参数**，
+即默认实例 `mmkv.default`（`tipsy-app/src/store/mmkv.ts:4`），与壳读写同一个 store。
+信封不存在只是因为这台模拟器上 RN 的 config store 从未初始化过。
+
+**所以缺陷是真实的**：全新安装的用户，在 RN 侧首次初始化该 store 之前，
+改性别**永远不持久化且无任何提示** —— 每次冷启动都退回 All。
+`writeGender` 的返回值虽然是 `false`，但调用方按注释刻意不回滚 UI、也不告警，
+于是本地完全看不出异常（与 §2.24 种子那处同类的"静默"缺陷）。
+
+⚠️ **修法不能是"信封不存在就建一个"** —— 壳凭空造 Zustand 信封要猜 `version` 和
+其余二十多个字段的默认值，猜错等于给 RN 侧一个结构不对的信封，
+比不持久化更糟。合理方向是二者之一，需 owner 定：
+1. 只在信封缺失时写一个**仅含 `{state:{gender}}` + 正确 `version`** 的最小信封，
+   靠 Zustand persist 的 merge 语义补齐其余字段（要先核实 RN 的 `version` 与
+   `merge` 配置，否则可能触发 migrate 分支）
+2. 判定为"可接受"：等 W3 迁 Settings 时 RN store 必然已初始化，届时自愈
+
+**未验**：上述任一修法都没做，本次只定位。也没验"信封已存在时 merge 是否只动
+`gender`"—— 设备上无信封可比对，该行为目前只有 `HomeFilterEnvelopeTest`(4) 的
+单测覆盖。
 
 ### 2.24 W2 第二刀：标签筛选抽屉 + For You 冷启动种子（2026-08-12）
 
@@ -1385,6 +1439,16 @@ PR #20 修）。写进去也能当门禁，但那样带标签这一次的种子�
   不需要产品决策 —— `home.tsx:505-511` 的 filter 已给出答案，**Android 显示 World、
   Multi-character 两端都隐藏**。World 点进去是 SimulatorGame WebView，方案 §8.1 已定不迁。
 - **§12.9 Apple 登录按钮在 Android 是否展示**、**§12.10 `/login/password` 是否对外**
+
+W2 真机验证新增的一项（2026-08-12，§2.23.1）：
+
+- **性别筛选持久化在信封缺失时静默失效** —— `config-persist-storage` 不存在时
+  `mergeGenderIntoEnvelope` 刻意 `return null` 不写，导致全新安装用户改性别
+  永不持久化、每次冷启动退回 `All`，且 UI 无任何提示。已核实壳读写路径正确
+  （RN 的 `zustandStorage` 也是默认 MMKV 实例），根因是信封尚未被 RN 初始化。
+  **需 owner 在两条路里定**：(1) 缺失时写仅含 `{state:{gender}}` 的最小信封
+  （须先核实 RN 的 `version` / `merge` 配置，否则可能触发 migrate 分支）；
+  (2) 判为可接受，等 W3 迁 Settings 时 RN store 必然已初始化而自愈。
 
 ## 6. 已废弃的历史尝试
 
