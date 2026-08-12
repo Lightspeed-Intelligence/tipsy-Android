@@ -64,10 +64,12 @@ import coil3.compose.AsyncImage
 fun ProfileHeaderSection(
     user: CurrentUser?,
     stats: ProfileStats,
+    wallet: ProfileWallet,
     topPadding: Dp,
     onEditProfileClick: () -> Unit,
     onFollowersClick: () -> Unit,
     onFollowingClick: () -> Unit,
+    onWalletAction: (ProfileWalletAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxWidth().padding(top = topPadding)) {
@@ -131,6 +133,11 @@ fun ProfileHeaderSection(
         Spacer(Modifier.height(BIO_TOP_GAP.dp))
         ProfileBioRow(bio = user?.bio, onEditClick = onEditProfileClick)
         Spacer(Modifier.height(BIO_BOTTOM_GAP.dp))
+
+        // 钱包卡只在自己主页有（`CharacterGrid.tsx:1431` `isSelf && <UserProfileGems/>`）
+        // —— 本刀只有自己视角，无条件渲染；接他人主页时要跟 bio 一起加 isSelf 分流
+        ProfileWalletCard(wallet = wallet, onAction = onWalletAction)
+        Spacer(Modifier.height(WALLET_BOTTOM_GAP.dp))
     }
 }
 
@@ -239,6 +246,7 @@ private const val STATS_TOP_GAP = 16
 // bio 区尺寸照 `renderBio.tsx` styles：marginH 10 / mb 12 / radius 8 / padding 10
 private const val BIO_TOP_GAP = 8
 private const val BIO_BOTTOM_GAP = 12
+private const val WALLET_BOTTOM_GAP = 12
 private const val BIO_MARGIN_H = 10
 private const val BIO_RADIUS = 8
 private const val BIO_PADDING = 10

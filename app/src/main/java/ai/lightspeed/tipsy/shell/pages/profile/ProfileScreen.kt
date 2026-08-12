@@ -93,6 +93,7 @@ fun ProfileScreen(
     onFollowersClick: () -> Unit,
     onFollowingClick: () -> Unit,
     onSettingsClick: () -> Unit,
+    onWalletAction: (ProfileWalletAction) -> Unit,
     /** 状态栏高度；与 `HomeScreen` 一样是实际 dp，不参与 `.s` 缩放。 */
     statusBarPadding: Dp,
     modifier: Modifier = Modifier,
@@ -164,6 +165,7 @@ fun ProfileScreen(
                             onEditProfileClick = onEditProfileClick,
                             onFollowersClick = onFollowersClick,
                             onFollowingClick = onFollowingClick,
+                            onWalletAction = onWalletAction,
                         )
                         if (showFloatingTabBar) {
                             ProfileTabBar(
@@ -234,6 +236,7 @@ private fun ProfileGrid(
     onEditProfileClick: () -> Unit,
     onFollowersClick: () -> Unit,
     onFollowingClick: () -> Unit,
+    onWalletAction: (ProfileWalletAction) -> Unit,
 ) {
     val tab = state.selectedTab
     LazyVerticalGrid(
@@ -250,10 +253,12 @@ private fun ProfileGrid(
             ProfileHeaderSection(
                 user = state.user,
                 stats = state.stats,
+                wallet = state.wallet,
                 topPadding = headerTopPadding,
                 onEditProfileClick = onEditProfileClick,
                 onFollowersClick = onFollowersClick,
                 onFollowingClick = onFollowingClick,
+                onWalletAction = onWalletAction,
             )
         }
 

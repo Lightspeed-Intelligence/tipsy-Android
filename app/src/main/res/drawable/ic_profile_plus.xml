@@ -1,0 +1,17 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="12dp"
+    android:height="12dp"
+    android:viewportWidth="14"
+    android:viewportHeight="14">
+    <!-- profile/plus.svg 原样转写：两笔白 70% 圆头描边 -->
+    <path
+        android:pathData="M7,2.5V11.5"
+        android:strokeWidth="1"
+        android:strokeColor="#B3FFFFFF"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M2.5,7H11.5"
+        android:strokeWidth="1"
+        android:strokeColor="#B3FFFFFF"
+        android:strokeLineCap="round" />
+</vector>

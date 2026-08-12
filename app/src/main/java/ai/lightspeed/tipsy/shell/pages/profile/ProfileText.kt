@@ -1,5 +1,8 @@
 package ai.lightspeed.tipsy.shell.pages.profile
 
+import java.text.DecimalFormat
+import java.text.DecimalFormatSymbols
+import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -92,6 +95,28 @@ object ProfileText {
      */
     fun formatMemoryTime(epochSeconds: Long): String =
         SimpleDateFormat("h:mm a", Locale.US).format(Date(epochSeconds * 1000L))
+
+    /**
+     * 钱包整数（宝石/免费条数）：纯千分位分组，**没有 K/M 换算**
+     * （`formatMessageAmount`，`utils/subscribe.ts:3-9` 就是裸 `toLocaleString()`）。
+     * 这是本页**第四套**数字规则 —— 别复用统计的 [formatLargeNumber]（那套会把
+     * 1000 显示成 1K）。分组固定 en-US 形状（RN 按设备 locale，绝大多数拉丁
+     * 数字 locale 分组一致；固定是为了可测）。
+     */
+    fun formatWalletAmount(value: Long): String =
+        NumberFormat.getIntegerInstance(Locale.US).format(value)
+
+    /**
+     * 金币：**去尾到一位小数 + 千分位 + 恒带一位小数**（`formatCoinAmount`，
+     * `utils/coin.ts:50-58`：`floor(x*10+1e-8)/10` 再 min/max FractionDigits 1）。
+     * 0 显示 `0.0` 不是 `0`；负值与 NaN 归 0（RN 的 `Math.max(amount, 0)`）。
+     */
+    fun formatCoinAmount(value: Double): String {
+        val normalized = if (value.isFinite()) kotlin.math.max(value, 0.0) else 0.0
+        val truncated = kotlin.math.floor(normalized * 10 + 1e-8) / 10
+        val format = DecimalFormat("#,##0.0", DecimalFormatSymbols(Locale.US))
+        return format.format(truncated)
+    }
 
     private const val UID_HEAD = 3
     private const val UID_TAIL = 3

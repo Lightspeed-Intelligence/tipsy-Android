@@ -56,6 +56,7 @@ class ProfileFragment : Fragment() {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = ProfileViewModel(
                 api = ProfileApi(app.apiClient),
+                walletApi = ProfileWalletApi(app.apiClient),
                 userStore = CurrentUserStore(UserInfoApi(app.apiClient)),
                 languageProvider = { L10n.current },
             ) as T
@@ -115,6 +116,20 @@ class ProfileFragment : Fragment() {
                     onFollowersClick = { openFollow(state.user?.userId, TYPE_FOLLOWERS) },
                     onFollowingClick = { openFollow(state.user?.userId, TYPE_FOLLOWING) },
                     onSettingsClick = { requestRoute(AppRoute.Settings) },
+                    // 三个出口对齐 UserProfileGems 的三个 handler（方案 §8.1 出口表）：
+                    // 宝石+/升级 → GemsSubscriptionSurface（RN 同页不同 tab，路由参数
+                    // 形状照 handleAddGem/handleUpgrade）；金币 → UserCoinsSurface
+                    onWalletAction = { action ->
+                        when (action) {
+                            ProfileWalletAction.ADD_GEMS -> requestRoute(
+                                AppRoute.GemsPurchase(mapOf("initialTab" to "buy_gems")),
+                            )
+                            ProfileWalletAction.UPGRADE -> requestRoute(
+                                AppRoute.GemsPurchase(mapOf("initialTab" to "subscription")),
+                            )
+                            ProfileWalletAction.COINS -> requestRoute(AppRoute.UserCoins)
+                        }
+                    },
                     // ⚠️ 用 Compose 的 inset 而不是 ViewCompat listener + 手动 render：
                     // listener 在**首帧之后**才回调，那之前值是 0，顶栏会画到状态栏底下
                     // （真机实测：Settings 与系统图标重叠）。
