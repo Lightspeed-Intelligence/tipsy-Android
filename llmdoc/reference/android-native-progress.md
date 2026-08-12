@@ -13,7 +13,7 @@
 > ｜ **原生登录页：邮箱验证码链路真机已验**（§2.20）—— Google/Apple 受 §12.8 签名指纹阻塞未接
 >
 > **W2 进行中**：五 Tab shell + Home 首屏（§2.23，主链路真机已验）+ 标签筛选抽屉
-> 与 For You 冷启动种子（§2.24，**抽屉真机已验；种子写入门禁与离线渲染未验**）。
+> 与 For You 冷启动种子（§2.24，**抽屉、种子写入门禁、离线渲染种子真机全已验**）。
 > Home 剩 banner / 彩蛋弹窗 / mp4 封面三项（前两项评估留 RN Surface）。
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
@@ -23,8 +23,8 @@
 - **波次进度**：W0 完成；W1 的契约层全部落地且已在 CI 组合验证（§2.22），只剩 §12 实例关闭链与 P9；P2 剩余/P3/P7/P8 均已决策推迟。**W2 已开工**：五 Tab + Home 首屏（§2.23）。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + **`analytics/`** + **`tabs/`** + **`pages/login/`、`pages/home/`**。**已有第一批业务代码**（登录页 + Home）。
 - **submodule**：pin `95760a6622424bc9be238e7790fdbf38fe7c7fb2`（远端分支 `feat/android-native`，**未合进 main/release**，按约定靠子模块指针引用）。W2 首包**不动 submodule**。
-- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W2 两包本机都跑过同序列：lint 无新增、`assembleGooglePlayDebug`、**app 单测 474 条，failures=0 / skipped=0**。release 权限数仍 **51**（未因 coil 增加）。
-- **不存在 / 未验**：Screen / ChatList / Profile 三个 Tab 仍是占位页；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。P9 前生产路由白名单为空，ChatDetail 保持 disabled。真机侧**下拉刷新、性别筛选、进程重建恢复**（§2.23）与**种子写入门禁、离线渲染种子**（§2.24）仍未验；§2.24 的筛选抽屉本身已验。
+- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W2 两包本机都跑过同序列：lint 无新增、`assembleGooglePlayDebug`、**app 单测 476 条，failures=0 / skipped=0**。release 权限数仍 **51**（未因 coil 增加）。
+- **不存在 / 未验**：Screen / ChatList / Profile 三个 Tab 仍是占位页；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。P9 前生产路由白名单为空，ChatDetail 保持 disabled。真机侧**下拉刷新、性别筛选、进程重建恢复**（§2.23）仍未验；§2.24 全部四项（筛选抽屉、种子写入门禁、离线渲染种子、种子与真实数据衔接）**真机已验**。
 
 ## 1. 波次状态
 
@@ -1228,16 +1228,32 @@ RN bundler 自己把它们打进 `drawable-mdpi` —— 说明 RN 完全不参�
 
 ### 2.24 W2 第二刀：标签筛选抽屉 + For You 冷启动种子（2026-08-12）
 
-W2 的 Home 收尾。**单测与构建全绿**（476 条）。真机分两半：
+W2 的 Home 收尾。**单测与构建全绿**（476 条）。真机**已全验**
+（Pixel 10 模拟器 / Android 17，2026-08-12 复验）：
 
-- ✅ **已验**（Pixel 10 模拟器 / Android 17）：抽屉拉取并渲染真实标签、选中高亮、
-  关抽屉后列表收敛到筛选结果
-- 🔴 **未验**：「选了标签不写种子」与「离线冷启动渲染种子」。⚠️ 我第一次报的
-  「已在真机确认」是**无效的** —— 为清种子删了 `mmkv.default`，那是 app 共用的
-  MMKV store（`token-storage` 也在里面），会话被清空、应用重启到登录页，
-  后续盲点坐标全落在登录页上，而我把登出后写的 `guest` 信封读成了通过。
-  **清种子要用下拉刷新**（`isRefresh && nextPage == 0` 会清 `lockedHead`），
-  不要删共享 store
+- ✅ 抽屉拉取并渲染真实标签、选中高亮、关抽屉后列表收敛到筛选结果
+- ✅ **选了标签不写种子**：勾 Anime 后 feed 收敛到 1 条，dump `mmkv.default`
+  确认**没有**新信封落地；取消勾选再确认，14:03:09 立刻落一份 5 条的新信封
+  —— 证明「不写」只发生在有筛选时，无筛选路径正常
+- ✅ **离线冷启动渲染种子**：断网 + `force-stop` 后冷启，首屏渲染出信封里的
+  33 / Luciano / 111 / Evelyn Sharp（第 5 条在屏外）。**无全屏 spinner**
+  —— UI 树里唯一的 `ProgressBar` 是 42x42、y≈213 在搜索栏内，种子之上没有遮挡层，
+  §2.24 的「有种子时先显示种子且不显示 spinner」在真机成立
+- ✅ **种子与真实数据衔接**：恢复网络后冷启，首屏仍是同 4 个角色**且无重复卡片**
+  （去重按 stableKey 生效）；下滑出现 Tomboy Lena / Yuto / Luna / Sylvan
+  —— 种子在前、真实数据追加在后
+
+⚠️ 我第一次报的「已在真机确认」是**无效的** —— 为清种子删了 `mmkv.default`，
+那是 app 共用的 MMKV store（`token-storage` 也在里面），会话被清空、应用重启到
+登录页，后续盲点坐标全落在登录页上，而我把登出后写的 `guest` 信封读成了通过。
+**清种子要用下拉刷新**（`isRefresh && nextPage == 0` 会清 `lockedHead`），
+不要删共享 store。
+
+真机操作两条经验（下次省时间）：
+- launcher activity 是 `ai.lightspeed.tipsy/.shell.MainActivity`（**不是** `.MainActivity`，
+  用后者 `am start` 会静默落到桌面）；`adb shell monkey -p ... -c LAUNCHER 1` 最省事
+- `adb screencap` 拉回的 PNG 多次为空，**改用 `uiautomator dump` 读 UI 树**取控件
+  文本与坐标，比截图可靠
 
 #### 标签筛选抽屉（`HomeFragment.onFilterClick` 的 stub 已删除）
 
@@ -1312,11 +1328,12 @@ PR #20 修）。写进去也能当门禁，但那样带标签这一次的种子�
 
 #### 验证
 
-- app 单测 **474 条**（新增 43）、failures=0、**skipped=0**
+- app 单测 **476 条**（新增 43）、failures=0、**skipped=0**（2026-08-12 复跑确认）
 - lint 无新增（baseline 仍 5 条）、`assembleGooglePlayDebug` 通过
-- **真机 `NOT RUN`** —— 抽屉的打开/勾选/应用、种子的冷启动表现**都还没上真机**。
-  种子尤其需要真机验：它依赖 MMKV 实际可写，而 §2.23 刚修过
-  `LegacyMmkvStore` 全新安装不可用的缺陷
+- **真机 `PASS`**（2026-08-12，Pixel 10 模拟器 / Android 17）：抽屉打开/勾选/应用、
+  「选了标签不写种子」、离线冷启动渲染种子、种子与真实数据衔接**四项全过**，
+  详见本节开头。种子这项尤其需要真机：它依赖 MMKV 实际可读写，而 §2.23 刚修过
+  `LegacyMmkvStore` 全新安装不可用的缺陷 —— 已确认冷启动读得到信封
 
 新增测试：`HomeTagParserTest`(11)、`HomeForYouCacheTest`(16，三道门禁 + 坏数据)、
 `HomeViewModelTest` +16（标签分流 9 + 种子 7）。
