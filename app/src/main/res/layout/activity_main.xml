@@ -1,15 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  壳宿主布局（W0）。
-  native_root：原生页（ComposeView）；surface_container：RN Surface 的 Fragment 容器。
-  两者叠放，Surface 挂上时盖住原生根 —— 便于验证挂载/卸载与返回栈。
+  壳宿主布局。
+
+  native_root_container：壳的根（W2 起是 TabHostFragment 的五 Tab；W0 时是
+    一个直接挂 ComposeView 的自检页）。
+  surface_container：盖在根之上的页面容器 —— 登录页与 RN Surface。
+
+  两者叠放，上层挂上时盖住根 —— 返回栈由 FragmentManager 管，返回即回到 Tab。
+
+  ⚠️ **这里刻意不设 android:background** —— App 底色由主题的 windowBackground
+  提供（`values/styles.xml` 的 AppTheme）。原因见那里的注释：windowBackground
+  在视图树 inflate 之前就绘制，是唯一能覆盖冷启动首帧的层；两处都设则是
+  真正的 overdraw（lint 会报）。
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <androidx.compose.ui.platform.ComposeView
-        android:id="@+id/native_root"
+    <FrameLayout
+        android:id="@+id/native_root_container"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 

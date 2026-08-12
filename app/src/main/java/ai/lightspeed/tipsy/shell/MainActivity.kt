@@ -1,8 +1,8 @@
 package ai.lightspeed.tipsy.shell
 
-import ai.lightspeed.tipsy.shell.i18n.LocalizedText
-import ai.lightspeed.tipsy.shell.i18n.rememberCurrentLanguage
+import ai.lightspeed.tipsy.shell.analytics.Analytics
 import ai.lightspeed.tipsy.shell.pages.login.LoginFragment
+import ai.lightspeed.tipsy.shell.tabs.TabHostFragment
 import androidx.activity.enableEdgeToEdge
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
@@ -10,19 +10,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.unit.dp
 import androidx.fragment.app.commit
 import com.facebook.react.modules.core.DefaultHardwareBackBtnHandler
 
@@ -33,8 +21,16 @@ import com.facebook.react.modules.core.DefaultHardwareBackBtnHandler
  * 原生页是 Fragment 内挂 [ComposeView]，RN 页是 [RNSurfaceFragment]。
  * FragmentManager 统一处理返回栈、saved state、predictive back 与进程重建。
  *
- * W0 边界：这里还没有五 Tab 与 Router（W1/W2 的事），只提供一个能验证
- * 「原生根可显示 + 能挂载/卸载 RN Surface」的最小宿主。
+ * ## 层次（W2 起）
+ *
+ * ```
+ * native_root_container ── TabHostFragment（五 Tab，常驻）
+ * surface_container ───── 盖在其上：LoginFragment / RNSurfaceFragment
+ * ```
+ *
+ * 两个容器叠放：Tab 是根，登录页与 RN Surface 盖在上面并进返回栈。
+ * W0 的自检根（挂 DebugSurface 的两个按钮）已由真实首页替掉；
+ * [openDebugSurface] 保留但只剩深链/调试路径可达。
  */
 class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
 
@@ -68,6 +64,11 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
                 router.handle(AppRoute.GemsPurchase(params), AppRouter.Source.BRIDGE)
             }
         }
+        // 壳内业务页的导航入口（W2）。同样经 Router —— 方案 §4.7 单一入口：
+        // 业务页不得自己 commit Fragment 事务，否则 auth gate 与去重会被绕过
+        app.onRouteRequested = { route, source ->
+            runOnUiThread { router.handle(route, source) }
+        }
 
         // 语言可能在 RN Surface 里被改（语言设置页刻意留在 RN，方案 §8.1），
         // 而桥契约**没有 JS→壳 的语言通知方法**（已核实 tipsy-auth 只有壳→JS 的
@@ -97,18 +98,54 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
         // 启用某个路由要集中改那里并同步矩阵测试。
 
         if (savedInstanceState == null) {
-            // 原生根：证明壳自己能先渲染，不依赖 RN
-            findViewById<ComposeView>(R.id.native_root).setContent {
-                MaterialTheme {
-                    ShellHomeScreen(
-                        onOpenSurface = { openDebugSurface() },
-                        onOpenLogin = { openLogin() },
-                    )
-                }
+            // 五 Tab 是壳的根（W2）。原生根先渲染、不依赖 RN 这一点不变 ——
+            // 只是内容从 W0 的自检页换成了真实首页
+            supportFragmentManager.commit {
+                replace(R.id.native_root_container, TabHostFragment.newInstance(), TAG_TABS)
             }
+            // Bootstrap：无有效 token 直接弹登录页（对齐 RN 的 restoreSession，
+            // 见 bootstrapSession 注释）
+            bootstrapSession(app)
             // 冷启动的深链：Intent 已带 data
             router.handleUri(intent?.data?.toString(), AppRouter.Source.DEEP_LINK)
         }
+    }
+
+    /**
+     * 会话恢复（对齐 RN `useUserActon.ts:270-290` 的 `restoreSession`）。
+     *
+     * ## 无 token / token 已过期 → **直接弹登录页**
+     *
+     * RN 的 restoreSession 在这两种情况下调 `requestLogin('restore-session-no-token')`
+     * / `requestLogin('restore-session-expired')`。所以未登录冷启动看到的是登录页，
+     * **不是游客态首页** —— 本包 owner 明确选择对齐现网行为。
+     *
+     * Tab 骨架仍然先建好（上面已 commit），登录页盖在它之上；登录成功后
+     * `LoginFragment` 自己 popBackStack 回到首页，此时 `AuthStateHub.didLogin`
+     * 触发 Home 重拉。
+     *
+     * ## 与 RN 的一处**已知差异**（不是漏实现）
+     *
+     * RN 在 token 有效时还会 `POST /user/info` 拉用户信息、按 `language_code`
+     * 切语言、按 `onboardingStatus` 决定是否进引导流程。壳侧：
+     * - 语言已由 `bootstrapI18n` 从 `user-storage` 读本地镜像（W1-P5）
+     * - **`/user/info` 重拉与 onboarding 判定属下一包** —— 后者的权威判定在
+     *   `tipsy-app/src/surfaces/onboardingStage.ts`（有单测），落 `OnboardingSurface`（W4）
+     *
+     * 所以老用户冷启动不会自动进引导流程。这是分期边界。
+     */
+    private fun bootstrapSession(app: TipsyApplication) {
+        // hasToken() 是同步的本地判定（不发请求）。⚠️ 它只看"有没有"，
+        // 过期判定在 getValidToken() 里 —— 这里用它避免在启动关键路径上
+        // 触发一次可能的 refresh 网络请求
+        if (!app.tokenStore.hasToken()) {
+            Log.i(TAG, "会话恢复：无 token，拉起登录页")
+            openLogin()
+            return
+        }
+        Log.i(TAG, "会话恢复：本地有 token，进首页（/user/info 重拉属下一包）")
+        // 已登录：绑定埋点 uid，让 uid-required 事件不必排队
+        Analytics.bindUserId(app.tokenStore.currentUserId())
     }
 
     /**
@@ -146,6 +183,8 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
         (application as TipsyApplication).let {
             it.onPopSurfaceRequested = null
             it.onNavigateGemsPurchaseRequested = null
+            // 漏了这个会泄漏本 Activity（Application 是进程级，回调捕获了 this）
+            it.onRouteRequested = null
         }
         // 必须 dispose：Router 订阅了 AuthStateHub（进程级），
         // 不解绑会让已销毁的 Activity 收到登录事件 → 往死掉的 FragmentManager 提交事务
@@ -211,6 +250,9 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
 
         /** 登录页的 Fragment tag —— [openLogin] 靠它做幂等判定。 */
         const val TAG_LOGIN = "login"
+
+        /** 五 Tab 根的 Fragment tag。 */
+        const val TAG_TABS = "tabs"
     }
 
     /**
@@ -254,44 +296,6 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
         supportFragmentManager.commit {
             replace(R.id.surface_container, RNSurfaceFragment.newInstance("DebugSurface"))
             addToBackStack("DebugSurface")
-        }
-    }
-}
-
-@Composable
-private fun ShellHomeScreen(onOpenSurface: () -> Unit, onOpenLogin: () -> Unit) {
-    val language by rememberCurrentLanguage()
-    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(
-            modifier = Modifier.fillMaxSize().padding(24.dp),
-            verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(
-                text = "Tipsy Android Shell",
-                style = MaterialTheme.typography.headlineSmall,
-            )
-            // W1-P5 起原生页文案走 LocalizedText（自订阅语言变化）。
-            // **不要写 Text(L10n.t(key))** —— 那样 Compose 不知道读了可变状态，
-            // 语言切换后已组合的文本不重组，表现为「切了语言当前页没变」。
-            LocalizedText(
-                key = "Loading",
-                modifier = Modifier.padding(top = 8.dp),
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                text = "lang=$language",
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-            Button(onClick = onOpenSurface, modifier = Modifier.padding(top = 24.dp)) {
-                Text("挂载 DebugSurface")
-            }
-            // 原生登录页入口。W2 的五 Tab shell 到位后这个自检根会整体替掉，
-            // 在那之前它是唯一能手工进登录页的路径（桥的 requestLogin 也进同一页）
-            Button(onClick = onOpenLogin, modifier = Modifier.padding(top = 12.dp)) {
-                Text("打开原生登录页")
-            }
         }
     }
 }

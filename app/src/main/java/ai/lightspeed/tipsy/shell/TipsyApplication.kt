@@ -11,6 +11,7 @@ import com.facebook.react.ReactPackage
 import com.facebook.react.common.ReleaseLevel
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint
 import com.facebook.react.defaults.DefaultReactNativeHost
+import ai.lightspeed.tipsy.shell.analytics.Analytics
 import ai.lightspeed.tipsy.shell.auth.AuthStateHub
 import ai.lightspeed.tipsy.shell.auth.Generations
 import ai.lightspeed.tipsy.shell.auth.LegacyMmkvStore
@@ -24,6 +25,8 @@ import ai.lightspeed.tipsy.shell.i18n.L10n
 import ai.lightspeed.tipsy.shell.i18n.LanguageCodes
 import ai.lightspeed.tipsy.shell.network.ApiClient
 import ai.lightspeed.tipsy.shell.network.ApiErrorGate
+import ai.lightspeed.tipsy.shell.router.AppRoute
+import ai.lightspeed.tipsy.shell.router.AppRouter
 import android.util.Log
 import expo.modules.ApplicationLifecycleDispatcher
 import okhttp3.OkHttpClient
@@ -118,12 +121,15 @@ class TipsyApplication : Application(), ReactApplication {
     private lateinit var apiErrorGate: ApiErrorGate
 
     /**
-     * RN 侧 MMKV 的只读入口（W1-P5 用它读账号语言）。
+     * RN 侧 MMKV 的入口（W1-P5 读账号语言；W2 起 `HomeFilterStore` 读写筛选）。
      *
      * `lazy` 而非 `lateinit`：`bootstrapI18n` 在 `registerAuthBridge` 之前跑，
      * 而 MMKV 的初始化在两处都要用 —— 用 lazy 让谁先用谁触发，不依赖调用顺序。
+     *
+     * ⚠️ 这个 lazy 把实例缓存到**进程结束**，所以 `LegacyMmkvStore.open` 必须
+     * 在目录不存在时建目录而不是返回不可用实例（那个缺陷已修，见该类注释）。
      */
-    private val legacyStore by lazy { LegacyMmkvStore.open(this) }
+    val sharedMmkvStore by lazy { LegacyMmkvStore.open(this) }
 
     /**
      * 当前承载 Surface 的容器提供的"关闭自己"回调。
@@ -141,6 +147,28 @@ class TipsyApplication : Application(), ReactApplication {
      */
     var onNavigateGemsPurchaseRequested: ((Map<String, String>) -> Unit)? = null
 
+    /**
+     * 壳内页面发起导航的入口（W2）。
+     *
+     * ⚠️ **不要让业务页直接持 Router** —— 方案 §4.7 要求单一入口，而 Router 归
+     * 当前 Activity（它才有 FragmentManager）。业务 Fragment 经这里转接，
+     * Activity 在 onCreate/onDestroy 设置与清除。
+     *
+     * 为 null 时（无 Activity 在前台）**安全跳过并记日志**，同
+     * [onNavigateGemsPurchaseRequested] 的理由。
+     */
+    var onRouteRequested: ((AppRoute, AppRouter.Source) -> Unit)? = null
+
+    /** 业务页调这个而不是直接碰 Router。 */
+    fun requestRoute(route: AppRoute, source: AppRouter.Source) {
+        val handler = onRouteRequested
+        if (handler == null) {
+            Log.w(TAG, "导航请求到达但无前台 Activity，已跳过：${route.javaClass.simpleName}")
+            return
+        }
+        handler(route, source)
+    }
+
     override fun onCreate() {
         super.onCreate()
         DefaultNewArchitectureEntryPoint.releaseLevel = ReleaseLevel.STABLE
@@ -148,9 +176,31 @@ class TipsyApplication : Application(), ReactApplication {
         // i18n 必须早于 registerAuthBridge：桥的 getCurrentLanguageCode 会读
         // L10n.current，而 index.surfaces.js 在 runtime 启动时就调它对齐 i18n
         bootstrapI18n()
+        installAnalytics()
         registerAuthBridge()
         // Expo 模块的 Application 生命周期分发；autolinked 模块依赖它
         ApplicationLifecycleDispatcher.onApplicationCreate(this)
+    }
+
+    /**
+     * 装配埋点 facade（进度文档 §2.17）。
+     *
+     * **Qt 尚未接线**（owner 已决策推迟到业务迁移后），所以当前 sink 只落日志。
+     * 接 Qt 时只改这一处，业务页一行不动 —— 那正是先建 facade 的目的。
+     *
+     * ⚠️ release 下也保留日志？**不**：埋点参数里可能有 uid 等标识，
+     * 且量很大（每张卡片曝光一条）。只在 debug 打。
+     */
+    private fun installAnalytics() {
+        Analytics.install { eventId, params, pageName ->
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG_ANALYTICS, "$eventId page=$pageName params=$params")
+            }
+            // Qt 的真实出口在这里接（QtConfigure.preInit + onEventWithParams）。
+            // ⚠️ 现状是 Qt 的 preInit 在壳里**一次都不会调**（进度文档 §2.17
+            // 实测：QtPackage 只实现 ReactActivityLifecycleListener，而壳没有
+            // ReactActivity）—— 接线时必须先解决初始化，不能只加调用
+        }
     }
 
     /**
@@ -188,7 +238,7 @@ class TipsyApplication : Application(), ReactApplication {
      * 账号无语言意见时**不覆盖**，保留设备默认。
      */
     fun refreshAccountLanguage() {
-        val raw = legacyStore.getString(AccountLanguageReader.USER_STORAGE_KEY)
+        val raw = sharedMmkvStore.getString(AccountLanguageReader.USER_STORAGE_KEY)
         val accountLanguage = AccountLanguageReader.parse(raw) ?: return
         L10n.setLanguage(accountLanguage)
     }
@@ -309,5 +359,8 @@ class TipsyApplication : Application(), ReactApplication {
 
     private companion object {
         const val TAG = "TipsyApplication"
+
+        /** 埋点日志单独一个 tag，便于 `logcat -s` 过滤（量大）。 */
+        const val TAG_ANALYTICS = "TipsyAnalytics"
     }
 }

@@ -1,34 +1,38 @@
 # Tipsy Android 原生化迁移：现状（唯一状态真值）
 
 > 更新：2026-08-11 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
-> **G1 CI 已激活**（2026-08-10，`PAT_TOKEN` 已配，首次真绿，见 §2.10）
+> **G1 CI 已激活且在 main 上真绿**（§2.10 / §2.22）
 >
-> **W1 进行中** —— 细化方案见 [`../architecture/android-w1-plan.md`](../architecture/android-w1-plan.md)。
-> **P0 桥注册已接通、完整能力 PARTIAL**（§2.11）｜ **P1 auth closeout 已实现、组合验证待跑**（§2.13 / §2.18）｜ **P2 机制已验、兜底推迟**（§2.12）
+> **W1 基本收尾**（细化方案见 [`../architecture/android-w1-plan.md`](../architecture/android-w1-plan.md)）：
+> **P0 桥注册已接通、完整能力 PARTIAL**（§2.11）｜ **P1 auth closeout 已实现且 CI 已验**（§2.13 / §2.18 / §2.22）｜ **P2 机制已验、兜底推迟**（§2.12）
 > ｜ **P2 剩余 + P3 已决定合并推迟到上线前**（2026-08-10，见 W1 计划 §5.6）
 > ｜ **P4 Router/parser 机制已落地，ChatDetail 在 P9 前关闭**｜ **P5 i18n 已完成**（§2.16）
-> ｜ **P6 network closeout 已实现、组合验证待跑**（§2.14 / §2.18）
+> ｜ **P6 network closeout 已实现且 CI 已验**（§2.14 / §2.22）
 > ｜ **§12 Fragment 机制已落地、真实实例关闭链待收口**（§2.15）
 > ｜ **P7 Qt / P8 Sentry 已决定推迟到业务迁移后**（2026-08-11，见 §2.17）｜ **P9 未开始**
 > ｜ **原生登录页：邮箱验证码链路真机已验**（§2.20）—— Google/Apple 受 §12.8 签名指纹阻塞未接
+>
+> **W2 已开工**：五 Tab shell + Home 首屏接真实接口已落地（§2.23）——
+> **单测与构建全绿，主链路真机已验**（tab 切换 / 五个 series tab 真实列表 / 翻页；
+> 下拉刷新与性别筛选仍未验）。
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
 ## 0. 三十秒速览
 
-- **波次进度**：W0 完成；W1 的 P5 已过其落地 gate，第一份 auth/network correctness closeout 已实现但组合验证待跑；P0 注册机制已接通，P4 Router 机制已建，§12 实例关闭链仍待下一包；P2 只完成机制、P3 推迟、P7/P8 推迟到业务迁移后、P9 未开始。
-- **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost）+ `MainActivity`（Compose 原生根 + Router/i18n 接线）+ `RNSurfaceFragment`（§12 主体机制）+ `auth/`（6 类）+ `network/`（7 类）+ `router/`（3 类）+ `surface/`（2 类）+ `i18n/`（6 类）+ `bridge/ShellAuthProvider`。**仍是零业务代码。**
-- **submodule**：pin `95760a6622424bc9be238e7790fdbf38fe7c7fb2`（远端分支 `feat/android-native`，**未合进 main/release**，按约定靠子模块指针引用）。相对 closeout 原始审计 pin `a4eb9055d` 仅改了双壳 locale exporter，auth/network 契约未变。
-- **已验证**：历史 gate 已覆盖三 flavor debug、applicationId、内嵌 bundle、51 个 project autolink、Surface 两种 bundle 来源、MMKV 互操作及 P5 checkpoint 的 app 单测 211 条（skipped=0）。当前合并 worktree 静态有 244 个 app `@Test`，closeout 新增部分与组合结果尚未执行。
-- **不存在**：五 Tab、Sentry、Qt 埋点、core/feature 模块、**G3 nightly**（G1 已激活，但三 flavor 全量与 release 打包仍无自动防线）。P9 前生产路由白名单为空，当前 bundle 仍只注册 DebugSurface。
+- **波次进度**：W0 完成；W1 的契约层全部落地且已在 CI 组合验证（§2.22），只剩 §12 实例关闭链与 P9；P2 剩余/P3/P7/P8 均已决策推迟。**W2 已开工**：五 Tab + Home 首屏（§2.23）。
+- **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + **`analytics/`** + **`tabs/`** + **`pages/login/`、`pages/home/`**。**已有第一批业务代码**（登录页 + Home）。
+- **submodule**：pin `95760a6622424bc9be238e7790fdbf38fe7c7fb2`（远端分支 `feat/android-native`，**未合进 main/release**，按约定靠子模块指针引用）。W2 首包**不动 submodule**。
+- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W2 首包本机跑过同序列：lint 无新增、`assembleGooglePlayDebug`、**app 单测 431 条 + 桥单测 15 条，failures=0 / skipped=0**。release 权限数仍 **51**（未因 coil 增加）。
+- **不存在 / 未验**：Screen / ChatList / Profile 三个 Tab 仍是占位页；标签筛选抽屉是 stub（下一包）；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。P9 前生产路由白名单为空，ChatDetail 保持 disabled。真机侧**下拉刷新、性别筛选、进程重建恢复仍未验**（§2.23）。
 
 ## 1. 波次状态
 
 | 波次 | 内容 | 业务量 | 状态 | source_rn_sha | target_android_sha |
 | --- | --- | --- | --- | --- | --- |
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
-| W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟡 **进行中（P5 已完成；closeout 组合验证与 P9 前置仍待收口）** | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16） |
-| W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | ⬜ 阻塞于 W1 | — | — |
+| W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟡 **契约层已收口且 CI 已验；§12 关闭链 + P9 未完** | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17 已并） |
+| W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **进行中**：Login 邮箱链路已验、五 Tab + Home 首屏已落地（§2.20 / §2.23） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | — |
 | W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | ⬜ 阻塞于 W2 | — | — |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | ⬜ 阻塞于 W3 | — | — |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
@@ -515,7 +519,7 @@ lint 的 NewerVersionAvailable**（它建议升到 2.4.1）—— 这个版本�
 
 它证明的是**机制**。P2 状态是「机制已验证,真实数据待验」,**不是完成**。
 
-### 2.13 W1-P1：auth 契约（closeout 已实现，组合验证待跑）
+### 2.13 W1-P1：auth 契约（closeout 已实现；组合验证已于 §2.22 补上）
 
 **壳成为 token 的唯一刷新者与持久化者。** 原落地 checkpoint 的单测
 **62 条全绿（skipped=0）**，人工门禁四步全过；§2.18 的 correctness closeout
@@ -605,7 +609,7 @@ JVM 单测会全红。**没有**用 `testOptions.unitTests.returnDefaultValues =
 那会让所有未 mock 的 Android API 静默返回默认值,正是方案 §5.4 点名的假绿色。
 改为引入真实 `org.json:json` 测试依赖。
 
-### 2.14 W1-P6：network 层（closeout 已实现，组合验证待跑）
+### 2.14 W1-P6：network 层（closeout 已实现；组合验证已于 §2.22 补上）
 
 `shell/network/` 七个类。原落地 checkpoint 新增/验证 **46 条**网络单测，
 当时 app 单测共 **156 条**、skipped=0；§2.18 随后修改了同一实现，
@@ -866,7 +870,7 @@ Android 第一天就做」。已提供 `LocalizedText` 与 `rememberLocalizedStr
 **对冲**：Qt 需要现在就定一个薄 `Analytics` facade，业务页照常调用，
 Qt 接上前只在 debug 打日志。⚠️ **这一处刻意不遵循「未实现项 debug 抛异常」的
 纪律**（§2.11 那两条实现纪律）—— 埋点每次事件都抛会让 debug 不可用。
-**facade 尚未落地**，W2 第一个业务页开工前必须建。
+~~**facade 尚未落地**，W2 第一个业务页开工前必须建。~~ ✅ **已落地**（§2.23）。
 
 **两处已存在的静默洞（不是「还没做的功能」，2026-08-11 实测）**：
 
@@ -887,7 +891,7 @@ Qt 接上前只在 debug 打日志。⚠️ **这一处刻意不遵循「未实�
 **已告知的代价**：W2/W3 那 32.6k 行迁移期间远端崩溃证据缺位，只能靠 logcat
 与本机复现。**Sentry 的价值恰在迁移过程中最高**，而不是迁完之后。
 
-### 2.18 W1-CLOSEOUT-1：实现完成，组合验证 NOT RUN（2026-08-11）
+### 2.18 W1-CLOSEOUT-1：实现完成（组合验证当时 NOT RUN，**已由 §2.22 兑现**）
 
 执行包：[`../architecture/android-w1-closeout-ready.md`](../architecture/android-w1-closeout-ready.md)。
 
@@ -910,7 +914,8 @@ Qt 接上前只在 debug 打日志。⚠️ **这一处刻意不遵循「未实�
 `a4eb9055d..95760a662` 只包含 locale exporter 变化，auth/network 契约未变。
 
 **未执行组合验证**：Gradle、Kotlin/Java 编译、JVM 单测、lint、assemble、设备验证。
-因此本包现在是“实现完成、组合验证待跑”，不是完成 gate，也不能据此开始 W2。
+当时本包是“实现完成、组合验证待跑”。**该状态已被 §2.22 取代** —— main 上的 G1 已 22 步全绿，
+这批实现现有 CI 层面的组合证据。
 
 当前合并 worktree 静态可见 `app/src/test` 有 **244** 个 `@Test`，`tipsy-auth`
 Android 子模块有 **15** 个；这里只是声明数量，**不等于执行通过**。
@@ -1039,9 +1044,13 @@ app 单测 **49 条**覆盖本页（ViewModel 编排 / envelope 契约 / 状态�
 「Please try again later」且不启动倒计时（可立即重试）。
 
 **未验**：API 24 真机/模拟器（该档 TLS 连不上本后端，是发现此 bug 的环境但未跑
-通完整链路）；三个 applicationId 的覆盖升级；`didLogin` 广播的下游消费（W2 五 Tab
-尚不存在）。RN 侧 `onAuthStateChanged` 目前**只有类型声明、无 JS 订阅方**，所以
-登录只发 `authStateHub`、未发 `TipsyAuthRegistry`；接 Surface 前需补齐对称性。
+通完整链路）；三个 applicationId 的覆盖升级。RN 侧 `onAuthStateChanged` 目前
+**只有类型声明、无 JS 订阅方**，所以登录只发 `authStateHub`、未发 `TipsyAuthRegistry`；
+接 Surface 前需补齐对称性。
+
+> ⚠️ **本节原写「`didLogin` 广播的下游消费（W2 五 Tab 尚不存在）」—— 该前提已失效**：
+> §2.23 的 `HomeFragment` 已订阅 `AuthStateHub`（登录/登出都重拉列表 + 绑定/解绑
+> 埋点 uid）。也就是说登录链现在**有真实下游**了，但那条链本身仍未真机验证。
 
 ### 2.21 CI 挂死：`runTest` 里嵌 `runBlocking`（2026-08-11 修复）
 
@@ -1075,18 +1084,146 @@ PR #16 的 G1 记录是 `fail 1h0m15s`，PR #17 首跑是 `cancelled 1h0m15s`
 `:tipsy-auth:testDebugUnitTest --rerun-tasks` → 15 条、ignored=0，
 `LiveAppSafetyTest` 已执行；`:app:lintDirectApkDebug` 过。
 
+### 2.22 W1 组合验证已在 CI 真绿（2026-08-11）
+
+§2.18 曾把 W1-CLOSEOUT-1 记为「实现完成、组合验证 NOT RUN」。**那条已由 CI 兑现**：
+`main` 上 §2.21 修复后的第一次 push run
+（[31490358140](https://github.com/Lightspeed-Intelligence/tipsy-Android/actions/runs/31490358140)）
+**22 步全过、32m27s**，含 lint 硬门 → assembleGooglePlayDebug → release manifest →
+app 单测 → `:tipsy-auth` 桥单测 → `skipped=0` 守卫。
+
+也就是说 §2.18 / §2.13 / §2.14 里那批 closeout 实现现在有 CI 层面的组合证据，
+不再是「只跑过静态守卫」。**仍未覆盖的**：三 flavor 全量、release 打包（属 G3
+nightly，未建）、真机验收（§2.19 的 `NOT RUN` 依然成立）。
+
+### 2.23 W2 第一刀：五 Tab shell + Home 首屏（2026-08-11）
+
+第一个 W2 工作包。**壳从「自检根」变成真实首页**：启动进 Home，底部五 Tab 可切。
+
+落地的模块：
+
+| 目录 | 内容 |
+| --- | --- |
+| `shell/analytics/` | `Analytics` facade（Qt 前置，见下） |
+| `shell/tabs/` | `ShellTab` / `ShellTabBar` / `TabHostFragment` / `TabPlaceholderFragment` |
+| `shell/pages/home/` | 系列与性别枚举、`HomeApi`、解析、`HomeViewModel`、`HomeScreen` 与卡片、`HomeFilterStore` |
+
+**tabbar 对齐 RN Android 现网**（owner 2026-08-11 决定）：实心 `#341F1D`、无圆角、
+无模糊、无选中胶囊。⚠️ RN 侧 iOS 分支是**另一套**（悬浮胶囊 + BlurView + 200ms
+滑动胶囊，即 iOS 壳 `FloatingTabBarView.swift` 那套）—— 照 iOS 做会与现网 Android
+用户看到的界面明显不同。
+
+**未登录冷启动直接弹登录页**（owner 决定，对齐 RN `restoreSession`）：无 token /
+已过期 → `requestLogin`。Tab 骨架先建好、登录页盖在其上。
+
+#### Home 做到哪（明确边界）
+
+已做：6 个系列（**含 World** —— 见下）、真实分页、下拉刷新（系统控件，对齐 RN 的
+Android 分支）、性别筛选与持久化、session 语义、翻页去重 + 限次续拉、5 个页面级埋点。
+
+未做（下一包）：冷启动缓存（`useForYouListCache` 的信封 + authScope 门禁 + 7 天 TTL）、
+标签筛选抽屉（382 行）、banner（946 行，方案 §8.1 评估留 RN Surface）、每日彩蛋弹窗、
+可见性驱动的曝光去重、mp4 动图封面。
+
+#### ✅ 开放问题 §12.4 可以关闭：Android **显示** World
+
+方案 §12.4 问「Home 是否包含 World 系列」—— 代码里早有答案，不需要产品决策：
+`home.tsx:505-511` 的 filter 是
+`series !== 'Multi-character' && (Platform.OS === 'android' || series !== 'World')`。
+
+即 **Multi-character 两端都隐藏，World 只在 Android 显示**（iOS 壳的 `HomeAPI.swift`
+因此只有 5 个 case，Android 是 6 个）。World 列表走 `/game/public/projects`
+（每页 **20**，不是 21），点进去是 SimulatorGame WebView —— 方案 §8.1 已定不迁，
+本包点击落明确日志而非静默。
+
+#### Qt facade 已落地（§2.17 的对冲条件解除）
+
+§2.17 写明「facade 尚未落地，W2 第一个业务页开工前必须建」—— **本包已建**。
+业务页调 `Analytics.track`，Qt 接上前只在 debug 落日志，接线时只改
+`TipsyApplication.installAnalytics()` 一处。
+
+uid 排队语义照搬 RN（`QtAnalytics.ts:404-420`）：四个 uid-required 事件在用户 id
+绑定前排队（上限 50，超出丢**最旧**），绑定后补 `uid` 冲出。方案 §8.1 记的
+「`character_page_exposure` 需手动补 uid」由 facade 统一处理，业务页不必各自记得。
+
+⚠️ **Qt 本身仍未初始化**（§2.17 的两处静默洞依旧）：facade 的存在不等于埋点在上报。
+
+#### 顺带修掉的真实缺陷：`LegacyMmkvStore` 全新安装永久不可用
+
+§2.16 末尾记的「后续风险」在本包变成真 bug —— 因为有了写入点（gender）。
+
+`LegacyMmkvStore.open` 在 MMKV 目录不存在时直接返回**不可用实例**，而
+`TipsyApplication` 用 `by lazy` 把它缓存到**进程结束**。全新安装时
+`bootstrapI18n()` 先打开它（目录还不存在 → 缓存成不可用），随后
+`MmkvTokenPersistence` 才建目录。结果整个进程内：首次登录写入账号语言后仍读不到，
+且 gender **永久写不进去**。现改为目录不存在时 `mkdirs()`（与
+`MmkvTokenPersistence.open` 一致）。
+
+#### `config-persist-storage` 的写入是本包破坏性最大的一处
+
+它是 Zustand persist 信封 `{state, version}`，整体覆盖会丢掉同一信封里其余二十多个
+字段（模型选择、上下文长度、已点击标签…）→ **用户一堆设置被重置且不报错**。
+故写入走纯函数 `mergeGenderIntoEnvelope`（只 put 一个 key）并有专门单测。
+
+⚠️ **`nsfw` 只读不写**：它的真值在后端 `user.nsfw`，由 RN 的 store 底部订阅单向
+镜像（`config_persist.ts` 末尾）。壳写它会破坏单向流，表现为「关了 NSFW 过一会儿
+自己开回来」。所以 `HomeFilters` 接口**刻意没有 `writeNsfw`** —— 别为了对称补一个。
+
+#### 依赖：coil3 **不是新增依赖**
+
+`io.coil-kt.coil3:coil 3.0.4` 已由 `react-native-screens` 引入（已核实其
+`android/build.gradle:249-253`）。壳显式声明**同一版本**，与 mmkv / coroutines
+同性质 —— 版本是与 RN 侧的耦合约束，声明更高版本会经 Gradle 冲突解析把 RN 那份
+也顶上去。必须同时引 `coil-network-okhttp`：不引则任何 http(s) URL **静默不加载**
+（只报一句 "no fetcher"，图片位置空白）。
+
+#### 位图资源放 `drawable-nodpi`
+
+RN 侧这些图**只有一份**（无 `@2x`/`@3x`），像素恰好是设计稿的 3 倍。
+RN bundler 自己把它们打进 `drawable-mdpi` —— 说明 RN 完全不参与 Android 密度分档。
+故放 `nodpi` 并由使用点显式给 dp（漏给会按原始像素铺开，40dp 图标变 120dp）。
+`IconMissingDensityFolder` 已显式 disable 并写明理由，详见
+[`android-bitmap-assets.md`](android-bitmap-assets.md)。
+
+#### 验证
+
+- **app 单测 431 条**（新增 95 条）、failures=0、**skipped=0**；报告 mtime 已核对
+  （§2.21 的判据：先看 mtime 再看数字）
+- lint 硬门通过：**no new issues**，baseline 仍 5 条
+- `assembleGooglePlayDebug` + `:tipsy-auth` 桥单测：与 G1 同序列本机跑过
+- **真机验收已跑**（2026-08-12，emulator-5554 / Android 16 / googlePlayDebug）：
+  启动进首页、五 Tab 切换与选中态、五个 series tab（For You / Trending / World /
+  Latest / Popular）各自加载真实列表、滚动续拉翻页、World tab 隐藏筛选图标 ——
+  **均通过，无崩溃**。埋点 `discover_page_tab_click` + `discover_subpage_exposure`
+  在每次切 tab 时按对出现（`tab_type` 正确）。
+  - ⚠️ 观察到 `page=null`：facade 的 page 字段在 tab 事件上没填。不影响本包验收
+    结论（Qt 上报本身推迟，§2.17），但**接 Qt 前要确认 RN 侧该字段是否也为空**，
+    否则会是一处静默的埋点字段回归。
+  - 标签筛选抽屉点击**按预期无反应** —— `HomeFragment.onFilterClick` 仍是 stub
+    （`HomeFilterDrawer` 382 行，下一包）。点击链路本身已接通（日志可见）。
+  - World 卡片的 `∞ 0` 是**真实数据**不是 bug：图标按 `character_type == 9` 分流
+    走 `ic_card_world_interaction`，计数取 `stats.studio_chat_count`
+    （`HomeFeedParserTest` 断言 42），测试环境多数 world 该字段确为 0。
+  - **仍未在真机上验**：下拉刷新、性别筛选（`All` 下拉）、进程重建恢复。
+
+新增测试按「错了不报错」的风险点组织：`HomeTextTest`(19，逐条对着 RN 实现取真值)、
+`HomeViewModelTest`(19，session 语义/去重续拉/失败不清列表)、
+`HomeApiContractTest`(10，真实 HTTP 验实际请求体)、`HomeFeedParserTest`(15)、
+`ShellTabBarTest`(16)、`AnalyticsTest`(12，含"sink 内再次 track 不死锁")、
+`HomeFilterEnvelopeTest`(4)。
+
 ## 3. 横切能力
 
 | 能力 | 状态 | 落地处 |
 | --- | --- | --- |
-| Auth 所有权 | 🟡 **closeout 已实现、组合验证待跑** | `shell/auth/`（§2.13 / §2.18）。single-flight/generation/原子条件清理已收口；历史 token 迁移未完（P2） |
+| Auth 所有权 | 🟡 **closeout 已实现且 CI 已验**（§2.22） | `shell/auth/`（§2.13 / §2.18）。single-flight/generation/原子条件清理已收口；历史 token 迁移未完（P2） |
 | `tipsy-auth` Android 实现 | 🟡 **桥已注册、能力 PARTIAL** | `modules/tipsy-auth/android/` + `ShellAuthProvider`；主线程约束已落地，Login/Profile 等真实能力仍按波次接线 |
-| 网络层 | 🟡 **closeout 已实现、组合验证待跑** | `shell/network/`（§2.14 / §2.18）。过期 token 发送守门与双入口共享 gate 已实现；组合 Gradle 未跑。**未引 Retrofit** |
+| 网络层 | 🟡 **closeout 已实现且 CI 已验**（§2.22） | `shell/network/`（§2.14 / §2.18）。过期 token 发送守门与双入口共享 gate 已实现。**未引 Retrofit** |
 | i18n | 🟢 **已完成** | `shell/i18n/`（§2.16）。壳是唯一 writer；key-based 查表 + 两条 normalize 规则 + Compose 自订阅组件。**语言设置页仍在 RN**（刻意，方案 §8.1） |
 | Router / 深链 | 🟡 parser/router 机制已落地 | `shell/router/`；真实 Surface 参数、Login/Profile 接线与 P9 matrix 未完成，ChatDetail 在 P9 前保持关闭 |
 | RN Surface 宿主 | 🟡 机制已落地、闭环待收口 | `RNSurfaceFragment`（共享单 ReactHost）；UUID/首帧/reappear/props builder 已有，真实 instance-aware close 尚未闭环 |
 | Push | 🔴 未开始 | — |
-| Analytics（Qt） | ⏸️ **已决定推迟** | 推迟到业务迁移完成后（2026-08-11，§2.17）。⚠️ **现状是 `preInit` 一次都不会调**，不是「还没接」 |
+| Analytics（Qt） | ⏸️ **推迟，但 facade 已落地** | `shell/analytics/Analytics`（§2.23）：业务页照常调用、uid 排队语义照搬 RN，debug 落日志。Qt 接线本身仍推迟（§2.17）—— ⚠️ **`preInit` 一次都不会调**，facade 存在 ≠ 埋点在上报 |
 | 营销 SDK（ATT/AppsFlyer/FB/TikTok） | 🔴 未开始 | iOS 事故点，方案 §4.2 |
 | Sentry | ⏸️ **已决定推迟** | 同上（§2.17）。⚠️ JS 侧 `autoInitializeNativeSdk: false` 已把事件交给一个从未 init 的原生 SDK |
 | Widget | 🔴 未开始 | — |
@@ -1118,7 +1255,9 @@ PR #16 的 G1 记录是 `fail 1h0m15s`，PR #17 首跑是 `cancelled 1h0m15s`
 阻塞 W2 的：
 
 - **§12.8 Google/Firebase 的 Android 签名指纹**（三 flavor × debug/release，**没有它 Firebase 登录无法真机验证**）
-- **§12.4 Home 是否包含 World 系列**
+- ~~**§12.4 Home 是否包含 World 系列**~~ ✅ **已关闭**（2026-08-11，§2.23）：
+  不需要产品决策 —— `home.tsx:505-511` 的 filter 已给出答案，**Android 显示 World、
+  Multi-character 两端都隐藏**。World 点进去是 SimulatorGame WebView，方案 §8.1 已定不迁。
 - **§12.9 Apple 登录按钮在 Android 是否展示**、**§12.10 `/login/password` 是否对外**
 
 ## 6. 已废弃的历史尝试

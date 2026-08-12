@@ -27,6 +27,13 @@ cmake = "3.22.1"
 #noinspection NewerVersionAvailable
 mmkv = "2.2.4"
 
+# 图片加载（W2 Home 卡片封面）。与 react-native-mmkv 同性质的**耦合约束**：
+# react-native-screens 已引入 coil3 **3.0.4**（已核实其 android/build.gradle:249）。
+# 声明更高版本会经 Gradle 冲突解析把 RN 那份也顶上去 —— 抬升 RN 生态运行时
+# 依赖不属本波次范围。只有 tipsy-app 侧升级 react-native-screens 时才同步改。
+#noinspection NewerVersionAvailable
+coil = "3.0.4"
+
 # ── AndroidX / Compose ──
 # Compose BOM 须与 Kotlin 2.1.20 的 compose compiler 插件兼容。
 composeBom = "2025.04.01"
@@ -50,6 +57,18 @@ coroutines = "1.7.3"
 
 [libraries]
 mmkv = { module = "io.github.zhongwuzw:mmkv", version.ref = "mmkv" }
+# 图片加载。**不是新增依赖**：react-native-screens 已经引入 coil3 3.0.4
+# （已核实 node_modules/react-native-screens/android/build.gradle:249-253）。
+# 壳显式声明同一版本，与 mmkv / coroutines 同性质 —— 版本是与 RN 侧的
+# **耦合约束**：声明更高版本会经 Gradle 冲突解析把 RN 用的那份也顶上去。
+# 只有 tipsy-app 侧升级 react-native-screens 时才同步改这里。
+#noinspection NewerVersionAvailable
+coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
+# coil3 的网络层要显式选：不引它则任何 http(s) URL 都静默不加载
+# （只报一句 "no fetcher"，图片位置空白）。用 okhttp 那份 —— 壳与 RN
+# 共享同一个 OkHttpClient 的理由见 ApiClient 注释。
+#noinspection NewerVersionAvailable
+coil-network-okhttp = { module = "io.coil-kt.coil3:coil-network-okhttp", version.ref = "coil" }
 # JVM 单测用的**真实** org.json 实现。android.jar 里的是抛异常的 stub。
 # ⚠️ 不用 testOptions.unitTests.returnDefaultValues = true 来绕 —— 那会让
 # 所有未 mock 的 Android API 静默返回默认值，是方案 §5.4 点名的「假绿色」。

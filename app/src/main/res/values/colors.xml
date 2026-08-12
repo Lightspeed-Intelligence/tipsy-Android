@@ -7,4 +7,16 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+
+    <!--
+      App 全局背景（对齐 RN `components/ui-kit/AppBackground.tsx` 的
+      `styles.container.backgroundColor: '#34212A'`）。
+
+      ⚠️ RN 那里除了底色还铺了一张 `background.png` 渐变图。壳当前只用底色 ——
+      纯色与那张图的上半部分接近，先保证不闪白；铺图属视觉打磨，
+      需要与设计确认缩放方式（RN 用 ImageBackground 拉伸，375×812 的图在
+      长屏上会变形）。Kotlin 侧同名常量在 `HomeStyle.APP_BACKGROUND`，
+      改一处必须改两处。
+    -->
+    <color name="app_background">#FF34212A</color>
 </resources>
