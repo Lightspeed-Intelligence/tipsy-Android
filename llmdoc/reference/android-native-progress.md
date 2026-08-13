@@ -25,7 +25,7 @@
 - **波次进度**：W0 完成；W1 的契约层全部落地且已在 CI 组合验证（§2.22），只剩 §12 实例关闭链与 P9；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；**ChatList P1 Grid 主链路已实现**（§2.30，真机冒烟待 G1）。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`、`pages/chatlist/`**。
 - **submodule**：pin `95760a6622424bc9be238e7790fdbf38fe7c7fb2`（远端分支 `feat/android-native`，**未合进 main/release**，按约定靠子模块指针引用）。W2 首包至 W3 ChatList P1 **连续五包不动 submodule**（词条全在 SHELL_KEYS，§2.25/§2.30）。
-- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W3 侧本机同序列：lint 无新增、`assembleGooglePlayDebug`/`assembleDirectApkDebug`、**app 单测 649 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿。Profile 真机验证累计：七项冒烟、头部视觉、钱包出口、卡片角标与模糊、五 tab 真实数据（§2.25–§2.29）。ChatList 真机冒烟待 PR/G1（§2.30）。
+- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W3 侧本机同序列：lint 无新增、`assembleGooglePlayDebug`/`assembleDirectApkDebug`、**app 单测 649 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿。Profile 真机验证累计：七项冒烟、头部视觉、钱包出口、卡片角标与模糊、五 tab 真实数据（§2.25–§2.29）。**ChatList P1 模拟器冒烟 PASS**（§2.30，PR #25 首推 G1 绿、fix 复跑中）。
 - **不存在 / 未验**：Screen Tab 仍是占位页；ChatList 的 Map「時光長廊」视图是 P2（Grid 已是真页）；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。P9 前生产路由白名单为空，ChatDetail 保持 disabled（ChatList 的点击出口因此被明确拒绝）。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
 
 ## 1. 波次状态
@@ -1771,8 +1771,17 @@ Grid 视图全链路 —— 分页列表、LV 徽章、草稿混排、左滑 pin
 - lint 无新增（baseline 仍 5 条）；`assembleGooglePlayDebug` 与
   `assembleDirectApkDebug` 通过
 - **未动** manifest / RN 依赖 / flavor → release manifest diff 本刀不适用
-- **NOT RUN**：真机冒烟（列表渲染/左滑操作/删除对账/草稿显示/打码/徽章）——
-  推 PR 走 G1 后按 §9.2 补；RuStore flavor 未单独 assemble（flavor 相关零改动）
+- **模拟器冒烟 `PASS`**（2026-08-13，API 36 arm64 模拟器，directApk）：
+  列表真实数据渲染（LV 徽章双开关/streak `1d`/pin 灰标/时间三段格式/
+  繁中最后消息）、左滑 pin/unpin、删除确认与对账、Grid/Map 切换、铃铛。
+  冒烟抓出并修掉一个布局缺陷：**左滑操作键恒挂底层会从透明行主体透出**
+  （每行 Delete/Pin 常驻盖住时间栏）——改为只在滑动中/滑开态组合，对齐
+  RN Swipeable `renderRightActions` 仅滑动期间渲染的语义（`084c158`）。
+  ⚠️ 排查期间发现模拟器残留全局代理 `10.0.2.2:8888`（Charles 遗留，宿主
+  无监听）致所有请求 ConnectException——症状像断网/掉登录，实际 token 完好；
+  清法 `settings put global http_proxy :0` + 重启 App（OkHttp 缓存代理配置）
+- **NOT RUN**：GooglePlay 打码行为（冒烟账号会话名无词表命中项）；
+  RuStore flavor 未单独 assemble（flavor 相关零改动）
 
 ## 3. 横切能力
 
