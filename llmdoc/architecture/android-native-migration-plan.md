@@ -912,8 +912,8 @@ git -C tipsy-app diff --name-status <wave-source-sha>..<candidate-sha> -- \
 | --- | --- | --- |
 | 数据源（含 axios 实例，已逐个核实） | `character_search` / `user_search` / `character/suggest` / `popular_search_terms/app` 走 **`axiosPublic`**；`recent_history` / `clear_history` 走 **`axiosAuth`** | **前四个必须用 `OPPORTUNISTIC`,不是 `NONE`**——`character_search` 带 token 才会把词记入最近搜索（iOS 错用 `authorized:false` 致历史恒空）。后两个是 `REQUIRED` |
 | hook | `useSearch.ts` 495 行（单文件承载全部逻辑） | 一个 ViewModel 对应即可 |
-| 组件 | `FilterDrawer`(292) + `CharacterResultList`(231) + `SearchTagBar`(214) + `CreatorResultItem`(163) + `RecentSearch`(125) + `SuggestTags`(104) 等 10 个 | — |
-| 已知缺陷 | 搜索接口内嵌 `tags` 是瘦身版，`watermark_url` 恒空串 → RN 搜索页显示不出活动水印 | iOS 侧做了增强（按 tag_id 查全局配置回填）。Android 决定是否跟进 |
+| 组件 | `FilterDrawer`(292) + `CharacterResultList`(231) + `SearchTagBar`(214) + `CreatorResultItem`(163) + `RecentSearch`(125) + `SuggestTags`(104) 等 10 个 | **分两包**：P1 是搜索主链路（结果/最近/热门/建议/空态）；`FilterDrawer` + `SearchTagBar` 与性别/排序/分级筛选留 P2（2026-08-13，§2.31） |
+| 已知缺陷 | 搜索接口内嵌 `tags` 是瘦身版，`watermark_url` 恒空串 → RN 搜索页显示不出活动水印 | iOS 侧做了增强（按 tag_id 查全局配置回填）。~~Android 决定是否跟进~~ **已定：P1 不跟进**（2026-08-13，§2.31）——壳侧 Home/Search 都还没有水印渲染，跟进 iOS 增强等于先补一套全局 tag 配置查表，属独立包；**与 RN 行为对等（都不显示）**，不是新增缺陷 |
 | 空态 | `searchEmptyState.ts` + 已有测试 | 有现成测试 |
 | 埋点 | `search_trigger_page_exposure`、`search_result_page_exposure`、`search_content_exposure`（去重）、`search_content_click`、`character_page_{click,exposure}`；`searchWay` = `search`/`recent_search`/`popular_search` | — |
 

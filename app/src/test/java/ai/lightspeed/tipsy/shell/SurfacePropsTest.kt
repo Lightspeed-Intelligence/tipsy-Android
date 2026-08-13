@@ -71,6 +71,7 @@ class SurfacePropsTest {
             AppRoute.CreateProfileDetail("x"),
             AppRoute.GemsPurchase(),
             AppRoute.Login(),
+            AppRoute.Search,
         )) {
             assertTrue(
                 "${route.javaClass.simpleName} 尚无 Surface 目标",

@@ -1,6 +1,6 @@
 # Tipsy Android 原生化迁移：现状（唯一状态真值）
 
-> 更新：2026-08-11 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
+> 更新：2026-08-13 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
 > **G1 CI 已激活且在 main 上真绿**（§2.10 / §2.22）
 >
 > **W1 基本收尾**（细化方案见 [`../architecture/android-w1-plan.md`](../architecture/android-w1-plan.md)）：
@@ -16,17 +16,18 @@
 > 与 For You 冷启动种子（§2.24，**抽屉、种子写入门禁、离线渲染种子真机全已验**）。
 > Home 剩 banner / 彩蛋弹窗 / mp4 封面三项（前两项评估留 RN Surface）。
 > **W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 Grid 主链路
-> 已实现待真机（§2.30）。
+> 已并入 main 且模拟器冒烟 PASS（§2.30）；Search P1 主链路已实现且 directApk
+> 真机冒烟 PASS（§2.31），P2 筛选器待后续包。
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
 ## 0. 三十秒速览
 
-- **波次进度**：W0 完成；W1 的契约层全部落地且已在 CI 组合验证（§2.22），只剩 §12 实例关闭链与 P9；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；**ChatList P1 Grid 主链路已实现**（§2.30，真机冒烟待 G1）。
-- **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`、`pages/chatlist/`**。
-- **submodule**：pin `95760a6622424bc9be238e7790fdbf38fe7c7fb2`（远端分支 `feat/android-native`，**未合进 main/release**，按约定靠子模块指针引用）。W2 首包至 W3 ChatList P1 **连续五包不动 submodule**（词条全在 SHELL_KEYS，§2.25/§2.30）。
-- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W3 侧本机同序列：lint 无新增、`assembleGooglePlayDebug`/`assembleDirectApkDebug`、**app 单测 649 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿。Profile 真机验证累计：七项冒烟、头部视觉、钱包出口、卡片角标与模糊、五 tab 真实数据（§2.25–§2.29）。**ChatList P1 模拟器冒烟 PASS**（§2.30，PR #25 首推 G1 绿、fix 复跑中）。
-- **不存在 / 未验**：Screen Tab 仍是占位页；ChatList 的 Map「時光長廊」视图是 P2（Grid 已是真页）；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。P9 前生产路由白名单为空，ChatDetail 保持 disabled（ChatList 的点击出口因此被明确拒绝）。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
+- **波次进度**：W0 完成；W1 的契约层全部落地且已在 CI 组合验证（§2.22），只剩 §12 实例关闭链与 P9；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 已随 PR #25 并入 main（§2.30）；**Search P1 主链路已实现并完成 directApk 冒烟**（§2.31），P2 筛选器待后续包。
+- **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`、`pages/chatlist/`、`pages/search/`**。
+- **submodule**：Search P1 pin `5a58be9d1881cb39a7229e84e65ac8214f9db3fe`（远端分支 `feat/android-native`，**未合进 main/release**，按约定靠子模块指针引用）。相对前一 pin `95760a6622424bc9be238e7790fdbf38fe7c7fb2` 仅新增 Search placeholder + `Back` 的导出配置（`scripts/export-shell-locales.mjs` 5 行）。
+- **已验证**：main 上 PR #25 的 G1 Fast Gate 全绿。W3 Search P1 提交前快照的本机证据：`lintDirectApkDebug` 无新增（baseline 5 条）、`assembleGooglePlayDebug`/`assembleDirectApkDebug` 通过、**DirectApk app 单测 695 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿；directApk 真机主链路冒烟 PASS（§2.31）。提交前审查再新增 13 条、扩展 2 条回归测试并修正并发/auth/Router/点击归因/分页去重行为，最终源码预计 708 条；**最终 head 未在本机重跑 Gradle，交 G1 验证**。
+- **不存在 / 未验**：Screen Tab 仍是占位页；ChatList 的 Map「時光長廊」视图与 Search 的筛选器均是 P2；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。生产路由白名单仅放开纯原生 `Search`，ChatDetail 在 P9 前仍 disabled（卡片点击出口因此被明确拒绝）。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
 
 ## 1. 波次状态
 
@@ -35,7 +36,7 @@
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟡 **契约层已收口且 CI 已验；§12 关闭链 + P9 未完** | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17 已并） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
-| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1–P4、P6，§2.25–§2.29，真机验证）；**ChatList P1 Grid 主链路已实现**（§2.30，真机待 G1）；剩 Profile P5/P7、ChatList P2 Map、Search、Settings | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #21–#24 已并；ChatList P1 在 `feat/android-w3-chatlist-p1`） |
+| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1–P4、P6，§2.25–§2.29，真机验证）；ChatList P1 Grid 主链路已并（§2.30，模拟器冒烟 PASS）；**Search P1 主链路已实现**（§2.31，directApk 真机冒烟 PASS）；剩 Profile P5/P7、ChatList P2 Map、Search P2 筛选器、Settings | `5a58be9d1881cb39a7229e84e65ac8214f9db3fe` | —（PR #21–#25 已并；Search P1 在 `feat/android-w3-search-p1`） |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | ⬜ 阻塞于 W3 | — | — |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
 
@@ -1783,6 +1784,121 @@ Grid 视图全链路 —— 分页列表、LV 徽章、草稿混排、左滑 pin
 - **NOT RUN**：GooglePlay 打码行为（冒烟账号会话名无词表命中项）；
   RuStore flavor 未单独 assemble（flavor 相关零改动）
 
+### 2.31 W3 Search P1：搜索主链路（2026-08-13）
+
+Home 顶栏搜索框换真页。新增 `pages/search/`（8 文件 2,526 行）：
+输入防抖、建议词、最近/热门搜索、角色+创作者双 tab 结果、翻页、
+敏感词空态、清空历史。**`FilterDrawer`/`SearchTagBar` 是 P2**
+（筛选按钮不渲染，性别不发、排序恒 `Recommended`、分级恒 `All`）。
+
+`AppRoute.Search` 是 **Router 白名单里第一个被放开的目标** —— 此前所有
+目标都在 P9 前被明确拒绝。放开的理由写在 `enabledRouteTypes` 注释里：
+§9.1 验收矩阵管的是 RN Surface 的桥/生命周期风险，`Search` 是纯原生
+Fragment 不开 Surface，那套矩阵对它不适用。**不能据此推论「原生页都能加」**。
+
+- **接口**（六个，`src/apis/character.ts` 逐个核实）：`character_search`、
+  `user_search`、`character/suggest`、`popular_search_terms/app` 走
+  **`OPPORTUNISTIC`**；`recent_history`、`clear_history` 走 **`REQUIRED`**。
+  前四个**刻意不用 `NONE`** —— 方案 §8.1 记的 iOS 事故点：`character_search`
+  带 token 才会把词记入最近搜索，iOS 错用 `authorized:false` 致历史恒空。
+  游客可搜索，所以 `AppRoute.Search.requiresAuth = false`（写 true 会把
+  游客挡在登录页后，RN 侧没有这个门）。
+- **防抖只管「查」不管「清」**（`useSearch.ts:284-333`）：`submitQuery` 同帧
+  清结果 + 置 loading + 切角色 tab，请求延后 500ms。顺序反了的表现是
+  连打字时看到上一个词的结果。
+- **两个查询的并发形态刻意不对称**（`useSearch.ts:298-299`）：创作者查询
+  fire-and-forget，角色查询 await —— loading 态由角色查询关闭，创作者晚到
+  不该让 Characters tab 一直转圈。单测 `创作者查询未返回也不阻塞角色结果展示`
+  用挂起的创作者响应锁死。
+- **回写由 auth generation + 本地搜索序号共同守卫**：登出/换号会丢弃旧账号
+  响应；提交 B 后，即使 A 的 HTTP 回调不响应取消而更晚到，也不能覆盖 B。
+  Search 不拥有乐观列表 mutation，故只校验 auth 轨，不能被 ChatList 的全局
+  mutation bump 误作废。`CancellationException` 必须继续抛出，不能当请求失败
+  写 Toast；翻页游标也只在请求成功后递增，失败重试不会跳页。
+- **Search 必须订阅 AuthStateHub**：logout 取消所有在飞工作并清掉查询、结果、
+  session 与账号私有 recent history，且不发 REQUIRED 请求；login/换号才重拉。
+  否则 token refresh 失败广播 logout 后页面仍会展示旧账号的搜索历史。
+- **`search_trigger_page_exposure` 的 `session_id` 恒为空串**：RN 的
+  `handleChange` 先 `initState()` 把 `sessionIdRef` 清成 `''` 再发事件
+  （`useSearch.ts:322-331`）。看着像「带上了 session」其实永远是空的，
+  **照抄，不要顺手修正成上一次的 id**。
+- **首查失败或 `data == null` 必须回 `IDLE` 而不是「搜到 0 条」**（`useSearch.ts:142-177`）：
+  否则空态把请求失败当成无结果，诱导用户去创建角色。空态判定收在
+  `CharacterSearchOutcome` 四态（IDLE/SAFE/DIRECT/RELATED）：直接命中敏感词
+  不给创建按钮、**关联命中仍给**、缺敏感类型字段视为 SAFE 不是 IDLE。
+- **翻页三重守卫**（`useSearch.ts:219-234`）：`loadingMore` 在途、`refreshing`
+  在途、**当前列表为空**。第三条防 LazyColumn 空列表也触发 onEndReached
+  导致 page1/page2 并发；第二条防筛选重查期间基于旧数据错页。结果页按
+  `stableKey` / `userId` 去重，建议词按大小写不敏感值去重，避免后端跨页或列表
+  内重复导致 Compose duplicate-key 崩溃。去重后整页无新增时主动续拉，连续最多
+  3 页；少量新条目后若仍在触底阈值内，按新 `itemCount` 继续填满视口。
+  同一条目数只自动请求一次，避免翻页失败后因 loading 回落形成网络风暴；
+  滚出再进入阈值仍可手动重试。
+- **每页非空 search session 都覆盖旧值**（RN 两个 query 都在 page 分支之前更新
+  ref）：否则 page2+ 新 session 返回后，后续曝光/点击仍会错误归因到 page1。
+- **曝光去重集合新搜索时清空**，且 `isRefreshing` 期间不报 —— 此刻列表还是
+  旧结果而集合已清空，会把旧卡当新卡重报（`useSearch.ts:337`）。创作者行发
+  **两个**事件（`character_page_exposure` 不去重 + `search_content_exposure`
+  去重），别合并，前者是通用主页曝光口径。**P1 仍有已知口径差异**：
+  Native 在条目进入 composition 时上报，RN 的 search exposure 要求条目至少
+  50% 可见；Lazy 预组合可能让 Native 早报/多报，后续独立收口。
+- **角色卡点击由搜索页接管时要补回 HomeCard 内部埋点**：先发带完整筛选参数的
+  `character_page_click`，有 `search_session_id` 时再发带 1-based 位置的
+  `search_content_click`；只做路由会让搜索点击归因静默缺失。
+- **建议词与 RN 的一处有意分歧**：RN 走 SWR（key 变化即重发 + 10s
+  `dedupingInterval` + `keepPreviousData`）。壳用「取消旧任务 + 回写前比对
+  query」等效实现前两者，**没做 10s 去重缓存** —— 逐字输入会比 RN 多发几个
+  suggest 请求。该接口轻量无副作用，暂按可接受；真机观察到请求量问题再补
+  短 TTL 缓存。失败**静默**（RN 侧 SWR 也不弹 Toast）。
+- **角色结果复用 `HomeFeedItem.Character`**：搜索接口返回的是扁平结构，
+  解析时翻译成 Home 的模型以复用 `HomeCard`。`watermark_url` 恒空串的已知
+  缺陷 **P1 不跟进**（方案 §8.1 该行已订正）—— 壳侧 Home/Search 都还没有
+  水印渲染，跟进 iOS 的 tag_id 回填是独立包；**与 RN 行为对等**，非新增缺陷。
+- **热门词读大写 `Member` 字段**（接口是 C# 风格 PascalCase），小写读不到
+  视为格式不符丢弃，单测两向锁死。
+- **计数缩写是本项目第七套数字规则**：`formatCountMaxFourDigits` 的缩写门槛
+  是 **10000 不是 1000**（`1000` → `1000`，`12345` → `12.35K`），与 Profile
+  卡片的三位数规则**不可复用**。写错的表现是「粉丝 1200 显示成 1.2K」——
+  与线上不一致但看着合理，极易漏过 review。
+- **`openSearch` 必须幂等**（同 `openLogin`）：入口在 Home 顶栏，连点两次会
+  叠两层 Fragment、返回要按两次。Fragment tag 挡在栈重入；退出 Search 时
+  Activity 还必须通知 Router 解除 `lastHandled`，否则返回 Home 后第二次点击会在
+  整个 Activity 生命周期内被永久吞掉（提交前审查补回归测试）。
+- **词条**：复用 8 个既有 SHELL_KEYS，另把 placeholder
+  `Search characters or creators...` 与无障碍返回文案 `Back` 加入导出清单，
+  26 locale 全部命中；位图移植 5 张（`ic_search_*`，`drawable-nodpi`）。
+  submodule pin 到 `5a58be9d1`；父仓对应 locale + pin 提交是 `9209b0b`。
+
+#### 验证
+
+- 提交前实现快照的 DirectApk app 单测 **695 条**（新增 46 条），
+  failures=0、**skipped=0**。最终源码相对 main 共有 **+59**：
+  `SearchParserTest` 12、`SearchEmptyStateTest` 11、`SearchViewModelTest` 34、
+  `AppRouterTest` 2，另扩展既有 parser/Surface props 断言。审查新增的 13 条
+  锁定 A/B 角色与创作者乱序、mutation bump 不误伤 Search、角色点击两类归因、
+  翻页重复 key 去重、退出后同一路由可重开；
+  auth 失效用例也加强为角色/创作者均丢弃且 loading 收尾，另锁定翻页在途重搜
+  不泄漏 `loadingMore`，并覆盖 auth 清理/重拉、空页限次续拉、失败不重试风暴与
+  原始 query 归因一致性。最终 head 因此预计 **708 条**；遵守本仓本机验证边界，
+  **未重跑 Gradle，交 PR G1 验证**
+- `:tipsy-auth:testDebugUnitTest` 15 条全绿
+- lint 无新增（baseline 仍 5 条，未改 baseline 文件）；
+  `assembleGooglePlayDebug` 与 `assembleDirectApkDebug` 通过
+- **未动** manifest / RN 依赖 / flavor → release manifest diff 本刀不适用
+- **真机冒烟 `PASS`**（2026-08-13，directApk）：输入建议词、回车搜索、
+  角色/创作者 tab 切换、翻页、最近搜索写入与点击回填、热门词点击、
+  清空历史确认弹窗 → 列表清空，**force-stop 冷启动后历史仍为空**（清空
+  真落库，不是只清了内存）。
+  ⚠️ 冒烟坑：设备上装了两个 Tipsy（`ai.lightspeed.tipsy` 本迁移壳 +
+  `com.tipsyturbo.app` 线上包），**深链 `adb shell am start` 会弹 Open with
+  选择器**并可能把截图打到线上包上（一度 `topResumedActivity` 是线上包）。
+  自动化一律用 `monkey -p <pkg>` 按显式包名启动，别走深链。
+  另：清空历史的落库校验**不能用 grep MMKV 文件**判定 —— MMKV 是 append-only，
+  删除后旧字节仍在文件里（实测被清的词 id 仍能 grep 命中），冷启动后的 UI
+  才是判据。
+- **NOT RUN**：GooglePlay 打码行为（搜索结果无词表命中项）；RuStore flavor
+  未单独 assemble（flavor 零改动）；P2 筛选器相关全部未测（未实现）
+
 ## 3. 横切能力
 
 
@@ -1792,7 +1908,7 @@ Grid 视图全链路 —— 分页列表、LV 徽章、草稿混排、左滑 pin
 | `tipsy-auth` Android 实现 | 🟡 **桥已注册、能力 PARTIAL** | `modules/tipsy-auth/android/` + `ShellAuthProvider`；主线程约束已落地，Login/Profile 等真实能力仍按波次接线 |
 | 网络层 | 🟡 **closeout 已实现且 CI 已验**（§2.22） | `shell/network/`（§2.14 / §2.18）。过期 token 发送守门与双入口共享 gate 已实现。**未引 Retrofit** |
 | i18n | 🟢 **已完成** | `shell/i18n/`（§2.16）。壳是唯一 writer；key-based 查表 + 两条 normalize 规则 + Compose 自订阅组件。**语言设置页仍在 RN**（刻意，方案 §8.1） |
-| Router / 深链 | 🟡 parser/router 机制已落地 | `shell/router/`；真实 Surface 参数、Login/Profile 接线与 P9 matrix 未完成，ChatDetail 在 P9 前保持关闭 |
+| Router / 深链 | 🟡 parser/router 机制已落地，**白名单首次放开一个目标** | `shell/router/`；`AppRoute.Search` 已进 `enabledRouteTypes`（§2.31，纯原生 Fragment 不受 §9.1 Surface 矩阵约束）。真实 Surface 参数、Profile 接线与 P9 matrix 未完成，ChatDetail 在 P9 前保持关闭 |
 | RN Surface 宿主 | 🟡 机制已落地、闭环待收口 | `RNSurfaceFragment`（共享单 ReactHost）；UUID/首帧/reappear/props builder 已有，真实 instance-aware close 尚未闭环 |
 | Push | 🔴 未开始 | — |
 | Analytics（Qt） | ⏸️ **推迟，但 facade 已落地** | `shell/analytics/Analytics`（§2.23）：业务页照常调用、uid 排队语义照搬 RN，debug 落日志。Qt 接线本身仍推迟（§2.17）—— ⚠️ **`preInit` 一次都不会调**，facade 存在 ≠ 埋点在上报 |

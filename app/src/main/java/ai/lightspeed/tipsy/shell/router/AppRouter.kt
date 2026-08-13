@@ -4,8 +4,24 @@ import ai.lightspeed.tipsy.shell.auth.AuthStateHub
 
 /** 当前 binary 的生产路由白名单；未过验收矩阵的目标一律不进入。 */
 object ProductionRoutePolicy {
-    /** P9 / §9.1 前没有业务路由可进生产；启用必须集中改这里并更新矩阵测试。 */
-    val enabledRouteTypes: Set<Class<out AppRoute>> = emptySet()
+    /**
+     * 启用的目标必须集中改这里并更新矩阵测试（`AppRouterTest`）。
+     *
+     * ## 为什么 [AppRoute.Search] 可以进，而其它目标还不行
+     *
+     * §9.1 的验收矩阵管的是 **RN Surface** —— 那些项检查的是 Surface 生命周期
+     * （挂载/卸载/返回键/桥事件迟到），风险来自 RN 与原生的边界。
+     * `Search` 是**纯原生 Fragment**，不开 Surface、不走桥，那套矩阵对它不适用；
+     * 它的验收是壳自己的单测 + 冒烟（同 W2 的原生 Login —— Login 走的是
+     * `Navigator.requestLogin` 专用口，所以没出现在这个集合里）。
+     *
+     * ⚠️ 别据此推论「原生页都能随便加」：加任何目标都要先有对应的单测与冒烟，
+     * 且这里与 `ShellNavigator.navigate` 的分支必须同时更新 ——
+     * 只加白名单不加分支会走到 `error()`（刻意不做 silent no-op）。
+     */
+    val enabledRouteTypes: Set<Class<out AppRoute>> = setOf(
+        AppRoute.Search::class.java,
+    )
 }
 
 /**
@@ -140,6 +156,22 @@ class AppRouter(
         }
         lastHandled = route to source
         navigator.navigate(route, source)
+    }
+
+    /**
+     * 已打开的目标离开原生返回栈时解除去重。
+     *
+     * [lastHandled] 只该挡住同一次投递/连点造成的重入，不能永久封住一个路由。
+     * Search 是第一个真正进入生产白名单的普通业务目标：如果退出时不清，用户返回
+     * Home 后再次点搜索框会被当成“重复路由”，此后整个 Activity 生命周期里都打不开。
+     *
+     * 由实际持有返回栈的 Activity 在确认目标已移除后调用；传入其它 route 不会误清
+     * 当前目标，避免迟到的关闭通知放开不相干的路由。
+     */
+    fun onDestinationClosed(route: AppRoute) {
+        if (lastHandled?.first != route) return
+        lastHandled = null
+        logger("目标已关闭，解除路由去重：${route.javaClass.simpleName}")
     }
 
     /**
