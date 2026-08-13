@@ -896,13 +896,15 @@ git -C tipsy-app diff --name-status <wave-source-sha>..<candidate-sha> -- \
 
 | 维度 | 实测真值 | 原生实现要点 |
 | --- | --- | --- |
-| 数据源 | `/user/chatted/list`，`useUserChattedList`(110) + `userChattedListPagination`(30) | — |
-| 双视图 | `ChatGrid`(531) + `ChatMap`(562)。Map 是「時光長廊」廊道视觉 | **不是地图，别去选地图 SDK**——已核实 `ChatMap.tsx` 只用 Reanimated(`interpolate`/`useAnimatedStyle`/`withTiming`) + `expo-image` 做滚动驱动的透视廊道，`package.json` **无任何 map/mapbox/amap 依赖**。Android 对应实现 = Compose 自绘 + `graphicsLayer` 变换，不涉及 SDK/API key/区域合规 |
-| item | `ChatListItem`(668) + `ChatItem`(297)：LV 徽章 / streak / 未读红点 / html 型分流 | — |
-| 站内信 | `letter.tsx`(497) + `letter-detail.tsx`(343) + `LetterItem`(594) | **建议留 `NotificationSurface`**，减 1.4k |
+| 数据源 | `/user/chatted/list`（`axiosAuth` → REQUIRED，`page`/`size=50`/`language_code`/`need_total: true`），`useUserChattedList`(110) + `userChattedListPagination`(30)。**LV 徽章是第二个接口**：`/user/character/relationship/batch_get`（`axiosAuth`，批量 `character_ids`），且参与首屏 ready 判据（`chatListFirstInteractive.ts`）；`RELATIONSHIP_LEVEL_UPDATED` 事件触发重拉 | 徽章晚到只更新徽章位、不整列重配（§8.4 的「晚到 banner」同型）。徽章显示是**双开关**：`user.relationshipSwitch` && item 的 `is_relationship_open`，mini_phone 条目不显示 |
+| 操作接口（2026-08-12 逐个核实补齐） | `/user/chatted/{pin,unpin}`、`/user/chatted/{character,story,game}/delete`（character 删除带 `chat_mode` + `conversation_id`——小手机对话级精确定位，漏传会误删同角色其它入口）、`/user/chatted/update_push_message_view_time`（点击 `is_push_message` 条目时消红点）、铃铛未读 `/message/notification/get_unread_status`（POST，带 `platform`: `ios`/`google_play`/`apk` —— ⚠️ RN 的 SWR key 写的是 `/system_message_notification/read_status`，那是**缓存键不是端点**，照 key 实现会 404）。全部 `axiosAuth` → REQUIRED | pin/unpin 是**成功后**本地重排（pinned 组按 `latest_time` 插入）+ Toast；delete 是真乐观（先移除后调 API，失败 mutate 恢复）。**需 mutation generation**：在飞旧响应不得复活已删行（§4.4） |
+| 删除的跨界一致性 | RN `multi_cinema_round_cache.ts` 已就绪壳共享键契约：`multi-cinema-conv-epoch:${characterId}`（RN 默认 MMKV 实例；iOS 壳 `ChatListViewController.performDelete` 删除成功后写时间戳，RN 影院缓存写入时快照、读取时比对不一致即失效） | **壳删除会话成功后必须写同一键**（RN 侧零改动）。不写的后果：删会话后 seq 归零重开，旧影院轮缓存 seq 恒大于新会话，重进多角色影院**假命中旧剧情** |
+| 双视图 | `ChatGrid`(531) + `ChatMap`(562)。Map 是「時光長廊」廊道视觉。视图偏好 `chatPageType` 在 `config-persist-storage` 信封 | **不是地图，别去选地图 SDK**——已核实 `ChatMap.tsx` 只用 Reanimated(`interpolate`/`useAnimatedStyle`/`withTiming`) + `expo-image` 做滚动驱动的透视廊道，`package.json` **无任何 map/mapbox/amap 依赖**。Android 对应实现 = Compose 自绘 + `graphicsLayer` 变换，不涉及 SDK/API key/区域合规。`chatPageType` 壳可写（本地偏好，merge 写同 gender；继承进度文档 §2.23.1 信封缺失问题）。Map 分组标题 `Today`/`Yesterday` 在 RN 是**裸英文不走 t()**（`formatChatMapTime`，仅月份走 locale）——对等保留，别顺手修 |
+| item | `ChatListItem`(668) + `ChatItem`(297)：LV 徽章 / streak / 未读红点 / html 型分流；名字过 `maskTextWithPlatform`（**GooglePlay 渠道**敏感词替换，壳已有 `HomeText.kt` 先例）；最后消息过 cinema XML 转换（`lib/cinema`，列表只需纯文本剥离） | 点击**只透传判定素材**：`chatEnterSource`/`isStory`/`characterType`/`contentType`（协议对齐 `useChatNavigation.ts` 壳分支的 bridgeParams）——html/影院分流由 ChatDetailSurface 挂载时 `resolveInitialParams` 自决，**壳不复刻 `resolveChatEntryMode`**。mini_phone 条目 → `MiniPhoneChat(characterId, parent_conversation_id)`；game 条目 → SimulatorGame WebView（不迁，对齐 Home World 的明确记日志） |
+| 跨容器刷新 | `CHATTED_LIST_REFRESH` 事件的发送方全在 ChatDetail 深栈（发消息/重开会话/翻译后让列表重拉），JS 进程内 eventEmitter **跨不过 Surface→原生页边界** | 原生对应 = Surface 返回 / Fragment 重新可见时标脏重拉；另按常驻 Fragment 纪律 didLogin 重拉 / didLogout 只清数据 |
+| 站内信 | `letter.tsx`(497) + `letter-detail.tsx`(343) + `LetterItem`(594)，入口是顶栏铃铛 → `NotificationStack` | **建议留 `NotificationSurface`**，减 1.4k；铃铛点击走 `AppRoute.Letter` |
 | 缓存/预取 | `useChatListCache`(88) | 启动后台预发 page 0（仅已登录、一次启动一次）；指纹只比 authScope，**语言不比** |
-| 操作 | 左滑删除 / 置顶（乐观更新 + 二次确认） | **需 mutation generation**：在飞旧响应不得复活已删行（§4.4） |
-| 草稿 | **可读**：MMKV key `chat_draft_lru`（`PersistLRU` 走同一 `storage`，值是 `lru-cache` 的 `dump()` JSON，容量 100） | iOS 至今未做草稿展示，但**不是因为读不到**——壳按该 key 解 lru dump 即可。注意这是 LRU 转储格式（`[[key,{value,...}]]`），不是普通对象 |
+| 草稿 | **可读**：MMKV key `chat_draft_lru`（`PersistLRU` 走同一 `storage`，值是 `lru-cache` 的 `dump()` JSON，容量 100）。~~iOS 至今未做草稿展示~~ **已过时（2026-08-12 核实）**：RN `ChatGrid` 现用草稿参与排序（置顶 > 草稿 `updatedAt`/`latest_time*1000` 降序）并行内展示（`[Draft]` 橙色前缀 + 无文本时显示 `Image` + 时间取草稿时间），mini_phone 条目除外 | 壳按该 key 解 lru dump 即可（**只读**，写方仍是 RN ChatDetail）。注意这是 LRU 转储格式（`[[key,{value,...}]]`），不是普通对象；**还有 legacy 纯字符串条目**要兼容（`getChatDraft` 读时迁移）。Android 对等实现必须含草稿排序与展示 |
 
 #### Search（约 2.5k）
 
