@@ -113,38 +113,44 @@ internal fun ChatListRow(
             .height(56.s) // 头像 48 + paddingVertical 4×2（avatarContainer）
             .testTag("chat_list_item_${thread.stableKey}"),
     ) {
-        // 底层：操作键（右对齐，随行主体位移露出）
-        Row(
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .fillMaxHeight(),
-        ) {
-            SwipeActionButton(
-                iconRes = R.drawable.ic_chatlist_delete,
-                labelKey = "Delete",
-                background = ChatListStyle.deleteActionColor,
-                testTag = "chat_list_delete_${thread.stableKey}",
-                onClick = {
-                    isOpen = false
-                    dragOffset = 0f
-                    onDeleteClick()
-                },
-            )
-            SwipeActionButton(
-                iconRes = if (thread.isPinned) {
-                    R.drawable.ic_chatlist_pin_off
-                } else {
-                    R.drawable.ic_chatlist_pin_on
-                },
-                labelKey = if (thread.isPinned) "Unpinned" else "Pinned",
-                background = ChatListStyle.pinActionColor,
-                testTag = "chat_list_pin_${thread.stableKey}",
-                onClick = {
-                    isOpen = false
-                    dragOffset = 0f
-                    onPinClick()
-                },
-            )
+        // 底层：操作键（右对齐，随行主体位移露出）。
+        // ⚠️ 只在滑开/拖动中才组合 —— 行主体是透明背景（RN 同款，底色由
+        // App 背景提供），恒挂底层会直接透出来（真机实测：全部行的
+        // Delete/Pin 常驻显示盖住时间栏）。RN Swipeable 的 renderRightActions
+        // 也只在滑动期间渲染。
+        if (dragging || shownOffset < -0.5f) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .fillMaxHeight(),
+            ) {
+                SwipeActionButton(
+                    iconRes = R.drawable.ic_chatlist_delete,
+                    labelKey = "Delete",
+                    background = ChatListStyle.deleteActionColor,
+                    testTag = "chat_list_delete_${thread.stableKey}",
+                    onClick = {
+                        isOpen = false
+                        dragOffset = 0f
+                        onDeleteClick()
+                    },
+                )
+                SwipeActionButton(
+                    iconRes = if (thread.isPinned) {
+                        R.drawable.ic_chatlist_pin_off
+                    } else {
+                        R.drawable.ic_chatlist_pin_on
+                    },
+                    labelKey = if (thread.isPinned) "Unpinned" else "Pinned",
+                    background = ChatListStyle.pinActionColor,
+                    testTag = "chat_list_pin_${thread.stableKey}",
+                    onClick = {
+                        isOpen = false
+                        dragOffset = 0f
+                        onPinClick()
+                    },
+                )
+            }
         }
 
         // 上层：行主体
