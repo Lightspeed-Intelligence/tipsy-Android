@@ -34,6 +34,10 @@ import org.json.JSONObject
  * @property bio 个人简介（`bio`，`store/user.ts:195`），可空 —— 空时 UI 显示
  *   "No bio yet. Add one now." 空态文案。**带默认值**是为了既有构造点不受
  *   字段追加影响（测试 fixture 等），parse 永远显式传
+ * @property relationshipSwitch 账号级关系功能开关（`relationship_switch`，
+ *   `store/user.ts:191`）。ChatList 的 LV 徽章是双开关判定的账号侧
+ *   （另一侧是角色的 `is_relationship_open`）。默认 false —— 拉不到时
+ *   宁可不显示徽章，也不显示一个后端已关的功能
  */
 data class CurrentUser(
     val userId: String,
@@ -41,6 +45,7 @@ data class CurrentUser(
     val avatarUrl: String?,
     val backgroundImgUrl: String?,
     val bio: String? = null,
+    val relationshipSwitch: Boolean = false,
 ) {
     companion object {
 
@@ -66,6 +71,8 @@ data class CurrentUser(
                 backgroundImgUrl = ScalarCoercion.optString(data, FIELD_BACKGROUND_IMG_URL)
                     ?.takeIf { it.isNotBlank() },
                 bio = ScalarCoercion.optString(data, FIELD_BIO)?.takeIf { it.isNotBlank() },
+                relationshipSwitch = ScalarCoercion.optBoolean(data, FIELD_RELATIONSHIP_SWITCH)
+                    ?: false,
             )
         }
 
@@ -74,5 +81,6 @@ data class CurrentUser(
         private const val FIELD_AVATAR_URL = "avatar_url"
         private const val FIELD_BACKGROUND_IMG_URL = "background_img_url"
         private const val FIELD_BIO = "bio"
+        private const val FIELD_RELATIONSHIP_SWITCH = "relationship_switch"
     }
 }

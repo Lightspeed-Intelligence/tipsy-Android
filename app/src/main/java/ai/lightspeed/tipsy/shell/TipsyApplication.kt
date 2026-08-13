@@ -115,6 +115,14 @@ class TipsyApplication : Application(), ReactApplication {
         private set
 
     /**
+     * 双 generation 闸门（§4.4）。auth 轨由 [tokenStore] 在 login/logout 时 bump；
+     * mutation 轨由列表页的乐观变更 bump（W3 ChatList 的删除/置顶是第一个用例）。
+     * 页面 ViewModel 经此引用共享**同一实例** —— 各建一个会让闸门互相看不见。
+     */
+    lateinit var generations: Generations
+        private set
+
+    /**
      * 401/402 的进程级唯一漏斗。[apiClient] 与 RN 桥 provider 共用此实例，
      * 因此 Native/RN 同时报错也只消费一个防抖窗口。
      */
@@ -262,7 +270,7 @@ class TipsyApplication : Application(), ReactApplication {
     private fun registerAuthBridge() {
         // 手写装配（ADR-005：W1/W2 不引 DI 框架 —— 不把「引入 DI」与
         // 「首次 brownfield 集成」混在一起，两个都失败时无法二分定位）。
-        val generations = Generations()
+        generations = Generations()
         tokenStore = ShellTokenStore(
             persistence = MmkvTokenPersistence.open(this),
             refreshApi = RefreshTokenApi(

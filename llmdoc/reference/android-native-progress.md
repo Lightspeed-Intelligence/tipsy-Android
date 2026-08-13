@@ -15,16 +15,18 @@
 > **W2 进行中**：五 Tab shell + Home 首屏（§2.23，主链路真机已验）+ 标签筛选抽屉
 > 与 For You 冷启动种子（§2.24，**抽屉、种子写入门禁、离线渲染种子真机全已验**）。
 > Home 剩 banner / 彩蛋弹窗 / mp4 封面三项（前两项评估留 RN Surface）。
+> **W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 Grid 主链路
+> 已实现待真机（§2.30）。
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
 ## 0. 三十秒速览
 
-- **波次进度**：W0 完成；W1 的契约层全部落地且已在 CI 组合验证（§2.22），只剩 §12 实例关闭链与 P9；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 已开工**：Profile 第一刀（§2.25）。
-- **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`**。
-- **submodule**：pin `95760a6622424bc9be238e7790fdbf38fe7c7fb2`（远端分支 `feat/android-native`，**未合进 main/release**，按约定靠子模块指针引用）。W2 首包与 W3 Profile 第一刀**都不动 submodule**（Profile 词条已全在 SHELL_KEYS，§2.25）。
-- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W3 侧本机同序列：lint 无新增、`assembleGooglePlayDebug`/`assembleDirectApkDebug`、**app 单测 604 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿。Profile 真机验证累计：七项冒烟、头部视觉、钱包出口、卡片角标与模糊、五 tab 真实数据（§2.25–§2.29）。
-- **不存在 / 未验**：Screen / ChatList 两个 Tab 仍是占位页（Profile 已是真页，页内角色卡/收藏/点赞三个 tab 走 "Coming soon" 占位）；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。P9 前生产路由白名单为空，ChatDetail 保持 disabled。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
+- **波次进度**：W0 完成；W1 的契约层全部落地且已在 CI 组合验证（§2.22），只剩 §12 实例关闭链与 P9；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；**ChatList P1 Grid 主链路已实现**（§2.30，真机冒烟待 G1）。
+- **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`、`pages/chatlist/`**。
+- **submodule**：pin `95760a6622424bc9be238e7790fdbf38fe7c7fb2`（远端分支 `feat/android-native`，**未合进 main/release**，按约定靠子模块指针引用）。W2 首包至 W3 ChatList P1 **连续五包不动 submodule**（词条全在 SHELL_KEYS，§2.25/§2.30）。
+- **已验证**：G1 在 main 上 22 步全绿（§2.22）。W3 侧本机同序列：lint 无新增、`assembleGooglePlayDebug`/`assembleDirectApkDebug`、**app 单测 649 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿。Profile 真机验证累计：七项冒烟、头部视觉、钱包出口、卡片角标与模糊、五 tab 真实数据（§2.25–§2.29）。**ChatList P1 模拟器冒烟 PASS**（§2.30，PR #25 首推 G1 绿、fix 复跑中）。
+- **不存在 / 未验**：Screen Tab 仍是占位页；ChatList 的 Map「時光長廊」视图是 P2（Grid 已是真页）；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。P9 前生产路由白名单为空，ChatDetail 保持 disabled（ChatList 的点击出口因此被明确拒绝）。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
 
 ## 1. 波次状态
 
@@ -33,7 +35,7 @@
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟡 **契约层已收口且 CI 已验；§12 关闭链 + P9 未完** | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17 已并） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
-| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1 首刀 + P2 头部 + P3 钱包 + P4 角标/模糊 + P6 五 tab 全通，§2.25–§2.29，真机验证）；剩 P5 菜单动作 / P7 增强；ChatList / Search / Settings 未动 | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #21/#22/#23 已并；P6 在 `feat/android-w3-profile-p6`） |
+| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1–P4、P6，§2.25–§2.29，真机验证）；**ChatList P1 Grid 主链路已实现**（§2.30，真机待 G1）；剩 Profile P5/P7、ChatList P2 Map、Search、Settings | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #21–#24 已并；ChatList P1 在 `feat/android-w3-chatlist-p1`） |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | ⬜ 阻塞于 W3 | — | — |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
 
@@ -1679,6 +1681,107 @@ cancel。被打断且未完成首屏的 tab **整体复位**（否则 `isInitial
 - **NOT RUN**：收藏/点赞翻页续拉与页数轨真机验证（账号数据不足一页；
   判定有 JVM 两页场景覆盖）、角色卡多页（同）、收藏 nsfw 模糊（列表无
   18+ 内容；变换与创作卡同一实现已真机验过）
+
+### 2.30 W3 ChatList P1：Grid 主链路（2026-08-12）
+
+ChatList Tab 从占位换真页。新增 `pages/chatlist/`（10 文件）：
+Grid 视图全链路 —— 分页列表、LV 徽章、草稿混排、左滑 pin/delete、
+推送红点、铃铛未读、Grid/Map 偏好持久化、冷启动种子缓存。
+**Map「時光長廊」是 P2**（562+297 行重视觉自绘，Map 按钮切到 Coming soon 占位）。
+
+开工前按纪律先修方案 §8.1 ChatList 行（三处偏差：草稿展示「iOS 未做」已过时、
+操作接口清单漏项、convEpoch 契约未记录；铃铛端点笔误——RN SWR key
+`/system_message_notification/read_status` 是缓存键，真实端点是
+`/message/notification/get_unread_status` 带 `platform` 参数）。
+
+- **接口**（全部 REQUIRED，`apis/chat.ts`/`relationship.ts`/`letter.ts` 逐个核实）：
+  `/user/chatted/list`（page/size 50/language_code/need_total）、
+  `/user/character/relationship/batch_get`（LV 徽章，id 去重排序后发）、
+  `/user/chatted/{pin,unpin}`（game 用 `{item_type,game_id}`，其余带
+  `chat_mode`+`conversation_id` 小手机对话级定位）、三个 delete
+  （**plot 走 character 端点**，RN else 分支语义）、消红点、铃铛未读。
+- **双 generation 的 mutation 轨第一个实战用例**（§4.4）：删除乐观移除同帧
+  `bumpMutation()` + 分页链每页回写前 `isValid` 双轨校验 —— JVM 测试
+  `删除期间在飞的旧响应不得复活已删行` 用 gate 挂起响应锁死该时序。
+  pin/unpin 是**成功后**本地重排（非乐观，对齐 RN），重排的插入位置循环
+  照 `ChatListItem.tsx:175-226` 逐行移植并单测锁死。
+- **convEpoch 共享键契约落地**：character 会话删除成功后写
+  `multi-cinema-conv-epoch:<characterId>`（RN `multi_cinema_round_cache.ts:52-60`
+  已就绪的壳侧契约，iOS 壳同款；不写则原生删会话后重进多角色影院假命中旧剧情）。
+  story/game 不写；失败路径不写（JVM 测试覆盖三种情形）。
+- **草稿只读混排**：解 `chat_draft_lru` 的 lru-cache dump（`[[key,{value}],...]`
+  两层包装 + legacy 纯字符串条目读时兼容）。排序照 `ChatGrid.tsx:99-121`：
+  **无草稿时保持接口原序**（RN 的 `draftMap.size===0` 捷径是行为对等不是优化）、
+  有草稿时 pinned 恒前 + 草稿 `updatedAt`/`latest_time*1000` 混排降序；
+  **mini_phone 行不吃同角色草稿**（草稿键是角色 id 会串显）。
+  排序在 `ChatListState.sortedThreads` 派生层，`threads` 保持接口序。
+- **stableKey 刻意不对等**：RN FlatList 的 key 掺 index 与 latest_time
+  （对 key 冲突宽容的历史妥协）；LazyColumn 遇重复 key 直接崩，改用业务四元组
+  `item_type:id:chat_mode:conversation_id`（mini_phone 同角色多入口靠
+  conversation_id 区分，JVM 测试锁死）。
+- **徽章四条件**（`ChatListItem.tsx:423-426`）：`sub_level>0` && 账号
+  `relationship_switch`（`CurrentUser` 新增该字段）&& 角色 `is_relationship_open`
+  && 非 mini_phone。徽章批拉是独立旁路任务，晚到只更新徽章 map 不触列表
+  （§8.4「晚到 banner」同型）；只走 auth 轨校验（mutation 轨会被本地删行误废）。
+- **种子缓存**：壳自己的 key `shell-chat-list-seed`（信封 version/authScope/
+  savedAt/TTL 7 天），**不读不写** RN 的 `chat-list-cache` 实例（裸数组无门禁，
+  会话列表全是账号私有数据，跨账号泄漏比 Home 严重）；**登出清**。
+  语言刻意不做门禁（§4.6 反直觉条款）。只存第一页。
+- **跨容器刷新**：`CHATTED_LIST_REFRESH` 事件（发送方全在 ChatDetail 深栈）
+  跨不过 Surface→原生页边界 —— 原生对应 `markStale()` + 下次 onAppear 重拉，
+  接线属 P9（ChatDetailSurface 启用时）。
+- **cinema XML 剥离**：`convertCinemaXmlToMarkdown` 移植（image_prompt/options
+  整块删、dialog 四种冒号支持 + 标准冒号引号输出、异常回退原文）。
+- **时间格式恒数字不走 locale**：今天 `H:mm` 小时**不补零**、今年 `MM/DD`、
+  跨年 `MM/DD/YY`（RN 裸 `getHours()`，别顺手本地化）。
+- **出口现状**：点会话行 → `AppRoute.ChatDetail`/`MiniPhoneChat`、铃铛 →
+  `AppRoute.Letter`，P9 前全部被 Router 明确拒绝（§8.3 形态，与 Home 卡同型）；
+  game 条目无路由（SimulatorGame WebView 不迁），埋点后 `Log.w`。
+  点击判定素材（isStory/characterType/contentType）**暂不透传** ——
+  `AppRoute.ChatDetail` 扩参属 P9 包。
+- **埋点**：`page_exposure`（chat_list）、simulator 卡曝光/点击
+  （`time_corridor`，2s 节流照 `simulatorGameTracking.ts:59`；曝光停留 1s
+  近似 RN 的 `minimumViewTime`，95% 可见精确判定后置）。
+- **左滑操作自绘**：M3 `SwipeToDismissBox` 是滑走删除语义，不合 iOS 风格
+  stay-open —— `detectHorizontalDragGestures` + 148dp 双键（Delete 红 +
+  Pin 橙）、40dp 阈值、同表单行互斥、滑开点行主体收起（对齐 RN Swipeable）。
+- **基建顺带改动**：`TipsyApplication.generations` 从局部变量提升为属性
+  （页面级消费者第一次出现）；`LocalizedText` 加 `fontSize` 参数；
+  `CurrentUser` 加 `relationshipSwitch` 字段。位图移植 18 张
+  （chatlist 12 + relationship 徽章 6，`drawable-nodpi` 命名规范化 `ic_*`）。
+- **仍不做**（P2/P9/后置）：Map 廊道视图、启动后台预取 page 0、
+  `firstInteractive` 性能埋点族、simulator 曝光 95% 精确判定、
+  批量 relationship 徽章的 `RELATIONSHIP_LEVEL_UPDATED` 事件重拉
+  （发送方在 ChatDetail 深栈，同跨容器刷新一并属 P9）。
+- **词条零新增**（Time Corridor / Draft / Image / Pinned× 4 / Delete failed /
+  空态长句等 14 个 key 全在 SHELL_KEYS 且 26 locale 已导出——iOS 壳先迁时加过）；
+  **连续第五包零 submodule 改动**。
+
+#### 验证
+
+- app 单测 **649 条**（+45：`ChatThreadParserTest` 12（标量漂移/未知类型丢弃/
+  game id 归属/mini_phone 三元组/creator 三级兜底/坏条目跳过）+
+  `ChatListTextTest` 14（时间三段/cinema 剥离含全角冒号/排序派生含无草稿
+  原序捷径/徽章四条件/信封 merge 只改一键）+ `ChatDraftStoreTest` 5
+  （现行/图片/legacy 字符串/空草稿跳过/坏 JSON）+ `ChatListViewModelTest` 14
+  （分页续拉限次/失败不清列表/**mutation 闸门防复活**/convEpoch 三情形/
+  pin 重排两方向/auth 闸门丢在飞/登出只清不拉/未登录不发/徽章过滤/偏好写入））、
+  failures=0、**skipped=0**
+- `:tipsy-auth:testDebugUnitTest` 15 条全绿（含 `LiveAppSafetyTest`）
+- lint 无新增（baseline 仍 5 条）；`assembleGooglePlayDebug` 与
+  `assembleDirectApkDebug` 通过
+- **未动** manifest / RN 依赖 / flavor → release manifest diff 本刀不适用
+- **模拟器冒烟 `PASS`**（2026-08-13，API 36 arm64 模拟器，directApk）：
+  列表真实数据渲染（LV 徽章双开关/streak `1d`/pin 灰标/时间三段格式/
+  繁中最后消息）、左滑 pin/unpin、删除确认与对账、Grid/Map 切换、铃铛。
+  冒烟抓出并修掉一个布局缺陷：**左滑操作键恒挂底层会从透明行主体透出**
+  （每行 Delete/Pin 常驻盖住时间栏）——改为只在滑动中/滑开态组合，对齐
+  RN Swipeable `renderRightActions` 仅滑动期间渲染的语义（`084c158`）。
+  ⚠️ 排查期间发现模拟器残留全局代理 `10.0.2.2:8888`（Charles 遗留，宿主
+  无监听）致所有请求 ConnectException——症状像断网/掉登录，实际 token 完好；
+  清法 `settings put global http_proxy :0` + 重启 App（OkHttp 缓存代理配置）
+- **NOT RUN**：GooglePlay 打码行为（冒烟账号会话名无词表命中项）；
+  RuStore flavor 未单独 assemble（flavor 相关零改动）
 
 ## 3. 横切能力
 

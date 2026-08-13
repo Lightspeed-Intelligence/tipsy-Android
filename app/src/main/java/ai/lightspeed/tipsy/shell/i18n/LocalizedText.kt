@@ -12,6 +12,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.TextUnit
 
 /**
  * 自订阅语言变化的文案组件（W1-P5，方案 §4.8）。
@@ -35,6 +36,7 @@ fun LocalizedText(
     modifier: Modifier = Modifier,
     args: Map<String, String>? = null,
     color: Color = Color.Unspecified,
+    fontSize: TextUnit = TextUnit.Unspecified,
     fontWeight: FontWeight? = null,
     textAlign: TextAlign? = null,
     maxLines: Int = Int.MAX_VALUE,
@@ -45,6 +47,7 @@ fun LocalizedText(
         text = rememberLocalizedString(key, args),
         modifier = modifier,
         color = color,
+        fontSize = fontSize,
         fontWeight = fontWeight,
         textAlign = textAlign,
         maxLines = maxLines,
