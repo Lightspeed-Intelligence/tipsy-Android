@@ -106,6 +106,11 @@ object SurfaceProps {
         // - Settings 是原生列表（§8.1），根本不经 Surface props
         // - EditProfile 在 RN 侧是同页 Drawer，无路由参数
         // - UserCoins 页自己从 user store 取当前用户，不需要壳传 id
+        //
+        // ⚠️ Search 是**纯原生页**（W3），和 Settings 一样根本不经 Surface ——
+        // 它在这里返回空 map 纯粹是为了满足穷尽性；真有人给它传 props
+        // 说明走错了路径（原生 Fragment 不读 Surface props）
+        is AppRoute.Search,
         is AppRoute.DailyGemEntry,
         is AppRoute.UserBalance,
         is AppRoute.Subscribe,

@@ -224,12 +224,13 @@ class HomeFragment : Fragment() {
     }
 
     private fun onSearchClick() {
-        // 埋点照 RN 发（`HomeHeader.tsx:63`），目标页属 W3
+        // 埋点照 RN 发（`HomeHeader.tsx:63`）
         Analytics.track(
             "search_click_search_box",
             mapOf("platform" to "app"),
         )
-        Log.w(TAG, "搜索入口点击：Search 页属 W3，尚未实现")
+        val app = requireActivity().application as TipsyApplication
+        app.requestRoute(AppRoute.Search, AppRouter.Source.IN_APP)
     }
 
     private fun onSubscriptionClick() {

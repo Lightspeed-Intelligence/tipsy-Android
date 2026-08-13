@@ -140,4 +140,15 @@ sealed interface AppRoute {
     data class Login(val reason: String? = null) : AppRoute {
         override val requiresAuth = false
     }
+
+    /**
+     * 搜索页（W3 原生，`app/search/page.tsx`）。
+     *
+     * **游客可用**：六个端点里四个走 `axiosPublic`（`OPPORTUNISTIC`），
+     * 未登录能正常搜索，只是最近搜索为空（那两个是 `REQUIRED`）。
+     * 写成 `requiresAuth = true` 会把游客搜索挡在登录页后面 —— RN 侧没有这个门。
+     */
+    data object Search : AppRoute {
+        override val requiresAuth = false
+    }
 }

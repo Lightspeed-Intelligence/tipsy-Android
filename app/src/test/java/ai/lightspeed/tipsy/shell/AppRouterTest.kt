@@ -146,6 +146,26 @@ class AppRouterTest {
         assertEquals("不同角色是不同目标", 2, f.navigated.size)
     }
 
+    /**
+     * 去重只覆盖目标仍在栈里的时段。退出后再点是新的用户意图，必须能重开。
+     *
+     * Search 是首个进生产白名单的普通目标；没有这条，返回 Home 后第二次点击
+     * 搜索框会被 [AppRouter] 永久吞掉，而 Fragment 自己的幂等保护无法补救。
+     */
+    @Test
+    fun `目标关闭后同一路由可再次打开`() {
+        val f = fixture(loggedIn = true, enabled = listOf(AppRoute.Search::class.java))
+
+        f.router.handle(AppRoute.Search)
+        f.router.handle(AppRoute.Search)
+        assertEquals("目标仍在栈里时重复点击只导航一次", 1, f.navigated.size)
+
+        f.router.onDestinationClosed(AppRoute.Search)
+        f.router.handle(AppRoute.Search)
+
+        assertEquals("退出后再次点击是新意图", 2, f.navigated.size)
+    }
+
     // ── 未启用目标：明确拒绝，不静默 ────────────────────────────
 
     /**
@@ -168,6 +188,31 @@ class AppRouterTest {
         assertEquals("不该导航", 0, f.navigated.size)
         assertEquals("必须明确拒绝一次", 1, f.rejections.size)
         assertEquals(route, f.rejections.single())
+    }
+
+    /**
+     * W3：`Search` 是第一个进白名单的目标（原生 Fragment，不是 RN Surface）。
+     *
+     * 这条测试锁两件事：**在**白名单里，且**游客可达** —— 搜索页六个端点里
+     * 四个是 `OPPORTUNISTIC`，未登录能正常搜。写成 requiresAuth=true 会让
+     * 游客点搜索框先弹登录页，与 RN 不一致。
+     */
+    @Test
+    fun `Search 在生产白名单内且未登录也能直达`() {
+        assertTrue(
+            "Search 必须在生产白名单里，否则搜索入口点了没反应",
+            AppRoute.Search::class.java in ProductionRoutePolicy.enabledRouteTypes,
+        )
+        val f = fixture(
+            loggedIn = false,
+            enabled = ProductionRoutePolicy.enabledRouteTypes.toList(),
+        )
+        f.router.handle(AppRoute.Search)
+
+        assertEquals("游客也该直接进搜索页", 1, f.navigated.size)
+        assertEquals(AppRoute.Search, f.navigated.single())
+        assertEquals("不该要求登录", 0, f.loginRequests.size)
+        assertEquals("不该被拒绝", 0, f.rejections.size)
     }
 
     // ── 顺序：auth gate 先于启用检查 ────────────────────────────

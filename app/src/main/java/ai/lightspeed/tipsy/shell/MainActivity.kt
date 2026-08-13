@@ -2,6 +2,7 @@ package ai.lightspeed.tipsy.shell
 
 import ai.lightspeed.tipsy.shell.analytics.Analytics
 import ai.lightspeed.tipsy.shell.pages.login.LoginFragment
+import ai.lightspeed.tipsy.shell.pages.search.SearchFragment
 import ai.lightspeed.tipsy.shell.tabs.TabHostFragment
 import androidx.activity.enableEdgeToEdge
 import ai.lightspeed.tipsy.shell.router.AppRoute
@@ -81,6 +82,11 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
             if (supportFragmentManager.backStackEntryCount == 0) {
                 app.refreshAccountLanguage()
             }
+            // Router 的重复投递去重只覆盖目标在栈期间。Search 退出后必须解除，
+            // 否则返回 Home 再点同一个入口会被永久当成重复路由。
+            if (supportFragmentManager.findFragmentByTag(TAG_SEARCH) == null) {
+                router.onDestinationClosed(AppRoute.Search)
+            }
         }
 
         router = AppRouter(
@@ -90,9 +96,9 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
             logger = { Log.i(TAG, it) },
         )
         // RN 入口已切到 index.surfaces.js（本包 §2.19），业务 Surface 组件**在包里**。
-        // 但 AppRouter 仍用 ProductionRoutePolicy 的空白名单：能挂 ≠ 已验收，
-        // ChatDetail 在完成 W1-P9 / §9.1 矩阵前刻意不进生产白名单。
-        // 命中该路由时 Router 走 rejectNotEnabled 记录明确拒绝。
+        // AppRouter 使用 ProductionRoutePolicy 的集中白名单：纯原生 Search 已按
+        // W3-P1 放开；能挂 ≠ 已验收，ChatDetail 在完成 W1-P9 / §9.1 矩阵前
+        // 仍刻意不进生产白名单，命中时走 rejectNotEnabled 记录明确拒绝。
         //
         // ⚠️ 白名单是编译期常量（ProductionRoutePolicy），不再有运行时 markEnabled。
         // 启用某个路由要集中改那里并同步矩阵测试。
@@ -203,6 +209,9 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
         override fun navigate(route: AppRoute, source: AppRouter.Source) {
             when (route) {
                 is AppRoute.ChatDetail -> openSurface("ChatDetailSurface")
+                // W3：原生全屏页（不是 Surface）。白名单里为什么允许它见
+                // `ProductionRoutePolicy`
+                is AppRoute.Search -> openSearch()
                 // 其余目标尚未启用，Router 的 enabledRoutes 会先拦下 ——
                 // 走到这里说明有人启用了路由却没加分支，属实现错误，必须可见。
                 else -> error("路由已启用但缺少导航实现：${route.javaClass.simpleName}")
@@ -245,11 +254,31 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
         }
     }
 
+    /**
+     * 打开原生搜索页（W3）。
+     *
+     * ⚠️ **必须幂等**，同 [openLogin] 的理由：搜索入口在 Home 顶栏，连点两次
+     * 会叠两层，返回要按两次。用 tag 判定栈里是否已有。
+     */
+    private fun openSearch() {
+        if (supportFragmentManager.findFragmentByTag(TAG_SEARCH) != null) {
+            Log.i(TAG, "搜索页已在栈中，忽略重复请求")
+            return
+        }
+        supportFragmentManager.commit {
+            replace(R.id.surface_container, SearchFragment.newInstance(), TAG_SEARCH)
+            addToBackStack(TAG_SEARCH)
+        }
+    }
+
     private companion object {
         const val TAG = "MainActivity"
 
         /** 登录页的 Fragment tag —— [openLogin] 靠它做幂等判定。 */
         const val TAG_LOGIN = "login"
+
+        /** 搜索页的 Fragment tag —— [openSearch] 靠它做幂等判定。 */
+        const val TAG_SEARCH = "search"
 
         /** 五 Tab 根的 Fragment tag。 */
         const val TAG_TABS = "tabs"
