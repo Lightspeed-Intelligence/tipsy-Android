@@ -96,11 +96,31 @@ sealed interface AppRoute {
     // `ProductionRoutePolicy` 一处并更新矩阵测试，不必回头找散落的调用点。
 
     /**
-     * 设置页。方案 §8.1 记为「设置→**原生列表**」（不是 Surface），
-     * 但 Settings 列表本体属 W3 后续包（§1.3 归属表：Native / W3）。
-     * 语言页仍在 `SettingsSurface`（刻意不迁，§8.1）。
+     * 设置列表本体 —— **原生页**（方案 §8.1「设置→原生列表」、§1.3 归属表
+     * `Native / W3`）。W3 已实现（进度文档 §2.33），在生产白名单里。
+     *
+     * ⚠️ 它的 **7 个子屏走 [SettingsSubScreen]**，那些未过 §9.1。
+     * ⚠️ **语言页也是原生**，由 Settings 压栈打开、不是路由目标 ——
+     * §2.33 订正了「语言页仍在 SettingsSurface」那句错话：
+     * `SettingsSurface.tsx:34-44` 的 `KNOWN_SCREENS` 刻意不含 `Language`。
      */
     data object Settings : AppRoute {
+        override val requiresAuth = true
+    }
+
+    /**
+     * `SettingsSurface` 的某个子屏（W3 定义、**未启用**）。
+     *
+     * 7 个可达屏由 RN 的 `KNOWN_SCREENS` 定义（`SettingsSurface.tsx:36-44`）：
+     * Security / Blacklist / Feedback / About / ContactUs / Delete / Widget。
+     *
+     * ⚠️ [screen] 传白名单外的值时 RN 会**静默兜底到 `Feedback`**
+     * （`normalizeScreen`），表现为「点安全设置进了反馈页」。所以壳侧
+     * 只允许传那 7 个值之一（`SettingsRow` 里已按行写死）。
+     *
+     * @param screen 子屏名，进 Surface 的平铺 prop `initialScreen`
+     */
+    data class SettingsSubScreen(val screen: String) : AppRoute {
         override val requiresAuth = true
     }
 
