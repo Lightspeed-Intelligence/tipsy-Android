@@ -4,6 +4,8 @@ import ai.lightspeed.tipsy.shell.pages.home.HomeCacheStorage
 import ai.lightspeed.tipsy.shell.pages.screen.ScreenFirstScreenCacheStore
 import ai.lightspeed.tipsy.shell.pages.screen.ScreenAttribution
 import ai.lightspeed.tipsy.shell.pages.screen.ScreenEndpoint
+import ai.lightspeed.tipsy.shell.pages.screen.ScreenCacheSignature
+import ai.lightspeed.tipsy.shell.pages.screen.ScreenEndpointResolver
 import ai.lightspeed.tipsy.shell.pages.screen.ScreenFeedItem
 import ai.lightspeed.tipsy.shell.pages.screen.ScreenFirstScreenFeed
 import ai.lightspeed.tipsy.shell.pages.screen.ScreenMediaSourceType
@@ -207,6 +209,87 @@ class ScreenAttributionTest {
             networkItems = listOf(item("a"), item("b"), item("c")),
         )
         assertEquals(listOf("b", "c"), result.map { it.characterId })
+    }
+
+    // ── AB flag 解析与端点分流 ──────────────────────
+
+    /**
+     * ⚠️ 四种真值写法都要认（`abConfig/value.ts:5-8`）。
+     *
+     * 只认 `"true"` 会让运营在后台填 `1` 时 AB **静默失效** ——
+     * 表现为「推荐端点永远不命中」，没人会报。
+     */
+    @Test
+    fun `flag 接受四种真值与四种假值`() {
+        listOf("true", "TRUE", " 1 ", "yes", "on").forEach {
+            assertEquals("『$it』应为真", true, ScreenEndpointResolver.parseFlag(it))
+        }
+        listOf("false", "0", "no", "off").forEach {
+            assertEquals("『$it』应为假", false, ScreenEndpointResolver.parseFlag(it))
+        }
+    }
+
+    /** 认不出的值返回 null（由调用方 `?? false` 兜底）—— 与「配了 false」可区分。 */
+    @Test
+    fun `flag 认不出的值返回 null`() {
+        assertNull(ScreenEndpointResolver.parseFlag(null))
+        assertNull(ScreenEndpointResolver.parseFlag(""))
+        assertNull(ScreenEndpointResolver.parseFlag("maybe"))
+    }
+
+    @Test
+    fun `端点分流的三种组合`() {
+        // 游客：flag 为真也走 distribution
+        assertEquals(
+            ScreenEndpoint.DISTRIBUTION,
+            ScreenEndpointResolver.resolve(ownerUserId = null, flagEnabled = true),
+        )
+        assertEquals(
+            ScreenEndpoint.DISTRIBUTION,
+            ScreenEndpointResolver.resolve(ownerUserId = "  ", flagEnabled = true),
+        )
+        assertEquals(
+            ScreenEndpoint.DISTRIBUTION,
+            ScreenEndpointResolver.resolve(ownerUserId = "u1", flagEnabled = false),
+        )
+        assertEquals(
+            ScreenEndpoint.RECOMMENDATION,
+            ScreenEndpointResolver.resolve(ownerUserId = "u1", flagEnabled = true),
+        )
+    }
+
+    // ── 缓存签名 ────────────────────────────────────
+
+    /** ⚠️ `tagIds` 必须排序，否则选择顺序不同会得到不同签名（白降命中率）。 */
+    @Test
+    fun `签名对 tagIds 顺序不敏感`() {
+        fun sig(tags: List<String>) = ScreenCacheSignature.of(
+            ownerUserId = "u1",
+            endpoint = ScreenEndpoint.RECOMMENDATION,
+            nsfw = false,
+            gender = null,
+            languageCode = "en",
+            tagIds = tags,
+            contentType = null,
+        )
+        assertEquals(sig(listOf("a", "b")), sig(listOf("b", "a")))
+    }
+
+    /** 游客的 owner 归一成 `anonymous` —— 空串会让游客与拿不到 id 的登录态共用缓存。 */
+    @Test
+    fun `空 owner 归一成 anonymous`() {
+        val a = ScreenCacheSignature.of(null, ScreenEndpoint.DISTRIBUTION, false, null, "en", emptyList(), null)
+        val b = ScreenCacheSignature.of("  ", ScreenEndpoint.DISTRIBUTION, false, null, "en", emptyList(), null)
+        assertEquals(a, b)
+        assertTrue(a.startsWith(ScreenCacheSignature.ANONYMOUS))
+    }
+
+    /** 端点变化必须让签名变（否则切 AB 后读到另一个端点的缓存）。 */
+    @Test
+    fun `端点进签名`() {
+        val d = ScreenCacheSignature.of("u1", ScreenEndpoint.DISTRIBUTION, false, null, "en", emptyList(), null)
+        val r = ScreenCacheSignature.of("u1", ScreenEndpoint.RECOMMENDATION, false, null, "en", emptyList(), null)
+        assertTrue(d != r)
     }
 
     // ── 首屏缓存往返（存→读同一个解析器）────────────

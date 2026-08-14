@@ -30,6 +30,15 @@ import androidx.fragment.app.Fragment
  *
  * 文案**刻意不走 i18n**：它不是产品文案，是给开发/QA 看的状态说明，
  * 而且这几个页面上线前必然被真实实现替掉。给它导 26 个语言的词条是浪费。
+ *
+ * ## ⚠️ 当前**没有调用方**（2026-08-14，Screen W4-P1 起）
+ *
+ * 五个 Tab 都已有真实页面：Home（§2.23）/ Screen（§2.35）/ ChatList（§2.30）
+ * / Profile（§2.25）/ Create（伪 Tab，不建 Fragment）。
+ *
+ * **刻意保留不删**：W4 还有若干页面要接（Letter / GemsSubscription 等），
+ * 届时若某个入口的目标页未就绪，这个占位比空白或崩溃都好。
+ * 若到上线前仍无人用，那时再删。
  */
 class TabPlaceholderFragment : Fragment() {
 

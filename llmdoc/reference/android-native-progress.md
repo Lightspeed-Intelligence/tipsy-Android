@@ -24,7 +24,11 @@
 > 壳终于有了改语言的入口；⚠️ 审计订正了一处读反的归属 —— **语言页要原生实现**，
 > 不在 `SettingsSurface` 里。
 > **Search P2 筛选器已实现**（§2.34）：Search 达成完整对等；P1 主链路
-> owner 已在模拟器验过，**P2 真机冒烟未跑**。
+> owner 已在模拟器验过。
+> **W4 起步：Screen（Tab1 大屏页）P1 已实现**（§2.35）——**五个 Tab 至此
+> 全部有真实页面**；P1 刻意不引 Media3（不播视频），OOM 风险为零。
+> ⚠️ owner 2026-08-14 决定**真机冒烟统一推迟到功能完成后**，
+> 故待验清单只累积不清空（当前四刀）。
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
@@ -37,8 +41,9 @@
 - **他人主页已实现**（§2.32，2026-08-14）：6 文件 1,469 行，`AppRoute.UserProfile` 进白名单 —— **搜索 → 创作者 → 他人主页是壳的第一条端到端可用路径**。审计推翻了「复用自己视角」的前提（七处偏差）：只有 **1 个 tab**（RN 注释说两个，代码是一个）、数据源另有四条、`size` **200 且不翻页**、`/user/get/public` 走 `axiosAuth` 会对游客弹登录页、`/plot/list/creator` **现网从未被调用**、关注按钮在 `ProfileHeader.tsx` 而非 `user-profile.tsx`。真机冒烟 **NOT RUN**。
 - **Settings 列表 + 语言页已实现**（§2.33，8 文件 1,501 行）：补上了真实功能缺失 —— 此前**壳内没有任何入口能改语言**。审计订正三处：语言页**要原生实现**（RN 与 iOS 双证据）、`supportedLanguages` 壳内**恒为空**必须自己拉、Limitless 开关是 `nsfw` 的**唯一写方**且仅 directApk 可见。渠道 gating 收在 `SettingsRow` 并对三渠道各有单测。7 个 Surface 子屏（`AppRoute.SettingsSubScreen`）仍被明确拒绝。真机冒烟 **NOT RUN**。
 - **⚠️ 其余出口仍全部点不动**：Home/ChatList/Search 的卡片点击（`ChatDetail`）与 Profile 五个出口仍被 `rejectNotEnabled` 明确拒绝。解锁 ChatDetail 的前置是 P9 / §9.1 矩阵，且 §12 实例关闭链尚未闭环（TS `popSurface()` 无参，Android bridge 固定传 `null`）。
+- **Screen P1 已实现**（§2.35，10 文件 2,131 行）：**Screen Tab 从占位换成真实页面，五个 Tab 全部落地**。AB 端点分流（游客/未登录恒 distribution）、归因、首屏缓存、会话埋点双轴、静态图/GIF 两形态。⚠️ **不播视频**：Media3 与有界播放器池属 P2，故 OOM 风险为零。两份 RN fixture 在提交前抓到我两个设计缺陷（归因 position 用原始下标、首屏缓存要在发请求前读）。
 - **Search P2 筛选器已实现**（§2.34，4 文件 723 行）：性别/排序/分级抽屉 + 二级标签栏，Search 达成完整对等。`SearchTagOrderTest` **逐条对拍 RN 的 144 行现成单测**。⚠️ 分级筛选的门是「非 GooglePlay && nsfw 开」，与 Settings 的 Limitless（只有 directApk）**不同轴** —— RuStore 在这里算可选。
-- **不存在 / 未验**：Screen Tab 仍是占位页；ChatList 的 Map「時光長廊」视图仍是 P2；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。生产路由白名单已放开三个纯原生目标（`Search` / `UserProfile` / `Settings`），但 ChatDetail 在 P9 前仍 disabled（Home/ChatList/Search 的卡片点击因此被明确拒绝），12 个业务 Surface 也全未过 §9.1（含 Settings 的 7 个子屏）。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
+- **不存在 / 未验**：ChatList 的 Map「時光長廊」视图仍是 P2；Screen 的视频播放（Media3）属 P2；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。生产路由白名单已放开三个纯原生目标（`Search` / `UserProfile` / `Settings`），但 ChatDetail 在 P9 前仍 disabled（Home/ChatList/Search 的卡片点击因此被明确拒绝），12 个业务 Surface 也全未过 §9.1（含 Settings 的 7 个子屏）。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
 
 ## 1. 波次状态
 
@@ -48,7 +53,7 @@
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟡 **契约层已收口且 CI 已验；§12 关闭链 + P9 未完** | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17 已并） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
 | W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1–P4、P6，§2.25–§2.29，真机验证）；ChatList P1 Grid 主链路已并（§2.30，模拟器冒烟 PASS）；**Search P1 主链路已实现**（§2.31，directApk 真机冒烟 PASS）；**他人主页已实现**（§2.32，第一条端到端可用路径）；**Settings 列表 + 语言页已实现**（§2.33）；**Search P2 筛选器已实现**（§2.34，Search 完整对等）；剩 Profile P5 ⋮ 菜单/P7 头像框、ChatList P2 Map | `a6b9fc56a88d97444fe5f1ce952068bb9222be82` | —（PR #21–#30 已并；Search P2 在 `feat/android-w3-search-p2`） |
-| W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | ⬜ 阻塞于 W3 | — | — |
+| W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | 🟡 **起步**：Screen **P1 已实现**（§2.35，数据层 + 翻页 + 埋点，**不含 Media3**）；剩 Screen P2（Media3 + 有界播放器池 + buffer 三件套，**OOM 首要风险**）与 P3 二期项、12 个 Surface、系统能力、OTA | `a6b9fc56a88d97444fe5f1ce952068bb9222be82` | —（Screen P1 在 `feat/android-w4-screen-p1`） |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
 
 **W0+W1 时间盒**：这两波不产出用户可见价值，目标是"够用就往下走"。若超过总工期 1/4,停下复审是否过度设计（方案 §8.5）。
@@ -2330,9 +2335,14 @@ pin `017e142ac` → **`a6b9fc56a`**（已推远端）。
   GooglePlay 一定不出现）、标签 toggle 与选中置前、展开/收起、
   筛选重查不闪空、翻页带筛选条件
 
-### 2.35 W4 Screen（Tab1 大屏页）开工前审计（2026-08-14）
+### 2.35 W4 Screen（Tab1 大屏页）P1（2026-08-14）
 
-**尚未实现，本节只记开工前的源码审计结论。** owner 2026-08-14 决定：
+新增 `pages/screen/` **10 文件 2,131 行**：AB 端点分流 + 竖向全屏翻页 +
+归因 + 首屏缓存 + 会话埋点 + 静态图/GIF 两形态。
+**Screen Tab 从占位页换成真实页面 —— 五个 Tab 至此全部有真实实现。**
+
+⚠️ **P1 不引 Media3、不播视频**：`showcase` 形态显示 `thumbnailUrl` 静态封面。
+OOM 风险因此为零。owner 2026-08-14 决定：
 真机冒烟推迟到功能全部完成后统一做，所以本刀起**待验清单只累积不清空**
 （当前已累积三刀 22 项，见 §2.32 / §2.33 / §2.34 的 NOT RUN 段）。
 
@@ -2417,6 +2427,72 @@ ExoPlayerImplInternal.shouldContinueLoading`，多个 ExoPlayer 并存时
 - **P2**：Media3 + 有界播放器池 + ±1 窗口 + buffer 三件套。
 - **P3**：二期项（动图 WebP 动画、fade 转场预载、点赞增强、分享）——
   方案已标「iOS 至今仍在二期清单」。
+
+#### 两份 RN fixture 抓到我自己两个设计缺陷
+
+写码时按 §8.2 先对拍现成单测，两条都在提交前被抓：
+
+1. **`position` 必须用原始下标**。`recommendationAttribution.test.ts:33`
+   钉死 `[无id, a, a, b]` + page1/size10 → **a=11、b=13**（不是 10、11）：
+   `rawIndex` 对「无 character_id」与「重复 id」两种跳过**都照样递增**。
+   我最初在 `ScreenPage.parse` 就把无效条目过滤掉了 —— 那会让下游下标整体
+   前移，**所有归因位置偏移**，而后端按 position 算 CTR、两端都不报错。
+   已改成 `parse` **保留 null 占位**（`items: List<ScreenFeedItem?>`），
+   过滤与去重统一在 `ScreenAttribution.attribute` 里做。
+2. **首屏缓存必须在发请求前读**。RN 的 `cachedFirstScreenMedia` 是
+   `useMemo`（`screen.tsx:237`），求值在请求**之前**；写缓存在响应之后
+   （`:826`）。我最初写成「先 put 再 get」—— 冷启动时第 0 条既进缓存又被
+   `merge` 的 `drop(1)` 丢掉，等价于缓存无效，且首屏顺序与现网不同
+   （现网首次从第 2 条开始）。**不报错**。已改成请求前读快照并透传。
+
+另核实 `parseABConfigBoolean` 接受 **`true` / `1` / `yes` / `on`** 四种真值
+（`abConfig/value.ts:5-8`）—— 我一开始只认 `"true"`，那会让运营在后台
+填 `1` 时 AB 静默失效。
+
+#### 实现要点
+
+- **AB flag 拉取走 `axiosAuth` → REQUIRED**（`abConfig.ts:10`），
+  所以游客根本拿不到配置 —— 与「游客恒走 distribution」自洽，未登录时
+  不发这个请求。按 owner 缓存（对齐 `service.ts:30-32`）。
+- **会话埋点接两条轴**：焦点轴用 Fragment 的 `onStart/onStop`，
+  前台轴用 **`ProcessLifecycleOwner`**。只挂 Fragment 生命周期会漏掉
+  「按 Home 键出去再回来」，表现为一个跨越数小时的畸形长会话。
+- **`VerticalPager` 的 `beyondViewportPageCount` 保持默认 0** ——
+  P2 接播放器后它直接决定同时存活的播放器数，也就是 OOM 的来源。
+  P1 虽不播视频，先把这个默认坐实。
+- **缓存存「接口同形」JSON**，读路径复用 `ScreenFeedItem.parse` ——
+  存读走同一个解析器，少一类「存得下但读不回」的 bug。三形态各有往返单测。
+  **归因不进缓存**（请求级数据，存了读出就是过期归因）。
+- **复用 `HomeCacheStorage` 接缝**而不是直接吃 `LegacyMmkvStore`
+  （后者是 final class，测试无法替身）。两处需求相同，没必要造第二个接口。
+- **CTA 只透传 characterId，不复刻 `resolveChatEntryScreen`** ——
+  与 ChatList 同一条纪律（§2.30：由 `ChatDetailSurface` 自决入口屏）。
+  这是相对 Screen 的 RN 代码（页面内四路分流）的**有意偏差**。
+- **`TabPlaceholderFragment` 现已无调用方**，但刻意保留：W4 还有页面要接，
+  届时目标未就绪时它比空白或崩溃都好。
+
+#### P1 明确未做
+
+视频播放（Media3 + 有界池 + buffer 三件套）、动图真动画（缺 `coil-gif`
+artifact，当前只显示首帧）、tagline 展开（`FeedMediaTaglineOverlay` 531 行）、
+真输入框（`AppChatBar` 1,400 行，P1 简化成按钮）、点赞写入与 echo 对账、
+分享、`layout.ts` 的 iOS inset 数学（Android 不适用）。
+
+⚠️ CTA 文案**复用既有词条 `Send`** 而不是新增 `Chat` —— P1 这个按钮是过渡
+形态，接真输入框后会消失。为将被替换的占位 UI bump submodule 不值得。
+**本刀零词条新增、零 submodule 改动**（pin 仍 `a6b9fc56a`）。
+
+#### 验证
+
+- app 单测 **876 条**（+43：`ScreenAttributionTest` 22 + `ScreenViewModelTest` 21，
+  含**两份 RN fixture 逐条对拍**），failures=0、**skipped=0**
+- `:tipsy-auth:testDebugUnitTest` 15 条全绿
+- lint 无新增（baseline 仍 5 条未改）；googlePlay + directApk assemble 通过
+- **未动** manifest（`largeHeap` W0 就在）/ RN 依赖 / flavor / submodule
+- **真机冒烟 NOT RUN** —— 按 owner 决定统一推迟到功能完成后。本刀待验：
+  AB 三种组合（游客/登录+flag 开/登录+flag 关各走对端点）、竖向翻页与预拉、
+  首屏缓存冷启动秒开、会话埋点四个时机（切 Tab / 按 Home 键往返）、
+  归因诊断事件、三形态渲染（含 GIF 只显首帧这个已知偏差）
 
 ## 3. 横切能力
 
