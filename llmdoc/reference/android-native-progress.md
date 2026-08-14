@@ -825,8 +825,19 @@ iOS → `Tipsy-iOS/Resources/Locales/`，Android → `app/src/main/assets/locale
 重拉 → `user.language_code` → `user-storage.state.languageCode`
 （`useChangeLanguage.ts:57-72` + `store/user.ts:187`）。
 
-**语言设置页刻意不迁**（方案 §8.1），仍在 `SettingsSurface` 里。所以壳**只读**
-这个 key，不写 —— 写 Zustand 信封必须 merge（§4.6），那属 P2。
+⚠️ **本段原文有一处错**（2026-08-14 订正）：曾写「语言设置页刻意不迁，
+**仍在 `SettingsSurface` 里**」—— 后半句不成立。已核实
+`SettingsSurface.tsx:34-44` 的 `KNOWN_SCREENS` **刻意不含 `Language`**，
+注释原文：「`'Language'`（语言页**原生**：壳是语言唯一写入者，
+onLanguageChanged 单向广播）」。iOS 侧对应物是
+`Tipsy-iOS/Tipsy-iOS/Pages/Profile/LanguageViewController.swift`（原生）。
+
+正确表述：**语言页要原生实现**（方案 §1.3 归属表写的 `Native / W3` 才是对的），
+它不是「不迁」而是「壳侧新写」。方案 §8.1 那行「刻意不迁」指的是
+**不由 RN 承载**，措辞容易被读反。壳当前**只读** `user-storage` 的
+`languageCode` 镜像、不写信封 —— 写 Zustand 信封必须 merge（§4.6），那属 P2；
+但语言的真值链是「设置页 → `POST /user/set_language` → 重拉 `/user/info`」，
+原生语言页走这条，不经过信封写入。
 
 ⚠️ **桥契约没有 JS→壳 的语言通知方法**（已核实 `modules/tipsy-auth/src/index.ts`
 只有壳→JS 的 `onLanguageChanged`）。当前处理：`MainActivity` 挂
@@ -2057,7 +2068,7 @@ auth 轨挡不住（没换号），故回写前额外比对 `userId`。三条时
 | Auth 所有权 | 🟡 **closeout 已实现且 CI 已验**（§2.22） | `shell/auth/`（§2.13 / §2.18）。single-flight/generation/原子条件清理已收口；历史 token 迁移未完（P2） |
 | `tipsy-auth` Android 实现 | 🟡 **桥已注册、能力 PARTIAL** | `modules/tipsy-auth/android/` + `ShellAuthProvider`；主线程约束已落地，Login/Profile 等真实能力仍按波次接线 |
 | 网络层 | 🟡 **closeout 已实现且 CI 已验**（§2.22） | `shell/network/`（§2.14 / §2.18）。过期 token 发送守门与双入口共享 gate 已实现。**未引 Retrofit** |
-| i18n | 🟢 **已完成** | `shell/i18n/`（§2.16）。壳是唯一 writer；key-based 查表 + 两条 normalize 规则 + Compose 自订阅组件。**语言设置页仍在 RN**（刻意，方案 §8.1） |
+| i18n | 🟢 **机制已完成**，语言**设置页**未做 | `shell/i18n/`（§2.16）。壳是唯一 writer；key-based 查表 + 两条 normalize 规则 + Compose 自订阅组件。⚠️ **语言设置页要原生实现且尚未做**（§2.16 已订正：RN 的 `SettingsSurface` 白名单刻意不含 `Language`，iOS 侧也是原生 `LanguageViewController`）—— 当前壳内**没有任何入口能改语言** |
 | Router / 深链 | 🟡 parser/router 机制已落地，**白名单放开两个纯原生目标** | `shell/router/`；`AppRoute.Search`（§2.31）与 `AppRoute.UserProfile`（§2.32）已进 `enabledRouteTypes` —— 两者都是纯原生 Fragment，不受 §9.1 Surface 矩阵约束。`onDestinationClosed` 另有谓词版供带参路由解除去重（§2.32）。真实 Surface 参数与 P9 matrix 未完成，ChatDetail 在 P9 前保持关闭 |
 | RN Surface 宿主 | 🟡 机制已落地、闭环待收口 | `RNSurfaceFragment`（共享单 ReactHost）；UUID/首帧/reappear/props builder 已有，真实 instance-aware close 尚未闭环 |
 | Push | 🔴 未开始 | — |
