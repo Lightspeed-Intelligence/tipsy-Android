@@ -4,12 +4,16 @@ import ai.lightspeed.tipsy.shell.analytics.Analytics
 import ai.lightspeed.tipsy.shell.auth.Generations
 import ai.lightspeed.tipsy.shell.network.ApiException
 import ai.lightspeed.tipsy.shell.pages.home.HomeFeedItem
+import ai.lightspeed.tipsy.shell.pages.home.HomeTag
 import ai.lightspeed.tipsy.shell.pages.search.CharacterSearchOutcome
 import ai.lightspeed.tipsy.shell.pages.search.CharacterSearchPage
 import ai.lightspeed.tipsy.shell.pages.search.CreatorResult
 import ai.lightspeed.tipsy.shell.pages.search.CreatorSearchPage
 import ai.lightspeed.tipsy.shell.pages.search.LoadMoreRequestGate
 import ai.lightspeed.tipsy.shell.pages.search.SearchCharacterQuery
+import ai.lightspeed.tipsy.shell.pages.search.SearchContentRating
+import ai.lightspeed.tipsy.shell.pages.search.SearchGender
+import ai.lightspeed.tipsy.shell.pages.search.SearchSorting
 import ai.lightspeed.tipsy.shell.pages.search.SearchSource
 import ai.lightspeed.tipsy.shell.pages.search.SearchTab
 import ai.lightspeed.tipsy.shell.pages.search.SearchViewModel
@@ -22,6 +26,8 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -818,6 +824,226 @@ class SearchViewModelTest {
         }
     }
 
+    // ── 筛选（P2，§2.34）────────────────────────
+
+    @Test
+    fun `打开抽屉复制已生效筛选 关闭不提交`() = runTest {
+        val api = RecordingApi()
+        val vm = viewModel(api)
+        vm.onFilterDrawerOpen()
+        vm.onFilterGenderSelect(SearchGender.MALE)
+        advanceUntilIdle()
+        assertEquals(SearchGender.MALE, vm.state.value.pendingFilter?.gender)
+        // 已生效值不该被改
+        assertEquals(SearchGender.ALL, vm.state.value.filter.gender)
+
+        // 关抽屉（点 X / 遮罩）—— RN 的 handleClose 只 setOpen(false)
+        vm.onFilterDrawerDismiss()
+        advanceUntilIdle()
+        assertNull(vm.state.value.pendingFilter)
+        assertEquals("关闭不提交", SearchGender.ALL, vm.state.value.filter.gender)
+    }
+
+    @Test
+    fun `Reset 只回默认三项 不关抽屉不清标签`() = runTest {
+        val api = RecordingApi()
+        val vm = viewModel(api)
+        vm.onFilterDrawerOpen()
+        vm.onFilterGenderSelect(SearchGender.MALE)
+        vm.onFilterSortingSelect(SearchSorting.LATEST)
+        vm.onFilterReset()
+        advanceUntilIdle()
+
+        val pending = vm.state.value.pendingFilter
+        assertNotNull("Reset 不该关抽屉", pending)
+        assertEquals(SearchGender.ALL, pending?.gender)
+        assertEquals(SearchSorting.RECOMMENDED, pending?.sorting)
+    }
+
+    @Test
+    fun `Done 提交筛选并把真值发进请求`() = runTest {
+        val api = RecordingApi()
+        api.characterPage = page(listOf(character("a")), total = 1)
+        val vm = viewModel(api)
+        vm.submitQuery("cat")
+        advanceUntilIdle()
+        val before = api.characterQueries.size
+
+        vm.onFilterDrawerOpen()
+        vm.onFilterGenderSelect(SearchGender.NON_BINARY)
+        vm.onFilterSortingSelect(SearchSorting.MOST_LIKED)
+        vm.onFilterDone()
+        advanceUntilIdle()
+
+        assertNull(vm.state.value.pendingFilter)
+        val q = api.characterQueries.last()
+        // ⚠️ 发的是后端枚举值，不是 UI 文案
+        assertEquals("other", q.gender)
+        assertEquals("MostLiked", q.sorting)
+        assertTrue("Done 必须重查", api.characterQueries.size > before)
+    }
+
+    /**
+     * ⚠️ 筛选重查走 `isRefreshing` 而不是 `isLoading` —— **保留旧列表**。
+     * 清空会让筛选时列表闪空一下（RN 专门为此拆了 refreshing）。
+     */
+    @Test
+    fun `筛选重查保留旧结果且不切 tab`() = runTest {
+        val api = RecordingApi()
+        api.characterPage = page(listOf(character("a")), total = 1)
+        val vm = viewModel(api)
+        vm.submitQuery("cat")
+        advanceUntilIdle()
+        vm.onTabChange(SearchTab.CREATORS)
+
+        val gate = CompletableDeferred<Unit>()
+        api.characterGate = gate
+        vm.onFilterDrawerOpen()
+        vm.onFilterSortingSelect(SearchSorting.LATEST)
+        vm.onFilterDone()
+        advanceUntilIdle()
+
+        assertTrue(vm.state.value.isRefreshing)
+        assertEquals("旧结果要留着", 1, vm.state.value.characterResults.size)
+        assertEquals("不该被弹回 Characters", SearchTab.CREATORS, vm.state.value.tab)
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertFalse(vm.state.value.isRefreshing)
+    }
+
+    @Test
+    fun `未搜索时改筛选不发请求`() = runTest {
+        val api = RecordingApi()
+        val vm = viewModel(api)
+        vm.onFilterDrawerOpen()
+        vm.onFilterSortingSelect(SearchSorting.LATEST)
+        vm.onFilterDone()
+        advanceUntilIdle()
+
+        assertTrue(api.characterQueries.isEmpty())
+    }
+
+    @Test
+    fun `性别 All 时请求不带 gender 键`() = runTest {
+        val api = RecordingApi()
+        api.characterPage = page(listOf(character("a")), total = 1)
+        val vm = viewModel(api)
+        vm.submitQuery("cat")
+        advanceUntilIdle()
+
+        // 默认就是 All —— gender 应为 null（API 层据此整键不发）
+        assertNull(api.characterQueries.first().gender)
+    }
+
+    @Test
+    fun `不可选分级时请求恒发 All`() = runTest {
+        val api = RecordingApi()
+        api.characterPage = page(listOf(character("a")), total = 1)
+        val vm = viewModel(api)
+        // 未调 onContentRatingAvailability → canPick 为 false
+        vm.onFilterDrawerOpen()
+        vm.onFilterContentRatingSelect(SearchContentRating.NSFW)
+        vm.onFilterDone()
+        vm.submitQuery("cat")
+        advanceUntilIdle()
+
+        assertEquals("All", api.characterQueries.last().contentRating)
+    }
+
+    @Test
+    fun `可选分级时请求发选中值`() = runTest {
+        val api = RecordingApi()
+        api.characterPage = page(listOf(character("a")), total = 1)
+        val vm = viewModel(api)
+        vm.onContentRatingAvailability(true)
+        vm.onFilterDrawerOpen()
+        vm.onFilterContentRatingSelect(SearchContentRating.SFW)
+        vm.onFilterDone()
+        vm.submitQuery("cat")
+        advanceUntilIdle()
+
+        assertEquals("SFW", api.characterQueries.last().contentRating)
+    }
+
+    // ── 标签栏 ──────────────────────────────────────
+
+    @Test
+    fun `点标签 toggle 并立即重查`() = runTest {
+        val api = RecordingApi()
+        api.characterPage = page(listOf(character("a")), total = 1)
+        val vm = viewModel(api)
+        vm.submitQuery("cat")
+        advanceUntilIdle()
+        val before = api.characterQueries.size
+
+        vm.onTagToggle("t1")
+        advanceUntilIdle()
+        assertEquals(listOf("t1"), vm.state.value.filter.tagIds)
+        assertEquals(listOf("t1"), api.characterQueries.last().tagIds)
+        assertTrue(api.characterQueries.size > before)
+
+        // 再点一次取消
+        vm.onTagToggle("t1")
+        advanceUntilIdle()
+        assertTrue(vm.state.value.filter.tagIds.isEmpty())
+    }
+
+    @Test
+    fun `标签选中顺序保留`() = runTest {
+        val api = RecordingApi()
+        api.characterPage = page(listOf(character("a")), total = 1)
+        val vm = viewModel(api)
+        vm.submitQuery("cat")
+        advanceUntilIdle()
+
+        vm.onTagToggle("b")
+        advanceUntilIdle()
+        vm.onTagToggle("a")
+        advanceUntilIdle()
+        // 选中顺序即显示顺序（SearchTagOrder 第一层优先级依赖它）
+        assertEquals(listOf("b", "a"), vm.state.value.filter.tagIds)
+    }
+
+    @Test
+    fun `标签目录拉取后进状态`() = runTest {
+        val api = RecordingApi()
+        val vm = viewModel(
+            api,
+            tags = listOf(
+                HomeTag(id = "t1", label = "Romance"),
+            ),
+        )
+        vm.onAppear()
+        advanceUntilIdle()
+
+        assertEquals(1, vm.state.value.tagCatalog.size)
+        assertEquals(mapOf("t1" to "Romance"), vm.state.value.tagLabels)
+    }
+
+    @Test
+    fun `目录外的聚合标签不进展示顺序`() = runTest {
+        // 后端聚合可能给出已下线标签，渲染它是个没文案的空胶囊
+        val api = RecordingApi()
+        api.characterPage = CharacterSearchPage(
+            total = 1,
+            searchSessionId = "s",
+            outcome = CharacterSearchOutcome.SAFE,
+            hits = listOf(character("a")),
+            tagAggIds = listOf("t1", "gone"),
+        )
+        val vm = viewModel(
+            api,
+            tags = listOf(
+                HomeTag(id = "t1", label = "Romance"),
+            ),
+        )
+        vm.onAppear()
+        vm.submitQuery("cat")
+        advanceUntilIdle()
+
+        assertEquals(listOf("t1"), vm.state.value.orderedTagIds)
+    }
+
     // ── fixture ────────────────────────────────
 
     private fun kotlinx.coroutines.test.TestScope.viewModel(
@@ -826,12 +1052,14 @@ class SearchViewModelTest {
         userId: String? = "u1",
         debounceMillis: Long = 0,
         nsfw: Boolean = false,
+        tags: List<HomeTag>? = null,
     ): SearchViewModel = SearchViewModel(
         api = api,
         generations = generations,
         languageProvider = { "en" },
         nsfwProvider = { nsfw },
         userIdProvider = { userId },
+        tagSource = tags?.let { list -> { list } },
         scope = this as CoroutineScope,
         debounceMillis = debounceMillis,
         logWarn = { _, _ -> },

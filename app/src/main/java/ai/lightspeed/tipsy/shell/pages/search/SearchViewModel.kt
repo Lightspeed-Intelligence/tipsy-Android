@@ -2,6 +2,7 @@ package ai.lightspeed.tipsy.shell.pages.search
 
 import ai.lightspeed.tipsy.shell.analytics.Analytics
 import ai.lightspeed.tipsy.shell.auth.Generations
+import ai.lightspeed.tipsy.shell.pages.home.HomeTag
 import ai.lightspeed.tipsy.shell.pages.home.HomeFeedItem
 import android.util.Log
 import androidx.lifecycle.ViewModel
@@ -50,6 +51,13 @@ class SearchViewModel(
     private val nsfwProvider: () -> Boolean,
     /** 当前 userId；null = 未登录（最近搜索是 REQUIRED，未登录不发）。 */
     private val userIdProvider: () -> String?,
+    /**
+     * 标签目录数据源（P2 的标签栏，`/character/tags`，与 Home 抽屉同源）。
+     *
+     * 可空是为了让既有测试不必都传它 —— null 时标签栏为空，
+     * 其余功能不受影响（`orderedTagIds` 会因目录空而过滤掉所有 agg id）。
+     */
+    private val tagSource: (suspend () -> List<HomeTag>)? = null,
     private val scope: CoroutineScope? = null,
     /** 防抖窗口，测试注入 0 以免等待真实 500ms。 */
     private val debounceMillis: Long = DEBOUNCE_MILLIS,
@@ -95,6 +103,40 @@ class SearchViewModel(
     fun onAppear() {
         refreshRecentHistory()
         refreshPopularTerms()
+        loadTagCatalogIfNeeded()
+    }
+
+    /**
+     * 分级筛选是否可选（三重 gating，见 [SearchFilter.canPickContentRating]）。
+     *
+     * 由 Fragment 灌入而不是 ViewModel 自己算：它依赖 flavor 常量与
+     * nsfw 镜像（`HomeFilterStore`），两者都属壳环境不属状态。
+     */
+    fun onContentRatingAvailability(canPick: Boolean) {
+        if (_state.value.canPickContentRating == canPick) return
+        _state.value = _state.value.copy(canPickContentRating = canPick)
+    }
+
+    /**
+     * 拉标签目录（一次会话一次）。
+     *
+     * **失败静默**：标签栏空掉不该阻塞搜索主链路，与 RN 的
+     * `hydrateTags` 内部静默捕获同款（`config_persist.ts:341-350`）。
+     * ⚠️ 但那个静默正是 §2.19 记的坑源（「标签行空掉，全新安装必现」），
+     * 所以失败要留日志。
+     */
+    private fun loadTagCatalogIfNeeded() {
+        val source = tagSource ?: return
+        if (_state.value.tagCatalog.isNotEmpty()) return
+        coroutineScope.launch {
+            val tags = runCatching { source() }
+                .onFailure {
+                    if (it is CancellationException) throw it
+                    logWarn("拉取标签目录失败，标签栏将为空", it)
+                }
+                .getOrNull() ?: return@launch
+            _state.value = _state.value.copy(tagCatalog = tags)
+        }
     }
 
     /**
@@ -239,6 +281,131 @@ class SearchViewModel(
         _state.value = _state.value.copy(tab = tab)
     }
 
+    // ── 筛选（P2，§2.34）────────────────────────
+
+    /**
+     * 打开筛选抽屉：把已生效的筛选**复制**成待提交值
+     * （RN 的三个 `current*` local state，`FilterDrawer.tsx:47-53` +
+     * `:60-66` 的 open effect）。
+     */
+    fun onFilterDrawerOpen() {
+        val s = _state.value
+        _state.value = s.copy(pendingFilter = s.filter)
+    }
+
+    /**
+     * 关抽屉（点 X 或点遮罩）—— **不提交**（RN 的 `handleClose` 只
+     * `setOpen(false)`，待提交值随组件 state 丢弃）。
+     */
+    fun onFilterDrawerDismiss() {
+        _state.value = _state.value.copy(pendingFilter = null)
+    }
+
+    /** 抽屉里点某个性别 —— 只改待提交值。 */
+    fun onFilterGenderSelect(gender: SearchGender) {
+        val pending = _state.value.pendingFilter ?: return
+        _state.value = _state.value.copy(pendingFilter = pending.copy(gender = gender))
+    }
+
+    fun onFilterSortingSelect(sorting: SearchSorting) {
+        val pending = _state.value.pendingFilter ?: return
+        _state.value = _state.value.copy(pendingFilter = pending.copy(sorting = sorting))
+    }
+
+    fun onFilterContentRatingSelect(rating: SearchContentRating) {
+        val pending = _state.value.pendingFilter ?: return
+        _state.value = _state.value.copy(pendingFilter = pending.copy(contentRating = rating))
+    }
+
+    /**
+     * Reset：三项**回默认值但不关抽屉、不提交**
+     * （`FilterDrawer.tsx:68-72` 只 set 三个 local state）。
+     *
+     * ⚠️ **不清标签**：标签是独立的二级栏，Reset 不该动它
+     * （RN 的 `handleReset` 只碰 gender/sorting/rating 三个）。
+     */
+    fun onFilterReset() {
+        val pending = _state.value.pendingFilter ?: return
+        _state.value = _state.value.copy(
+            pendingFilter = pending.copy(
+                gender = SearchGender.DEFAULT,
+                sorting = SearchSorting.DEFAULT,
+                contentRating = SearchContentRating.DEFAULT,
+            ),
+        )
+    }
+
+    /**
+     * Done：提交待提交值、关抽屉、**重查**。
+     *
+     * ⚠️ 重查走 [refetchWithFilter] 而不是 [submitQuery]：后者会清结果并切回
+     * 角色 tab、还会重发 `search_trigger_page_exposure`（那是"用户提交了新词"
+     * 的事件，改筛选不该发）。RN 侧筛选变化走的是 `refreshing` 语义 ——
+     * **保留旧列表**加半透明遮罩，不闪空。
+     */
+    fun onFilterDone() {
+        val s = _state.value
+        val pending = s.pendingFilter ?: return
+        _state.value = s.copy(filter = pending, pendingFilter = null)
+        refetchWithFilter()
+    }
+
+    /**
+     * 点标签栏的某个标签（多选 toggle，交集筛选）。
+     *
+     * ⚠️ **选中顺序即显示顺序**（`SearchTagOrder` 第一层优先级），
+     * 所以取消再选会排到末尾 —— 对齐 RN（`selectedTagIds` 是数组不是 Set）。
+     * 点完立即重查（RN 的 `onToggle` 直接触发新查询，无需 Done）。
+     */
+    fun onTagToggle(tagId: String) {
+        val s = _state.value
+        val current = s.filter.tagIds
+        val next = if (tagId in current) current - tagId else current + tagId
+        _state.value = s.copy(filter = s.filter.copy(tagIds = next))
+        refetchWithFilter()
+    }
+
+    /**
+     * 筛选变化后重查第 1 页。
+     *
+     * 与 [submitQuery] 的三处差异（都是刻意的）：
+     * 1. **保留旧结果** + `isRefreshing = true`（不是清空 + `isLoading`）——
+     *    清空会让筛选时列表闪空一下，RN 专门为此拆了 `refreshing`
+     * 2. **不切 tab**：用户在 Creators tab 改筛选不该被弹回 Characters
+     * 3. **不发 `search_trigger_page_exposure`**：那是"提交了新搜索词"的事件
+     *
+     * ⚠️ 曝光去重集合要清（新筛选 = 新结果集，旧卡要重报），
+     * 但 `isRefreshing` 期间 UI 不报曝光（§2.31 记的坑：此刻列表还是旧结果
+     * 而集合已清空，会把旧卡当新卡重报）。
+     */
+    private fun refetchWithFilter() {
+        val s = _state.value
+        val term = s.query.trim()
+        if (term.isEmpty() || s.tab == SearchTab.NONE) return
+        val seq = ++searchSeq
+        _state.value = s.copy(
+            isRefreshing = true,
+            isLoading = false,
+            isLoadingMore = false,
+        )
+        resetPaging()
+        exposedCharacterIds.clear()
+        exposedCreatorIds.clear()
+
+        debounceJob?.cancel()
+        creatorSearchJob?.cancel()
+        loadMoreJob?.cancel()
+        debounceJob = coroutineScope.launch {
+            try {
+                runSearch(s.query, s.searchWay, seq)
+            } finally {
+                if (searchSeq == seq) {
+                    _state.value = _state.value.copy(isRefreshing = false)
+                }
+            }
+        }
+    }
+
     // ── 查询 ────────────────────────────────
 
     /**
@@ -269,17 +436,23 @@ class SearchViewModel(
         seq: Long,
     ): Boolean {
         try {
+            // P2：筛选真值来自 state.filter（P1 这里是硬编码的默认值）。
+            // ⚠️ 读快照而不是每处重读 _state：整条分页链要用同一份筛选，
+            // 中途被改会让 page2 与 page1 属于不同筛选条件
+            val filter = _state.value.filter
             val result = api.searchCharacters(
                 SearchCharacterQuery(
                     searchTerm = searchTerm,
                     page = page,
-                    tagIds = emptyList(),
+                    tagIds = filter.tagIds,
                     nsfw = nsfwProvider(),
                     languageCode = languageProvider(),
-                    // P1 无筛选器：性别不发、排序恒 Recommended、分级恒 All
-                    gender = null,
-                    sorting = "Recommended",
-                    contentRating = "All",
+                    // ⚠️ gender 的 All 映射成 null → API 层整键不发
+                    gender = filter.gender.wire,
+                    sorting = filter.sorting.wire,
+                    contentRating = filter.wireContentRating(
+                        _state.value.canPickContentRating,
+                    ),
                 ),
             )
             // 回写前校验：期间登出或已经提交新词都丢弃。
