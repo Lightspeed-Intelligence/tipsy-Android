@@ -2,6 +2,7 @@ package ai.lightspeed.tipsy.shell
 
 import ai.lightspeed.tipsy.shell.analytics.Analytics
 import ai.lightspeed.tipsy.shell.pages.login.LoginFragment
+import ai.lightspeed.tipsy.shell.pages.profile.PublicProfileFragment
 import ai.lightspeed.tipsy.shell.pages.search.SearchFragment
 import ai.lightspeed.tipsy.shell.tabs.TabHostFragment
 import androidx.activity.enableEdgeToEdge
@@ -86,6 +87,16 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
             // 否则返回 Home 再点同一个入口会被永久当成重复路由。
             if (supportFragmentManager.findFragmentByTag(TAG_SEARCH) == null) {
                 router.onDestinationClosed(AppRoute.Search)
+            }
+            // 他人主页同理，但**不能用相等判定** —— 那条路由可能带归因参数
+            // （recommendationContextJSON），这里拿不到，相等永远不成立。
+            // 按 userId 匹配：栈里没有这个人的主页了才解除（A → B 的合法叠栈中，
+            // B 出栈不该解除 A 的去重）。见 AppRouter.onDestinationClosed(谓词) 注释
+            router.onDestinationClosed { route ->
+                route is AppRoute.UserProfile &&
+                    supportFragmentManager.findFragmentByTag(
+                        tagForUserProfile(route.userId),
+                    ) == null
             }
         }
 
@@ -209,9 +220,16 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
         override fun navigate(route: AppRoute, source: AppRouter.Source) {
             when (route) {
                 is AppRoute.ChatDetail -> openSurface("ChatDetailSurface")
-                // W3：原生全屏页（不是 Surface）。白名单里为什么允许它见
+                // W3：原生全屏页（不是 Surface）。白名单里为什么允许它们见
                 // `ProductionRoutePolicy`
                 is AppRoute.Search -> openSearch()
+                // ⚠️ 空 userId 不开页 —— 目标页会去查一个不存在的用户。
+                // 在这里挡而不是在页面里：Router 是单一入口，挡住所有调用方
+                is AppRoute.UserProfile -> if (route.userId.isNotBlank()) {
+                    openUserProfile(route.userId)
+                } else {
+                    Log.w(TAG, "拒绝导航：UserProfile 缺少 userId")
+                }
                 // 其余目标尚未启用，Router 的 enabledRoutes 会先拦下 ——
                 // 走到这里说明有人启用了路由却没加分支，属实现错误，必须可见。
                 else -> error("路由已启用但缺少导航实现：${route.javaClass.simpleName}")
@@ -271,6 +289,33 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
         }
     }
 
+    /**
+     * 打开他人主页（W3，进度文档 §2.32）。
+     *
+     * ## ⚠️ 幂等判定按 **userId** 分，不是只按 tag
+     *
+     * 与 [openSearch] / [openLogin] 不同：搜索页与登录页各自只有一个实例，
+     * 有 tag 就够；但他人主页**可以合法地叠栈** —— A 的主页 → A 创作的角色 →
+     * 那个角色的其它创作者 B 的主页，是真实路径（RN 侧 ProfileStack 就是这样）。
+     *
+     * 所以判定条件是「栈顶已经是**同一个人**的主页」才忽略（防连点叠两层），
+     * 不同人则照常压栈。只按 tag 判会让「从 A 的页面点进 B」被当成重复请求
+     * 而静默丢弃 —— 那正是 §8.3 禁止的 silent no-op。
+     *
+     * tag 里带 userId 也让 [supportFragmentManager] 的查找天然按人区分。
+     */
+    private fun openUserProfile(userId: String) {
+        val tag = tagForUserProfile(userId)
+        if (supportFragmentManager.findFragmentByTag(tag) != null) {
+            Log.i(TAG, "该用户主页已在栈中，忽略重复请求")
+            return
+        }
+        supportFragmentManager.commit {
+            replace(R.id.surface_container, PublicProfileFragment.newInstance(userId), tag)
+            addToBackStack(tag)
+        }
+    }
+
     private companion object {
         const val TAG = "MainActivity"
 
@@ -279,6 +324,11 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
 
         /** 搜索页的 Fragment tag —— [openSearch] 靠它做幂等判定。 */
         const val TAG_SEARCH = "search"
+
+        /** 他人主页的 tag 前缀 —— 带 userId，见 [openUserProfile] 的幂等注释。 */
+        const val TAG_USER_PROFILE_PREFIX = "user_profile:"
+
+        fun tagForUserProfile(userId: String) = "$TAG_USER_PROFILE_PREFIX$userId"
 
         /** 五 Tab 根的 Fragment tag。 */
         const val TAG_TABS = "tabs"

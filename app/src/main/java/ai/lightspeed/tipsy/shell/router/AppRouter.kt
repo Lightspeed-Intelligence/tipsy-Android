@@ -7,13 +7,16 @@ object ProductionRoutePolicy {
     /**
      * 启用的目标必须集中改这里并更新矩阵测试（`AppRouterTest`）。
      *
-     * ## 为什么 [AppRoute.Search] 可以进，而其它目标还不行
+     * ## 为什么 [AppRoute.Search] 与 [AppRoute.UserProfile] 可以进，而其它目标还不行
      *
      * §9.1 的验收矩阵管的是 **RN Surface** —— 那些项检查的是 Surface 生命周期
      * （挂载/卸载/返回键/桥事件迟到），风险来自 RN 与原生的边界。
-     * `Search` 是**纯原生 Fragment**，不开 Surface、不走桥，那套矩阵对它不适用；
-     * 它的验收是壳自己的单测 + 冒烟（同 W2 的原生 Login —— Login 走的是
+     * 这两个都是**纯原生 Fragment**，不开 Surface、不走桥，那套矩阵对它们不适用；
+     * 验收是壳自己的单测 + 冒烟（同 W2 的原生 Login —— Login 走的是
      * `Navigator.requestLogin` 专用口，所以没出现在这个集合里）。
+     *
+     * `UserProfile` = 他人主页（W3，进度文档 §2.32）。它是**第一个被真实打通的
+     * 卡片出口** —— Search 的创作者点击此前恒被拒绝。
      *
      * ⚠️ 别据此推论「原生页都能随便加」：加任何目标都要先有对应的单测与冒烟，
      * 且这里与 `ShellNavigator.navigate` 的分支必须同时更新 ——
@@ -21,6 +24,7 @@ object ProductionRoutePolicy {
      */
     val enabledRouteTypes: Set<Class<out AppRoute>> = setOf(
         AppRoute.Search::class.java,
+        AppRoute.UserProfile::class.java,
     )
 }
 
@@ -172,6 +176,30 @@ class AppRouter(
         if (lastHandled?.first != route) return
         lastHandled = null
         logger("目标已关闭，解除路由去重：${route.javaClass.simpleName}")
+    }
+
+    /**
+     * 同 [onDestinationClosed]，但按**谓词**匹配而不是整体相等。
+     *
+     * ## 为什么需要它：带参路由无法用相等判定
+     *
+     * [AppRoute.UserProfile] 有两个字段（`userId` + `recommendationContextJSON`）。
+     * Activity 那侧只知道"某个用户的主页已出栈"，**拿不到当初那条路由的
+     * 归因参数** —— 用相等判定就永远匹配不上，去重会一直挂着，
+     * 表现为「从 A 的主页返回后，再点同一个 A 永远打不开」。
+     *
+     * 而按类型清（`javaClass ==`）又太粗：栈里可能还有别人的主页
+     * （A → B 的合法叠栈），清掉会让迟到的关闭通知放开一个还开着的目标。
+     *
+     * 所以由调用方给谓词，自己判断"这条 lastHandled 是不是刚关掉那个"。
+     *
+     * @param predicate 对当前 [lastHandled] 的路由求值；true 才清
+     */
+    fun onDestinationClosed(predicate: (AppRoute) -> Boolean) {
+        val current = lastHandled?.first ?: return
+        if (!predicate(current)) return
+        lastHandled = null
+        logger("目标已关闭，解除路由去重：${current.javaClass.simpleName}")
     }
 
     /**

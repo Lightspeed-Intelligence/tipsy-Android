@@ -18,6 +18,8 @@
 > **W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 Grid 主链路
 > 已并入 main 且模拟器冒烟 PASS（§2.30）；Search P1 主链路已实现且 directApk
 > 真机冒烟 PASS（§2.31），P2 筛选器待后续包。
+> **他人主页已实现**（§2.32）：`AppRoute.UserProfile` 进白名单，搜索 → 创作者 →
+> 主页成为**壳的第一条端到端可用路径**；真机冒烟未跑。
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
@@ -27,6 +29,8 @@
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`、`pages/chatlist/`、`pages/search/`**。
 - **submodule**：Search P1 pin `5a58be9d1881cb39a7229e84e65ac8214f9db3fe`（远端分支 `feat/android-native`，**未合进 main/release**，按约定靠子模块指针引用）。相对前一 pin `95760a6622424bc9be238e7790fdbf38fe7c7fb2` 仅新增 Search placeholder + `Back` 的导出配置（`scripts/export-shell-locales.mjs` 5 行）。
 - **已验证**：main 上 PR #25 的 G1 Fast Gate 全绿。W3 Search P1 提交前快照的本机证据：`lintDirectApkDebug` 无新增（baseline 5 条）、`assembleGooglePlayDebug`/`assembleDirectApkDebug` 通过、**DirectApk app 单测 695 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿；directApk 真机主链路冒烟 PASS（§2.31）。提交前审查再新增 13 条、扩展 2 条回归测试并修正并发/auth/Router/点击归因/分页去重行为，最终源码预计 708 条；**最终 head 未在本机重跑 Gradle，交 G1 验证**。
+- **他人主页已实现**（§2.32，2026-08-14）：6 文件 1,469 行，`AppRoute.UserProfile` 进白名单 —— **搜索 → 创作者 → 他人主页是壳的第一条端到端可用路径**。审计推翻了「复用自己视角」的前提（七处偏差）：只有 **1 个 tab**（RN 注释说两个，代码是一个）、数据源另有四条、`size` **200 且不翻页**、`/user/get/public` 走 `axiosAuth` 会对游客弹登录页、`/plot/list/creator` **现网从未被调用**、关注按钮在 `ProfileHeader.tsx` 而非 `user-profile.tsx`。真机冒烟 **NOT RUN**。
+- **⚠️ 其余出口仍全部点不动**：Home/ChatList/Search 的卡片点击（`ChatDetail`）与 Profile 五个出口仍被 `rejectNotEnabled` 明确拒绝。解锁 ChatDetail 的前置是 P9 / §9.1 矩阵，且 §12 实例关闭链尚未闭环（TS `popSurface()` 无参，Android bridge 固定传 `null`）。
 - **不存在 / 未验**：Screen Tab 仍是占位页；ChatList 的 Map「時光長廊」视图与 Search 的筛选器均是 P2；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。生产路由白名单仅放开纯原生 `Search`，ChatDetail 在 P9 前仍 disabled（卡片点击出口因此被明确拒绝）。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
 
 ## 1. 波次状态
@@ -36,7 +40,7 @@
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟡 **契约层已收口且 CI 已验；§12 关闭链 + P9 未完** | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17 已并） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
-| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1–P4、P6，§2.25–§2.29，真机验证）；ChatList P1 Grid 主链路已并（§2.30，模拟器冒烟 PASS）；**Search P1 主链路已实现**（§2.31，directApk 真机冒烟 PASS）；剩 Profile P5/P7、ChatList P2 Map、Search P2 筛选器、Settings | `5a58be9d1881cb39a7229e84e65ac8214f9db3fe` | —（PR #21–#25 已并；Search P1 在 `feat/android-w3-search-p1`） |
+| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1–P4、P6，§2.25–§2.29，真机验证）；ChatList P1 Grid 主链路已并（§2.30，模拟器冒烟 PASS）；**Search P1 主链路已实现**（§2.31，directApk 真机冒烟 PASS）；**他人主页已实现**（§2.32，第一条端到端可用路径，真机未验）；剩 Profile P5 ⋮ 菜单/P7 头像框、ChatList P2 Map、Search P2 筛选器、Settings 列表 | `5a58be9d1881cb39a7229e84e65ac8214f9db3fe` | —（PR #21–#26 已并；他人主页在 `feat/android-w3-profile-other-user`） |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | ⬜ 阻塞于 W3 | — | — |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
 
@@ -1478,6 +1482,9 @@ cancel。被打断且未完成首屏的 tab **整体复位**（否则 `isInitial
    但 RN **不存在 FollowSurface**（已核实 `src/surfaces/` 无此文件，`follow.tsx`
    是 ProfileStack 普通页）。要么 RN 侧新建 Surface、要么原生实现。
    `AppRoute.Follow(userId, type)` 与 props 形状已按 `FollowInfo.tsx:57,71` 备好。
+   **仍未决，但已确认不阻塞他人主页那一刀**（2026-08-14，§2.32）：他人主页
+   本体不渲染关注按钮，本刀不产生新的 Follow 入口。当前唯一的 Follow 入口
+   仍是自己视角的统计数字点击。
 2. **EditProfileSurface 过矩阵在 W3 还是 W4**：方案 §8.3 批次表列 W3、§9.1 矩阵把
    「其余 10 个」标 W4，**方案自相矛盾**，需 owner 定夺后修方案文档。
 
@@ -1899,6 +1906,149 @@ Fragment 不开 Surface，那套矩阵对它不适用。**不能据此推论「�
 - **NOT RUN**：GooglePlay 打码行为（搜索结果无词表命中项）；RuStore flavor
   未单独 assemble（flavor 零改动）；P2 筛选器相关全部未测（未实现）
 
+### 2.32 W3 他人主页：第一条端到端可用路径（2026-08-14）
+
+Search 的创作者点击换真页。新增 6 文件 1,469 行（`PublicProfileApi` /
+`PublicUserProfile` / `PublicProfileState` / `PublicProfileViewModel` /
+`PublicProfileScreen` / `PublicProfileFragment`），**`AppRoute.UserProfile`
+进生产白名单**。
+
+选它的理由：此前**四个原生页的主操作点全部点不动** —— `enabledRouteTypes`
+只有 `Search`，Home/ChatList/Search 的卡片点击（`ChatDetail`）与 Profile
+五个出口全走 `rejectNotEnabled`。他人主页是**唯一不依赖 Surface 矩阵就能
+打通真实出口的包**（纯原生 Fragment 不开 Surface），解锁 ChatDetail 仍要先收 P9。
+**这是壳的第一条端到端可用路径**：搜索 → 创作者 → 他人主页 → 返回。
+
+开工前审计推翻了「复用自己视角基础设施」这个直觉前提 —— 七处偏差
+（1–4 是最初审计，5–7 是写码时二次核实补的），全部已按实测落地：
+
+1. **他人主页只有 1 个 tab，不是 5 个**（`CharacterGrid.tsx:980-1005`）：
+   `isSelf` 否分支的 `return [...]` 里只有一个元素。该分支上方注释写
+   「他人主页显示角色和视频两个tab」，**注释与代码不符，代码是真值**。
+   照注释或照自己视角做，会多出一到四个无数据源的空 tab。
+2. **数据源与自己视角几乎无一条相同**，且 `size` 是 **200**（`useProfile.tsx:30`）
+   而非自己视角的 10/20：头部 `/user/get/public`、统计 `/user/stats_info` 的
+   **另一个函数** `getPublicFollowerInfo`、列表 `/character/list/creator`
+   **与** `/character/list/creator/v2` **两个都发**、记忆 `/plot/list/creator`。
+   v2 非空时用 v2（含 game）、空则回落 v1，**壳要实现这条优先级**而不是二选一。
+3. **⚠️ 头部接口不是公开的**：`/user/get/public` 走 **`axiosAuth`**
+   （`apis/user.ts:49`，名字里的 public 指的是「查他人公开资料」不是免鉴权），
+   而 `axiosAuth` 无有效 token 时会 `requestLogin('axios-auth')` 并 reject
+   （`utils/axios.ts:148-175`，壳宿主 `isShellAuthHost()` 为真）。这与
+   `AppRoute.UserProfile.requiresAuth = false`（游客可浏览）**存在张力**：
+   游客点创作者会得到登录页。**这是 RN 现网行为，壳按 REQUIRED 接线即对等**；
+   改成 OPPORTUNISTIC 会让 401 与登录弹窗时序偏离现网，**不要顺手"修正"**。
+   要真游客可浏览需后端换实例，属独立决策。
+4. **关注按钮要做，且是 toggle 单端点**（⚠️ 本条订正了 §2.32 初稿）：按钮在
+   **`ProfileHeader.tsx:200-225`**，不在 `user-profile.tsx` —— 初稿只搜了后者
+   就断言「不做关注按钮」，是错的。`POST /user/follow/user`（REQUIRED）同一
+   路径既关注也取关，靠后端翻转 `status`；`isFollow` 来自
+   `/user/get/public` 的 `is_followed`。**成功后重拉 `/user/get/public` + stats**
+   （`useProfile.tsx:241-243` 两个 mutate），不是本地翻转 —— 本地翻转会让
+   followers 计数不动。`is_deleted` 用户整块不渲染按钮。
+   §2.25 的 owner 决策点 1（Follow **列表**出口）仍不阻塞本刀 —— 那是点
+   followers 数字进列表页，与这个按钮是两件事。
+
+5. **他人主页的列表实际上翻不了页**。`onEndReached` 的 `tabIndex === 0` 分支只调
+   `loadMoreCreated()`（`CharacterGrid.tsx:1398-1401`），而 `useCreatedList()`
+   是**无参调用**、内部读 `useUserStore` 的自己 uid、打 `/user/created/list`。
+   他人主页的两条 creator 列表都**没有 `setSize` 出口**（`useProfile.tsx` 只导出
+   `selfCharSetSize`）。所以他人主页看到的恒是**首页 200 条**，触底调的是
+   自己那条列表的翻页。**壳按「单页 200、不翻页」实现即对等**；照「三列网格
+   就该能翻页」补分页会比 RN 多拉数据。（`size: 200` 的选择本身就说明了
+   RN 侧是拿单页当全量用。）
+6. **记忆 tab 在他人主页拿不到**：`useProfileMemories(userId)` 全仓唯一调用点
+   （`CharacterGrid.tsx:250`）**不传第二参**，而 `isPersonal` 默认 `true`
+   （`useProfileMemories.ts:19`）—— 所以 `/plot/list/creator` 那条 SWR key
+   恒为 `undefined`，**该端点在现网从未被调用**。这与第 1 条（他人只有 1 个 tab）
+   自洽：没有记忆 tab，自然不需要 creator 记忆。**壳不要实现
+   `/plot/list/creator`**，方案 §8.1 之前把它列进他人主页数据源是照 API 层
+   推的，不是照调用链核的。
+7. **他人主页头部与自己视角有四处结构差异**（`CharacterGrid.tsx:1422-1445`）：
+   ① 关注按钮取代 Edit Profile（见第 4 条）② **无钱包卡**（`isSelf &&
+   UserProfileGems`）③ bio 走另一个组件 `UserBio`（198 行，maxLines 3）而不是
+   `RenderBio` ④ **`FollowInfo` 两端都渲染**（四统计不是自己独有）。
+   另：`isDeleted` 时连下拉刷新都禁用（`refreshControl={isDeleted ? undefined : ...}`）。
+
+埋点：**事件名与自己视角相同**（`page_exposure` + `page_name: profile`，
+RN 两处都发同一个，不按视角分流），区分在参数 `entry_type`（他人 `stack` /
+自己 `tab`）与 `is_self`（`user-profile.tsx:201-203`）。别新造
+`other_profile_exposure` —— 那会让同一漏斗两端对不上。
+
+#### 实现上与 RN 的两处刻意差异
+
+- **v2/v1 改成串行**：RN 两个 `useSWRInfinite` 并发发，靠三元择一
+  （`CharacterGrid.tsx:980-983`）。壳先发 v2，**有货就不发 v1** ——
+  v1 结果在 v2 非空时永不上屏，并发只为 SWR 的缓存形状。行为对等，
+  代价是 v2 空时多一个串行 RTT。⚠️ **v2 失败也必须回落 v1**，不只是空：
+  只在空时回落会让 v2 故障时壳空白，而 RN 那边照样有内容（SWR 给
+  `undefined`，三元同样落 v1）。单测两条分别锁死。
+- **v1 扁平元素补 `item_type`**（`CreatorListPage.parseV1`）：v1 元素没有
+  该字段，而 `ProfileCreatedItem.parse` 认不出会整条返回 null ——
+  不补的表现是**回落路径恒空**，而回落只在 v2 缺数据时才走，联调极难发现。
+  包装时**复制而非原地 put**，否则会污染 `rawJson`（编辑入口要原封透传那份）。
+
+#### auth 轨闸门：自查时发现的真实缺陷
+
+首版只靠 `job.cancel()` 防登出串号，**不够** —— 取消只在挂起点生效，
+取消发生后、协程抛 `CancellationException` 之前，写 `_state` 的非挂起代码
+照常执行。具体后果：登出瞬间在飞的 `/user/get/public` 带着旧账号
+`is_followed = true` 回来，把刚清掉的关注态写回去，表现正是
+**「登出后仍显示 Following」**—— 本刀专门要避免的那一条。
+§2.25 已在 `CurrentUserStore.refresh` 上踩过同型（`runCatching` 吞取消）。
+
+已改为**发请求前捕获 auth 快照、每个回写点前校验**（`Generations.isAuthValid`，
+**只校验 auth 轨** —— 他人主页不拥有乐观列表变更，全量 `isValid` 会被
+ChatList 的 mutation bump 误作废，同 Search 的推理）。且资料与统计**逐步校验**：
+两者之间还有一个挂起点，中途换号会得到「A 的资料配 B 的数字」。
+
+另一条同类：**换目标（bind 新 userId）也要取消在飞的关注链** ——
+它成功后会重拉**上一个** userId 的资料，把 A 的昵称头像写进 B 的页面。
+auth 轨挡不住（没换号），故回写前额外比对 `userId`。三条时序各有单测锁死。
+
+#### Router：`onDestinationClosed` 加谓词版
+
+`UserProfile` 有第二字段 `recommendationContextJSON`，Activity 侧拿不到当初那条
+路由的归因参数 —— 相等判定永远匹配不上，去重会一直挂着，表现为
+**「从某人主页返回后再点同一个人永远打不开」**（§2.31 Search 那条坑的带参版）。
+按类型清又太粗：A → B 的合法叠栈里 B 出栈会误清 A。故加
+`onDestinationClosed { predicate }`，Activity 按 userId 匹配。
+
+⚠️ **他人主页的幂等判定按 userId 分，不是只按 tag**：它**可以合法叠栈**
+（A 的主页 → A 的角色 → 另一个创作者 B 的主页）。只按 tag 判会让
+「从 A 点进 B」被当成重复请求静默丢弃 —— 正是 §8.3 禁止的 silent no-op。
+故 Fragment tag 带 userId（`user_profile:<id>`）。
+
+#### 未做（明确边界）
+
+- **bio 的展开/收起**：`UserBio` 超 3 行时右下角有放大镜按钮，依赖
+  `onTextLayout` 测实际行数才决定按钮是否出现（`UserBio.tsx:56-72`）。
+  本刀只做折叠态 3 行截断 —— 先保证 bio 能看到，展开属独立视觉增强。
+- **他人 UID 不显示**：RN 的条件是 `!isSelf && publicUserIdText && !isDeleted`
+  （`user-profile.tsx:162`），但那个 `publicUserIdText` 是自己那份 UID 文本的
+  复用，在他人分支上是否真上屏未在真机核实。宁可少一个元素，
+  也不显示一个**可能是自己 UID** 的字符串。
+- **四统计不可点**：Follow 列表出口尚未定案（本节 owner 决策点，RN 无
+  FollowSurface）。自己视角那两个数字可点是因为 `AppRoute.Follow` 已备好
+  （当前也被拒绝）。
+- 卡片点击进详情（`ChatDetail` 仍在 P9 前 disabled）、⋮ 菜单与批量选择
+  （`isSelf=false` 的那两处差异，两端本刀都没做，故直接复用 `ProfileGridItem`）。
+
+#### 验证
+
+- app 单测 **754 条**（+46：`PublicProfileParserTest` 13 + `PublicProfileViewModelTest`
+  30 + `AppRouterTest` 净增 3），failures=0、**skipped=0**
+- `:tipsy-auth:testDebugUnitTest` 15 条全绿
+- lint 无新增（baseline 仍 5 条，**未改 baseline 文件**）；
+  `assembleGooglePlayDebug` 与 `assembleDirectApkDebug` 通过
+- **词条零新增**：复用 `Follow` / `Following` / `Back` / `No Character` /
+  四统计标签，**26 locale 全部命中**（脚本核实，ja/en 抽查有译文）。
+  **连续第五包零 submodule 改动**，pin 仍 `5a58be9d1`
+- **未动** manifest / RN 依赖 / flavor → release manifest diff 本刀不适用
+- **真机冒烟 NOT RUN** —— 待跑：搜索 → 创作者 → 主页主链路、关注/取关往返与
+  粉丝数变化、注销用户态（无按钮 + 无下拉刷新）、v1 回落路径（需构造 v2 空的账号）、
+  A → B 叠栈与返回后重开同一人、登出时在飞响应不写回关注态
+
 ## 3. 横切能力
 
 
@@ -1908,7 +2058,7 @@ Fragment 不开 Surface，那套矩阵对它不适用。**不能据此推论「�
 | `tipsy-auth` Android 实现 | 🟡 **桥已注册、能力 PARTIAL** | `modules/tipsy-auth/android/` + `ShellAuthProvider`；主线程约束已落地，Login/Profile 等真实能力仍按波次接线 |
 | 网络层 | 🟡 **closeout 已实现且 CI 已验**（§2.22） | `shell/network/`（§2.14 / §2.18）。过期 token 发送守门与双入口共享 gate 已实现。**未引 Retrofit** |
 | i18n | 🟢 **已完成** | `shell/i18n/`（§2.16）。壳是唯一 writer；key-based 查表 + 两条 normalize 规则 + Compose 自订阅组件。**语言设置页仍在 RN**（刻意，方案 §8.1） |
-| Router / 深链 | 🟡 parser/router 机制已落地，**白名单首次放开一个目标** | `shell/router/`；`AppRoute.Search` 已进 `enabledRouteTypes`（§2.31，纯原生 Fragment 不受 §9.1 Surface 矩阵约束）。真实 Surface 参数、Profile 接线与 P9 matrix 未完成，ChatDetail 在 P9 前保持关闭 |
+| Router / 深链 | 🟡 parser/router 机制已落地，**白名单放开两个纯原生目标** | `shell/router/`；`AppRoute.Search`（§2.31）与 `AppRoute.UserProfile`（§2.32）已进 `enabledRouteTypes` —— 两者都是纯原生 Fragment，不受 §9.1 Surface 矩阵约束。`onDestinationClosed` 另有谓词版供带参路由解除去重（§2.32）。真实 Surface 参数与 P9 matrix 未完成，ChatDetail 在 P9 前保持关闭 |
 | RN Surface 宿主 | 🟡 机制已落地、闭环待收口 | `RNSurfaceFragment`（共享单 ReactHost）；UUID/首帧/reappear/props builder 已有，真实 instance-aware close 尚未闭环 |
 | Push | 🔴 未开始 | — |
 | Analytics（Qt） | ⏸️ **推迟，但 facade 已落地** | `shell/analytics/Analytics`（§2.23）：业务页照常调用、uid 排队语义照搬 RN，debug 落日志。Qt 接线本身仍推迟（§2.17）—— ⚠️ **`preInit` 一次都不会调**，facade 存在 ≠ 埋点在上报 |
