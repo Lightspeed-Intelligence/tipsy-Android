@@ -4,6 +4,7 @@ import ai.lightspeed.tipsy.shell.analytics.Analytics
 import ai.lightspeed.tipsy.shell.pages.login.LoginFragment
 import ai.lightspeed.tipsy.shell.pages.profile.PublicProfileFragment
 import ai.lightspeed.tipsy.shell.pages.search.SearchFragment
+import ai.lightspeed.tipsy.shell.pages.settings.SettingsFragment
 import ai.lightspeed.tipsy.shell.tabs.TabHostFragment
 import androidx.activity.enableEdgeToEdge
 import ai.lightspeed.tipsy.shell.router.AppRoute
@@ -87,6 +88,10 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
             // 否则返回 Home 再点同一个入口会被永久当成重复路由。
             if (supportFragmentManager.findFragmentByTag(TAG_SEARCH) == null) {
                 router.onDestinationClosed(AppRoute.Search)
+            }
+            // 设置页同理（data object 无参，相等判定够用）
+            if (supportFragmentManager.findFragmentByTag(TAG_SETTINGS) == null) {
+                router.onDestinationClosed(AppRoute.Settings)
             }
             // 他人主页同理，但**不能用相等判定** —— 那条路由可能带归因参数
             // （recommendationContextJSON），这里拿不到，相等永远不成立。
@@ -230,6 +235,9 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
                 } else {
                     Log.w(TAG, "拒绝导航：UserProfile 缺少 userId")
                 }
+                // W3：原生设置列表（§2.33）。它的 7 个子屏是 SettingsSubScreen，
+                // 未过 §9.1 故不在白名单 —— Router 会先拦下
+                is AppRoute.Settings -> openSettings()
                 // 其余目标尚未启用，Router 的 enabledRoutes 会先拦下 ——
                 // 走到这里说明有人启用了路由却没加分支，属实现错误，必须可见。
                 else -> error("路由已启用但缺少导航实现：${route.javaClass.simpleName}")
@@ -316,6 +324,23 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
         }
     }
 
+    /**
+     * 打开原生设置列表（W3，§2.33）。
+     *
+     * ⚠️ **必须幂等**，同 [openLogin] / [openSearch]：入口在 Profile 顶栏，
+     * 连点两次会叠两层。用 tag 判定。
+     */
+    private fun openSettings() {
+        if (supportFragmentManager.findFragmentByTag(TAG_SETTINGS) != null) {
+            Log.i(TAG, "设置页已在栈中，忽略重复请求")
+            return
+        }
+        supportFragmentManager.commit {
+            replace(R.id.surface_container, SettingsFragment.newInstance(), TAG_SETTINGS)
+            addToBackStack(TAG_SETTINGS)
+        }
+    }
+
     private companion object {
         const val TAG = "MainActivity"
 
@@ -327,6 +352,9 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
 
         /** 他人主页的 tag 前缀 —— 带 userId，见 [openUserProfile] 的幂等注释。 */
         const val TAG_USER_PROFILE_PREFIX = "user_profile:"
+
+        /** 设置页的 Fragment tag —— [openSettings] 靠它做幂等判定。 */
+        const val TAG_SETTINGS = "settings"
 
         fun tagForUserProfile(userId: String) = "$TAG_USER_PROFILE_PREFIX$userId"
 

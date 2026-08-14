@@ -20,8 +20,9 @@
 > 真机冒烟 PASS（§2.31），P2 筛选器待后续包。
 > **他人主页已实现并并入 main**（§2.32，PR #28）：`AppRoute.UserProfile` 进白名单，
 > 搜索 → 创作者 → 主页成为**壳的第一条端到端可用路径**；真机冒烟未跑。
-> **下一刀 = Settings 列表 + 语言页**（§2.33 审计完成，代码未开始）——
-> ⚠️ 审计订正了一处读反的归属：**语言页要原生实现**，不在 `SettingsSurface` 里。
+> **Settings 列表 + 语言页已实现**（§2.33）：`AppRoute.Settings` 进白名单，
+> 壳终于有了改语言的入口；⚠️ 审计订正了一处读反的归属 —— **语言页要原生实现**，
+> 不在 `SettingsSurface` 里。真机冒烟未跑。
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
@@ -29,12 +30,12 @@
 
 - **波次进度**：W0 完成；W1 的契约层全部落地且已在 CI 组合验证（§2.22），只剩 §12 实例关闭链与 P9；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 已随 PR #25 并入 main（§2.30）；**Search P1 主链路已实现并完成 directApk 冒烟**（§2.31），P2 筛选器待后续包。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`、`pages/chatlist/`、`pages/search/`**。
-- **submodule**：Search P1 pin `5a58be9d1881cb39a7229e84e65ac8214f9db3fe`（远端分支 `feat/android-native`，**未合进 main/release**，按约定靠子模块指针引用）。相对前一 pin `95760a6622424bc9be238e7790fdbf38fe7c7fb2` 仅新增 Search placeholder + `Back` 的导出配置（`scripts/export-shell-locales.mjs` 5 行）。
+- **submodule**：pin **`017e142ac4818bb11c792649c7607177e669d72f`**（§2.33 导出 `Limitless` / `New Version` 两词条，打破连续五包零改动；前一 pin 是 Search P1 的 `5a58be9d1881cb39a7229e84e65ac8214f9db3fe`）
 - **已验证**：main 上 PR #25 的 G1 Fast Gate 全绿。W3 Search P1 提交前快照的本机证据：`lintDirectApkDebug` 无新增（baseline 5 条）、`assembleGooglePlayDebug`/`assembleDirectApkDebug` 通过、**DirectApk app 单测 695 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿；directApk 真机主链路冒烟 PASS（§2.31）。提交前审查再新增 13 条、扩展 2 条回归测试并修正并发/auth/Router/点击归因/分页去重行为，最终源码预计 708 条；**最终 head 未在本机重跑 Gradle，交 G1 验证**。
 - **他人主页已实现**（§2.32，2026-08-14）：6 文件 1,469 行，`AppRoute.UserProfile` 进白名单 —— **搜索 → 创作者 → 他人主页是壳的第一条端到端可用路径**。审计推翻了「复用自己视角」的前提（七处偏差）：只有 **1 个 tab**（RN 注释说两个，代码是一个）、数据源另有四条、`size` **200 且不翻页**、`/user/get/public` 走 `axiosAuth` 会对游客弹登录页、`/plot/list/creator` **现网从未被调用**、关注按钮在 `ProfileHeader.tsx` 而非 `user-profile.tsx`。真机冒烟 **NOT RUN**。
-- **下一刀**：Settings 列表 + 语言页（§2.33 审计完成，代码未开始）。补的是真实功能缺失 —— **壳内当前没有任何入口能改语言**。审计订正三处：语言页**要原生实现**（RN 与 iOS 双证据）、`supportedLanguages` 壳内**恒为空**必须自己拉、Limitless 开关是 `nsfw` 的**唯一写方**且仅 directApk 可见。**本刀需 bump submodule**（缺 `Limitless` / `New Version` 两词条）。
+- **Settings 列表 + 语言页已实现**（§2.33，8 文件 1,501 行）：补上了真实功能缺失 —— 此前**壳内没有任何入口能改语言**。审计订正三处：语言页**要原生实现**（RN 与 iOS 双证据）、`supportedLanguages` 壳内**恒为空**必须自己拉、Limitless 开关是 `nsfw` 的**唯一写方**且仅 directApk 可见。渠道 gating 收在 `SettingsRow` 并对三渠道各有单测。7 个 Surface 子屏（`AppRoute.SettingsSubScreen`）仍被明确拒绝。真机冒烟 **NOT RUN**。
 - **⚠️ 其余出口仍全部点不动**：Home/ChatList/Search 的卡片点击（`ChatDetail`）与 Profile 五个出口仍被 `rejectNotEnabled` 明确拒绝。解锁 ChatDetail 的前置是 P9 / §9.1 矩阵，且 §12 实例关闭链尚未闭环（TS `popSurface()` 无参，Android bridge 固定传 `null`）。
-- **不存在 / 未验**：Screen Tab 仍是占位页；ChatList 的 Map「時光長廊」视图与 Search 的筛选器均是 P2；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。生产路由白名单仅放开纯原生 `Search`，ChatDetail 在 P9 前仍 disabled（卡片点击出口因此被明确拒绝）。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
+- **不存在 / 未验**：Screen Tab 仍是占位页；ChatList 的 Map「時光長廊」视图与 Search 的筛选器均是 P2；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。生产路由白名单已放开三个纯原生目标（`Search` / `UserProfile` / `Settings`），但 ChatDetail 在 P9 前仍 disabled（Home/ChatList/Search 的卡片点击因此被明确拒绝），12 个业务 Surface 也全未过 §9.1（含 Settings 的 7 个子屏）。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
 
 ## 1. 波次状态
 
@@ -43,7 +44,7 @@
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟡 **契约层已收口且 CI 已验；§12 关闭链 + P9 未完** | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17 已并） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
-| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1–P4、P6，§2.25–§2.29，真机验证）；ChatList P1 Grid 主链路已并（§2.30，模拟器冒烟 PASS）；**Search P1 主链路已实现**（§2.31，directApk 真机冒烟 PASS）；**他人主页已实现**（§2.32，第一条端到端可用路径，真机未验）；剩 Profile P5 ⋮ 菜单/P7 头像框、ChatList P2 Map、Search P2 筛选器、Settings 列表 | `5a58be9d1881cb39a7229e84e65ac8214f9db3fe` | —（PR #21–#26 已并；他人主页在 `feat/android-w3-profile-other-user`） |
+| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1–P4、P6，§2.25–§2.29，真机验证）；ChatList P1 Grid 主链路已并（§2.30，模拟器冒烟 PASS）；**Search P1 主链路已实现**（§2.31，directApk 真机冒烟 PASS）；**他人主页已实现**（§2.32，第一条端到端可用路径）；**Settings 列表 + 语言页已实现**（§2.33）；剩 Profile P5 ⋮ 菜单/P7 头像框、ChatList P2 Map、Search P2 筛选器 | `5a58be9d1881cb39a7229e84e65ac8214f9db3fe` | —（PR #21–#26 已并；他人主页在 `feat/android-w3-profile-other-user`） |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | ⬜ 阻塞于 W3 | — | — |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
 
@@ -2063,14 +2064,17 @@ auth 轨挡不住（没换号），故回写前额外比对 `userId`。三条时
   粉丝数变化、注销用户态（无按钮 + 无下拉刷新）、v1 回落路径（需构造 v2 空的账号）、
   A → B 叠栈与返回后重开同一人、登出时在飞响应不写回关注态
 
-### 2.33 W3 下一刀选定：Settings 列表 + 语言页（开工前审计，2026-08-14）
+### 2.33 W3 Settings 列表 + 语言页（2026-08-14）
 
-**尚未实现，本节只记开工前的源码审计结论**（按 §7 纪律先修文档：方案 §8.1
-语言页行与 Home 筛选持久化行、本文 §2.16 与横切表 i18n 行均已订正）。
+新增 `pages/settings/`（8 文件 1,501 行）：原生设置列表 + **原生语言页**。
+`AppRoute.Settings` 进生产白名单；新增 `AppRoute.SettingsSubScreen`
+（7 个 Surface 子屏，**刻意不启用**）。
 
-选它的理由：它补的是一个**真实的功能缺失** —— 壳内**当前没有任何入口能改语言**。
+补的是一个**真实的功能缺失** —— 此前壳内**没有任何入口能改语言**。
 i18n 机制 W1 就完成了（§2.16），但那只是「能显示各语言」，不是「用户能选」。
-且语言页零 Surface 依赖。
+
+开工前审计订正了三处文档错误（方案 §8.1 两行、本文 §2.16 与横切表 i18n 行），
+以下审计结论全部已按实测落地。
 
 #### ⚠️ 订正一处读反了的归属：语言页要**原生实现**
 
@@ -2142,20 +2146,64 @@ Delete / Widget。该 Surface **未过 §9.1 矩阵**，故本刀按 Profile 第
 登出按钮走已有的 `AuthStateHub` 链路（壳已是 auth owner），确认弹窗照抄
 `Are you sure you want to log out?`。
 
-#### ⚠️ 本刀需要 bump submodule（打破连续五包零改动）
+#### 词条：bump submodule（打破连续五包零改动）
 
 逐个核实 22 个词条，**20 个已在 SHELL_KEYS**，缺 **2 个**：
 `Limitless` 与 `New Version`。两者在 RN 侧**有译文**
-（`ja.json` 分别是「無制限」「新しいバージョン」），只是没进导出清单 ——
+（`ja` 分别是「無制限」「新しいバージョン」），只是没进导出清单 ——
 即典型的 §4.8 iOS 教训①：「新增原生页文案必须加入词条白名单并重跑导出，
 否则非英文用户静默看英文，**英文环境测试看不出来**」。
 
-所以本刀要改 `scripts/export-shell-locales.mjs` 并 bump pin。改动提交到
-`tipsy-app` 的 `feat/android-native` 分支（不走 PR，2026-08-11 owner 决定），
-父仓 PR 里只允许是指针 bump。⚠️ bump 前确认目标 commit **已推到远端**，
-否则 CI 拉不到（§2.10）。
+已加入 `SHELL_KEYS` 并重跑导出：**26 语言全命中，en 184/184 条，0 missing**。
+submodule pin `5a58be9d1` → **`017e142ac`**（已推远端，CI 可拉）。
+`Limitless` 只在 directApk 可见，但词条不按渠道分表 —— 26 locale 都要有。
 
-（`Limitless` 只在 directApk 可见，但词条不按渠道分表 —— 26 locale 都要有。）
+#### 实现要点
+
+- **渠道 gating 收在 `SettingsRow`，不散在 Compose 里**。RN 那 9 处
+  `!isGooglePlay` 抄成 9 个 Compose `if`，漏一处的表现是
+  **「GooglePlay 版多出一行不该有的入口」** —— 会被商店审核抓，
+  且本地跑 directApk 完全看不出来（那个渠道所有行都显示）。
+  行是数据（带 `visibleIn` 谓词），UI 只 filter 一次；`SettingsRowTest`
+  因此能对**三个渠道各断言一遍**，含「RuStore 不显示 Limitless」那条。
+- **两个页面共享一个 ViewModel**（Activity 作 `ViewModelStoreOwner`）：
+  可选语言列表与当前语言两份数据跨页复用，拆开会让语言页每次打开都重拉
+  （RN 侧那个列表在 store 里也是跨页的）。
+- **URL 常量必须在文件作用域**，不能放 enum 的 companion —— enum entries
+  先于 companion 初始化，entry 构造里引用会编译失败
+  （`Companion object is uninitialized here`）。三个 URL 逐字核实自
+  `page.tsx:292,303,313`，单测锁死。
+- **`AppRoute.SettingsSubScreen` 与 `AppRoute.Settings` 是两个目标**：
+  前者是 7 个 Surface 子屏（未启用），后者是列表本体（已启用）。
+  子页传成 `Settings` 会「点子页又打开一层设置列表」。
+  `SurfaceProps` 的穷尽 `when` 在编译期强制处理了新 route ——
+  这正是当初不写 `else -> null` 的收益。
+- **外部链接要捕获 `ActivityNotFoundException`**：设备可能没有浏览器
+  （精简 ROM / 企业设备），不捕获会直接崩，而 RN 侧那个 await 不会崩 App。
+- **语言保存失败的 Toast 挂 Activity 而非本页面**：点 Done 立即出栈，
+  Toast 弹出时本 Fragment 的 view 已销毁 —— 挂在页面上会静默丢失，
+  表现为「保存失败但用户完全不知道」。
+
+#### 与 RN 的一处刻意视觉差异
+
+Done 不可点时给一档 alpha。RN 的 `doneText` 恒白、不可点时**无任何视觉反馈**
+（`onDone` 开头直接 return）—— 「按钮在那儿但点不动且看不出为什么」是
+可发现性问题，属可接受的视觉 diff（记在验收里）。
+
+#### 验证
+
+- app 单测 **792 条**（+38：`SettingsRowTest` 12 + `SupportedLanguageParserTest` 4
+  + `SettingsViewModelTest` 19 + `AppRouterTest`/`SurfacePropsTest` 净增 3），
+  failures=0、**skipped=0**
+- `:tipsy-auth:testDebugUnitTest` 15 条全绿
+- lint 无新增（baseline 仍 5 条**未改**）。⚠️ lint 硬门抓到一处真实问题：
+  `Uri.parse` 应用 KTX `String.toUri`，已改 —— 这类问题本机不跑 lint 就会带到 CI
+- `assembleGooglePlayDebug` 与 `assembleDirectApkDebug` 通过
+- **未动** manifest / RN 依赖 / flavor → release manifest diff 本刀不适用
+- **真机冒烟 NOT RUN** —— 待跑：三渠道行序差异（尤其 GooglePlay 少五行、
+  RuStore 无 Limitless）、语言切换真机往返（切完 RN Surface 侧是否同步）、
+  Done 乐观流与失败 Toast、账号安全展开、7 个子页被拒绝、三个外链能打开、
+  登出链路、分级开关（仅 directApk）
 
 ## 3. 横切能力
 
@@ -2165,8 +2213,8 @@ Delete / Widget。该 Surface **未过 §9.1 矩阵**，故本刀按 Profile 第
 | Auth 所有权 | 🟡 **closeout 已实现且 CI 已验**（§2.22） | `shell/auth/`（§2.13 / §2.18）。single-flight/generation/原子条件清理已收口；历史 token 迁移未完（P2） |
 | `tipsy-auth` Android 实现 | 🟡 **桥已注册、能力 PARTIAL** | `modules/tipsy-auth/android/` + `ShellAuthProvider`；主线程约束已落地，Login/Profile 等真实能力仍按波次接线 |
 | 网络层 | 🟡 **closeout 已实现且 CI 已验**（§2.22） | `shell/network/`（§2.14 / §2.18）。过期 token 发送守门与双入口共享 gate 已实现。**未引 Retrofit** |
-| i18n | 🟢 **机制已完成**，语言**设置页**未做 | `shell/i18n/`（§2.16）。壳是唯一 writer；key-based 查表 + 两条 normalize 规则 + Compose 自订阅组件。⚠️ **语言设置页要原生实现且尚未做**（§2.16 已订正：RN 的 `SettingsSurface` 白名单刻意不含 `Language`，iOS 侧也是原生 `LanguageViewController`）—— 当前壳内**没有任何入口能改语言** |
-| Router / 深链 | 🟡 parser/router 机制已落地，**白名单放开两个纯原生目标** | `shell/router/`；`AppRoute.Search`（§2.31）与 `AppRoute.UserProfile`（§2.32）已进 `enabledRouteTypes` —— 两者都是纯原生 Fragment，不受 §9.1 Surface 矩阵约束。`onDestinationClosed` 另有谓词版供带参路由解除去重（§2.32）。真实 Surface 参数与 P9 matrix 未完成，ChatDetail 在 P9 前保持关闭 |
+| i18n | 🟢 **已完成**（含语言设置页） | `shell/i18n/`（§2.16）。壳是唯一 writer；key-based 查表 + 两条 normalize 规则 + Compose 自订阅组件。**原生语言设置页已实现**（§2.33）—— RN 的 `SettingsSurface` 白名单刻意不含 `Language`，iOS 侧也是原生 `LanguageViewController`；写入走 `POST /user/set_language` → 重拉 `/user/info`，不经 Zustand 信封。真机冒烟未跑 |
+| Router / 深链 | 🟡 parser/router 机制已落地，**白名单放开三个纯原生目标** | `shell/router/`；`AppRoute.Search`（§2.31）、`AppRoute.UserProfile`（§2.32）与 `AppRoute.Settings`（§2.33）已进 `enabledRouteTypes` —— 两者都是纯原生 Fragment，不受 §9.1 Surface 矩阵约束。`onDestinationClosed` 另有谓词版供带参路由解除去重（§2.32）。真实 Surface 参数与 P9 matrix 未完成，ChatDetail 在 P9 前保持关闭 |
 | RN Surface 宿主 | 🟡 机制已落地、闭环待收口 | `RNSurfaceFragment`（共享单 ReactHost）；UUID/首帧/reappear/props builder 已有，真实 instance-aware close 尚未闭环 |
 | Push | 🔴 未开始 | — |
 | Analytics（Qt） | ⏸️ **推迟，但 facade 已落地** | `shell/analytics/Analytics`（§2.23）：业务页照常调用、uid 排队语义照搬 RN，debug 落日志。Qt 接线本身仍推迟（§2.17）—— ⚠️ **`preInit` 一次都不会调**，facade 存在 ≠ 埋点在上报 |

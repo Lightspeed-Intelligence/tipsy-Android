@@ -272,6 +272,37 @@ class AppRouterTest {
         assertEquals("谓词匹配后应能重开", 2, f.navigated.size)
     }
 
+    /**
+     * W3：`Settings` 是**列表本体**（原生页，§2.33），在白名单里；
+     * 但它的 7 个子屏是 `SettingsSubScreen`，走 `SettingsSurface` 且
+     * **未过 §9.1**，必须仍被拒绝。
+     *
+     * 两者混为一谈的后果：点子页要么打开一层新的设置列表（传错 route），
+     * 要么静默无反应（§8.3 禁止）。
+     */
+    @Test
+    fun `Settings 列表已启用但子屏仍被拒绝`() {
+        assertTrue(
+            "Settings 列表必须在白名单里，否则 Profile 的设置入口点了没反应",
+            AppRoute.Settings::class.java in ProductionRoutePolicy.enabledRouteTypes,
+        )
+        assertFalse(
+            "SettingsSubScreen 未过 §9.1，不得进白名单",
+            AppRoute.SettingsSubScreen::class.java in ProductionRoutePolicy.enabledRouteTypes,
+        )
+
+        val f = fixture(
+            loggedIn = true,
+            enabled = ProductionRoutePolicy.enabledRouteTypes.toList(),
+        )
+        f.router.handle(AppRoute.Settings)
+        assertEquals(1, f.navigated.size)
+
+        f.router.handle(AppRoute.SettingsSubScreen("Security"))
+        assertEquals("子屏不该导航", 1, f.navigated.size)
+        assertEquals("子屏要被明确拒绝", 1, f.rejections.size)
+    }
+
     /** 谓词不匹配时不得误清 —— A → B 的合法叠栈里，B 出栈不该解除 A 的去重。 */
     @Test
     fun `谓词不匹配时不解除去重`() {

@@ -18,6 +18,11 @@ object ProductionRoutePolicy {
      * `UserProfile` = 他人主页（W3，进度文档 §2.32）。它是**第一个被真实打通的
      * 卡片出口** —— Search 的创作者点击此前恒被拒绝。
      *
+     * `Settings` = 设置列表（W3，§2.33）。⚠️ 放开的是**壳的原生列表本体**，
+     * 不是它的 7 个子屏 —— 那些走 `SettingsSurface`，未过 §9.1，
+     * 点击仍会被拒绝（列表内部再走一次 Router）。
+     * 语言页由 Settings 压栈打开，**不是独立路由目标**（RN 侧也没有深链到它）。
+     *
      * ⚠️ 别据此推论「原生页都能随便加」：加任何目标都要先有对应的单测与冒烟，
      * 且这里与 `ShellNavigator.navigate` 的分支必须同时更新 ——
      * 只加白名单不加分支会走到 `error()`（刻意不做 silent no-op）。
@@ -25,6 +30,7 @@ object ProductionRoutePolicy {
     val enabledRouteTypes: Set<Class<out AppRoute>> = setOf(
         AppRoute.Search::class.java,
         AppRoute.UserProfile::class.java,
+        AppRoute.Settings::class.java,
     )
 }
 

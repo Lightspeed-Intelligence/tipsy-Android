@@ -146,6 +146,25 @@ class SurfacePropsTest {
         }
     }
 
+    /**
+     * `SettingsSubScreen` → 平铺的 `initialScreen`（§2.33）。
+     *
+     * ⚠️ 值必须落在 RN 的 `KNOWN_SCREENS` 里 —— 传别的值 RN 会**静默兜底
+     * `Feedback`**（`normalizeScreen`），表现为「点安全设置进了反馈页」，
+     * 两端都不报错。行级的白名单断言在 `SettingsRowTest`。
+     */
+    @Test
+    fun `SettingsSubScreen 产出平铺 initialScreen`() {
+        val props = SurfaceProps.forRoute(AppRoute.SettingsSubScreen("Security"))
+        assertEquals(mapOf("initialScreen" to "Security"), props)
+    }
+
+    /** 列表本体是原生页，不经 Surface props（传了说明走错路径）。 */
+    @Test
+    fun `Settings 列表本体不产出 props`() {
+        assertTrue(SurfaceProps.forRoute(AppRoute.Settings).isEmpty())
+    }
+
     @Test
     fun `纯业务 key 不触发守卫`() {
         // 不该误报：这些都是 RN 侧真实 props 名

@@ -53,6 +53,13 @@ object SurfaceProps {
     const val FOLLOW_TYPE = "type"
 
     /**
+     * `SettingsSurface` 的初始子屏（`SettingsSurface.tsx:20` `initialScreen?`）。
+     *
+     * 取值范围是 `KNOWN_SCREENS` 那 7 个；**不含 `Language`**（语言页原生）。
+     */
+    const val SETTINGS_INITIAL_SCREEN = "initialScreen"
+
+    /**
      * 把 route 转成业务 props。
      *
      * @return 平铺的业务参数；无参数的 route 返回**空 map**。
@@ -97,6 +104,19 @@ object SurfaceProps {
             USER_ID to route.userId,
             FOLLOW_TYPE to route.type,
         )
+
+        /*
+         * `SettingsSurface` 的子屏（W3，§2.33）。
+         *
+         * prop 名 **`initialScreen`**，平铺（§2.19：13 个 Surface 无一读
+         * `props.route`）。⚠️ 值必须是 `SettingsSurface.tsx:36-44` 的
+         * `KNOWN_SCREENS` 之一 —— 传别的值 RN 会**静默兜底 `Feedback`**
+         * （`normalizeScreen`），表现为「点安全设置进了反馈页」。
+         *
+         * ⚠️ `Language` **不在**那个白名单里（语言页原生，§2.33 订正）——
+         * 别把语言页做成这个 route。
+         */
+        is AppRoute.SettingsSubScreen -> mapOf(SETTINGS_INITIAL_SCREEN to route.screen)
 
         // 其余 route 的目标页尚未启用（Router 会先拦下）。
         // **不写 else -> null**：加新 route 时编译器要强制我来这里想一次
