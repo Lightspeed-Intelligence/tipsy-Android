@@ -215,6 +215,79 @@ class AppRouterTest {
         assertEquals("不该被拒绝", 0, f.rejections.size)
     }
 
+    /**
+     * W3：`UserProfile`（他人主页）是第二个进白名单的原生目标（§2.32）。
+     *
+     * 锁两件事：**在**白名单里（否则 Search 的创作者点击继续被拒绝，
+     * 那是本刀要打通的出口），且 `requiresAuth = false` —— 游客不该在
+     * Router 层被挡。
+     *
+     * ⚠️ 「游客点进去会看到登录页」是**接口层**的行为（`/user/get/public`
+     * 走 axiosAuth，见 `PublicProfileApi` 类注释），不是 Router 层的 gate。
+     * 两者别混：在 Router 写 requiresAuth=true 会连页面都不进，
+     * 与 RN 的「进页面后被 axios 拦」时序不同。
+     */
+    @Test
+    fun `UserProfile 在生产白名单内且 Router 层不拦游客`() {
+        assertTrue(
+            "UserProfile 必须在白名单里，否则 Search 的创作者点击继续被拒绝",
+            AppRoute.UserProfile::class.java in ProductionRoutePolicy.enabledRouteTypes,
+        )
+        val f = fixture(
+            loggedIn = false,
+            enabled = ProductionRoutePolicy.enabledRouteTypes.toList(),
+        )
+        f.router.handle(AppRoute.UserProfile(userId = "u1"))
+
+        assertEquals(1, f.navigated.size)
+        assertEquals("不该在 Router 层要求登录", 0, f.loginRequests.size)
+        assertEquals("不该被拒绝", 0, f.rejections.size)
+    }
+
+    /**
+     * 谓词版 `onDestinationClosed`：带参路由无法用相等判定解除去重。
+     *
+     * `UserProfile` 有 `recommendationContextJSON` 第二字段，Activity 那侧
+     * 拿不到当初那条路由的归因参数 —— 用相等判定永远匹配不上，
+     * 表现为「从某人主页返回后，再点同一个人永远打不开」。
+     */
+    @Test
+    fun `带归因参数的路由可用谓词解除去重`() {
+        val f = fixture(
+            loggedIn = true,
+            enabled = listOf(AppRoute.UserProfile::class.java),
+        )
+        val route = AppRoute.UserProfile(userId = "u1", recommendationContextJSON = "{}")
+        f.router.handle(route)
+        assertEquals(1, f.navigated.size)
+
+        // 相等判定匹配不上（少了归因参数）—— 这正是谓词版存在的理由
+        f.router.onDestinationClosed(AppRoute.UserProfile(userId = "u1"))
+        f.router.handle(route)
+        assertEquals("相等判定不该解除去重", 1, f.navigated.size)
+
+        // 谓词版按 userId 匹配
+        f.router.onDestinationClosed { it is AppRoute.UserProfile && it.userId == "u1" }
+        f.router.handle(route)
+        assertEquals("谓词匹配后应能重开", 2, f.navigated.size)
+    }
+
+    /** 谓词不匹配时不得误清 —— A → B 的合法叠栈里，B 出栈不该解除 A 的去重。 */
+    @Test
+    fun `谓词不匹配时不解除去重`() {
+        val f = fixture(
+            loggedIn = true,
+            enabled = listOf(AppRoute.UserProfile::class.java),
+        )
+        val route = AppRoute.UserProfile(userId = "a")
+        f.router.handle(route)
+
+        f.router.onDestinationClosed { it is AppRoute.UserProfile && it.userId == "b" }
+        f.router.handle(route)
+
+        assertEquals(1, f.navigated.size)
+    }
+
     // ── 顺序：auth gate 先于启用检查 ────────────────────────────
 
     /**

@@ -883,14 +883,18 @@ git -C tipsy-app diff --name-status <wave-source-sha>..<candidate-sha> -- \
 | 维度 | 实测真值 | 原生实现要点 |
 | --- | --- | --- |
 | 页面本体 | `user-profile.tsx` 865 行（自己/他人共用，靠 `userId` 分流） | 分流收口在 Router（§4.7） |
-| 内容 Tab | 5 个：创作 / 记忆 / 角色卡 / 收藏 / 点赞。分别由 `useCreatedList`(118) / `useProfileMemories`(126) / `useProfileFavorites`(83) / `useProfileLiked`(82) 驱动 | 5 个 Tab 共用一个分页壳，差异只在 endpoint 与 item 类型 |
+| 内容 Tab | **自己 5 个**：创作 / 记忆 / 角色卡 / 收藏 / 点赞。分别由 `useCreatedList`(118) / `useProfileMemories`(126) / `useProfileFavorites`(83) / `useProfileLiked`(82) 驱动。⚠️ **他人主页只有 1 个 tab**（2026-08-14 逐行核实）：`CharacterGrid.tsx:980-1005` 的 `isSelf` 否分支 `return [...]` 里**只有一个 `data: chunk(otherUserData, 3)` 元素** —— 该分支上方注释写「他人主页显示角色和视频两个tab」，**注释与代码不符，代码是真值**。照注释做会多出一个无数据源的空 tab | 5 个 Tab 共用一个分页壳，差异只在 endpoint 与 item 类型；**他人主页不要复用五图标 tab 栏** |
+| 他人主页的数据源（2026-08-14 逐个核实，与自己视角**几乎无一条相同**） | 头部资料 = `/user/get/public`（**`axiosAuth`**，`apis/user.ts:49`）；统计 = `/user/stats_info` 但走 `getPublicFollowerInfo` → **`axiosPublic`**（`apis/profile.ts:130`）；列表 = `/character/list/creator`（v1）**与** `/character/list/creator/v2` **两个都发**，v2 带 `types:['character','story','game']` + `language_code`，均 `axiosPublic`。⚠️ **`/plot/list/creator` 不要实现** —— 它的 SWR key 恒 `undefined`（唯一调用点 `CharacterGrid.tsx:250` 不传 `isPersonal`，默认 `true`），现网从未被调用 | **`size` 是 200**（`useProfile.tsx:30` `PAGE_SIZE`），不是自己视角的 10/20。**v1/v2 双发不是冗余**：网格取 `creatorCreatedList`（v2，含 game）**非空时用 v2，空则回落 v1 的 `characterData`**（`CharacterGrid.tsx:980-983`）—— 壳照此优先级，别只实现一个。v2 按 `item_type==='game' ? game_<game_id> : item_id` 去重。⚠️ **他人主页翻不了页**：`onEndReached` 的 tab0 分支调的是 `loadMoreCreated()`（自己那条列表），两条 creator 列表都无 `setSize` 出口 —— 壳按「单页 200、不翻页」即对等 |
+| 他人主页头部的四处结构差异（`CharacterGrid.tsx:1422-1445`） | ① 关注按钮取代 Edit Profile ② **无钱包卡**（`isSelf && UserProfileGems`）③ bio 走 `UserBio`(198) 而非 `RenderBio` ④ `FollowInfo` 四统计**两端都渲染** | `isDeleted` 用户：关注按钮不渲染 + **下拉刷新整个禁用**（`refreshControl={isDeleted ? undefined : ...}`） |
+| ⚠️ 他人主页头部**不是纯公开接口** | `/user/get/public` 走 `axiosAuth`，而 `axiosAuth` 取不到有效 token 会 **`requestLogin('axios-auth')` 并 reject**（`utils/axios.ts:148-175`）—— 壳宿主下 `isShellAuthHost()` 为真，会**直接弹原生登录页** | 与 `AppRoute.UserProfile.requiresAuth = false`（游客可浏览）**存在张力**：游客点创作者会拿到登录页而不是主页。这是 RN 现网行为，**壳按 REQUIRED 接线即对等**；若要真游客可浏览需后端换实例，属独立决策。**别自作主张改成 OPPORTUNISTIC** —— 那会让 401 与登录弹窗时序偏离现网 |
 | 组件大头 | `CharacterGrid`(1903) + `CharacterGridItem`(1106) + `StoryItem`(1026) + `GameGridItem`(585) + `PlotItem`(568) + `FavoriteCharacterCard`(590) + `RoleCard`(468) | **item 类型有 6 种**（角色/故事/游戏/记忆/收藏/角色卡），这是 12.6k 的主要来源 |
 | 缓存 | `profileCreatedListCache.ts`(196) + 已有测试(129) | 有现成测试可作为对等 fixture 来源 |
 | 卡片菜单 | 按类型给不同动作：角色=编辑/删除/置顶、故事=删除/置顶、游戏=置顶 | iOS 踩过：more 按钮做成装饰 `View` 导致点击穿透进详情页。**Android 用可点击组件吃掉事件** |
 | 编辑保真 | 创作列表的**原始 JSON 必须原封透传**给 `CreateSurface`。by-id 重拉会导致保存时字段重置（= 数据损坏） | iOS 明确记录的坑，直接继承 |
 | 出口 | 编辑资料→`EditProfileSurface`；钱包/Upgrade→`GemsSubscriptionSurface`；Coins→`UserCoinsSurface`；角色卡→`RoleCardSurface`；设置→原生列表 | 5 个 Surface 出口，全部经桥 |
 | 不迁 | `user-coins`/`subscribe`/`withDraw-*`/`gems-subscription`/`user-balance`/`edit-rolecard`/`follow` 共约 5.2k | 见 §8.0 的修正说明 |
-| 埋点 | `page_exposure`（`profile`，自己+他人两处都发） | — |
+| 关注按钮（**要做**） | `POST /user/follow/user`（`axiosAuth` → REQUIRED，`apis/profile.ts:142`，请求体 `{user_id}`，响应 `{character_id, status}`）。按钮在 **`ProfileHeader.tsx:200-225`**（不在 `user-profile.tsx`，那里搜不到）：`isSelf` 假分支渲染，`isDeleted` 时**整块不渲染**。`isFollow` = `publicUser.is_followed`（`useProfile.tsx:219-221`），来自 `/user/get/public` | 是**toggle 单端点**（同一个 path 关注/取关，靠后端翻转），不是两个。文案 `Follow`（带 `+` 前缀）↔ `Following`。成功后 RN **重拉 `/user/get/public` + stats**（`handleFollowUser` 里两个 mutate）——壳照此重拉而非本地翻转，否则 followers 数不动 |
+| 埋点 | `page_exposure`（`profile`，自己+他人两处都发）。他人主页的 `refSource` 是 `other_tab`，自己是 `profile_tab`（`user-profile.tsx:95,178`）；`page_exposure` 另带 `entry_type`（他人 `stack` / 自己 `tab`）与 `is_self`（`:201-203`） | 两处都发但参数不同轴，别只发一个 |
 
 #### ChatList（Tab4，约 3.7k）
 
