@@ -871,7 +871,7 @@ git -C tipsy-app diff --name-status <wave-source-sha>..<candidate-sha> -- \
 | 分页 | `size: 21`（For You / public / story），World `size: 20` | 固定值，不要「优化」 |
 | 请求参数 | `gender`（`Female/Male/NonBinary/All` → `female/male/other/undefined` 映射）、`nsfw`、`language_code`、`tag_ids`、`content_type`（**仅当 `contentTypes.length === 1` 才传**）、`session_id`、`recommend_tracking_session_id` | 映射表照抄，`content_type` 那个条件容易漏 |
 | session 语义 | `forYouSessionId` 锁 For You 推荐池；其余系列各有 `homeRecommendationSessionIds[series]` | 切性别/标签/下拉刷新/切语言换新 id，**翻页不换** |
-| 筛选持久化 | `config-persist-storage` 的 `gender` / `nsfw` / `tags`。**`nsfw` 以后端 `user.nsfw` 为权威，由 store 底部订阅镜像到本地，App 不回写后端**（`config_persist.ts:225` 注释）。⚠️ **`tags` 是从 `/character/tags` 拉来的标签目录，不是用户的勾选**（`config_persist.ts:293-320` `hydrateTags`）；**用户勾选存在不持久化的 `session.ts`**（`selectedTags: {series, tags, contentTypes}`，`session.ts:29/67`，该 store **无 persist 中间件**，已核实 `grep -c persist` = 0）—— 所以**杀进程后勾选归零，只有 gender 存活**。照「tags 也持久化」实现会让原生版比 RN 多记住筛选，且不报错 | 原生写入不得破坏这个单向流；勾选**不要**写盘 |
+| 筛选持久化 | `config-persist-storage` 的 `gender` / `nsfw` / `tags`。**`nsfw` 以后端 `user.nsfw` 为权威，由 store 底部订阅镜像到本地**（`config_persist.ts:225` 注释）。⚠️ **原文「App 不回写后端」需限定**（2026-08-14 订正）：**Settings 的 Limitless 开关是唯一的写方** —— `POST /user/nsfw`（`settings/page.tsx:78` `updateUserNsfw`）成功后才 `setNsfw` 本地镜像并重拉 `hydrateTags`。正确表述是「**Home/筛选侧**不回写后端，写入只在 Settings 一处」。该开关**仅侧载渠道可见**（`shouldShowNsfwSetting(isAndroidAPK)` = `isAndroidAPK`，即 directApk；GooglePlay 与 RuStore 都不显示）。⚠️ **`tags` 是从 `/character/tags` 拉来的标签目录，不是用户的勾选**（`config_persist.ts:293-320` `hydrateTags`）；**用户勾选存在不持久化的 `session.ts`**（`selectedTags: {series, tags, contentTypes}`，`session.ts:29/67`，该 store **无 persist 中间件**，已核实 `grep -c persist` = 0）—— 所以**杀进程后勾选归零，只有 gender 存活**。照「tags 也持久化」实现会让原生版比 RN 多记住筛选，且不报错 | 原生写入不得破坏这个单向流；勾选**不要**写盘 |
 | 冷启动缓存 | `useForYouListCache.ts`（112 行）+ `selectLockedForYouHomeItems` + `prefetchForYouHomeImages` | 见 §4.6 的信封 + authScope 门禁 + TTL；**语言不做门禁** |
 | 埋点 | 11 个事件（实测）：`page_exposure`、`discover_subpage_exposure`、`discover_page_tab_click`、`character_page_click`、`character_page_exposure`、`search_click_search_box`、`search_content_click`、`activity_banner_{exposure,click,open_result}`、`payment_hub_click` | `character_page_exposure` 需手动补 `uid`（RN 由 JS 封装自动注入） |
 | 组件 | `CardBanner`(946) + `BannerItems`(606) + `HomeCard`(474) + `HomeStoryCard`(395) + `HomeFilterDrawer`(382) + `HomeHeader`(272) + `DailyEggSmashModal`(708) | banner 与彩蛋弹窗**评估留 RN Surface**（运营高频改动区），减 1.6k |
@@ -943,7 +943,7 @@ git -C tipsy-app diff --name-status <wave-source-sha>..<candidate-sha> -- \
 | Onboarding（starter-picks，2,364 行） | `src/login/starter-picks/`：`StarterPicksFlow` + `OrientationStep`/`TagSelectionStep`/`CharacterSelectionStep` | **留 `OnboardingSurface`**（RN 已有该 Surface）。壳按 `onboardingStatus` 拉起，完成后经桥回执 |
 | 停止条件 | 缺 Firebase / Google OAuth 的 **Android 签名指纹**（三个 applicationId 各一套）使真实登录无法验证 | 这是 W2 的硬前置，见 §12 |
 | Settings 列表 | `page.tsx` 430 行。列表行序与渠道 gating 由壳控制；子页全部经 `SettingsSurface` |
-| 语言页 | `language.tsx` 136 行。**壳是语言唯一写入者**，刻意不迁（iOS 同边界）。可选集合 = 服务端 `/supported_languages` ∩ 26 个客户端支持码（§4.8） |
+| 语言页 | `language.tsx` 136 行。**要原生实现**（不是「不迁」—— 2026-08-14 订正措辞：原文「刻意不迁」指的是**不由 RN 承载**，被读反过）。已核实 `SettingsSurface.tsx:34-44` 的 `KNOWN_SCREENS` **刻意不含 `Language`**，注释写明「语言页原生：壳是语言唯一写入者」；iOS 对应物是原生 `LanguageViewController.swift`。所以 Settings 那一刀**必须连语言页一起做**，否则壳内没有任何入口能改语言。可选集合 = 服务端 `/supported_languages` ∩ 26 个客户端支持码（§4.8）；写入走 `POST /user/set_language` → 重拉 `/user/info`，不经 Zustand 信封 |
 
 ### 8.2 现成的对等 fixture 来源（省掉大量猜测）
 
