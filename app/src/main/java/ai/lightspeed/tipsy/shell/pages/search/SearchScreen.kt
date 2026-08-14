@@ -109,6 +109,15 @@ internal fun SearchScreen(
     onCreatorClick: (CreatorResult, Int) -> Unit,
     onCreatorExposed: (CreatorResult) -> Unit,
     onCreateCharacterClick: () -> Unit,
+    // ── 筛选（P2，§2.34）────────────────────────
+    onFilterDrawerOpen: () -> Unit,
+    onFilterDrawerDismiss: () -> Unit,
+    onFilterGenderSelect: (SearchGender) -> Unit,
+    onFilterSortingSelect: (SearchSorting) -> Unit,
+    onFilterContentRatingSelect: (SearchContentRating) -> Unit,
+    onFilterReset: () -> Unit,
+    onFilterDone: () -> Unit,
+    onTagToggle: (String) -> Unit,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
     Column(
@@ -135,9 +144,18 @@ internal fun SearchScreen(
             SearchResultTabs(
                 tab = state.tab,
                 onTabChange = onTabChange,
-                // P1 无筛选器：不渲染筛选按钮（P2 接 FilterDrawer 时打开）
-                onFilterClick = null,
+                onFilterClick = onFilterDrawerOpen,
             )
+            // 二级标签栏（P2）：只在角色 tab 且有可渲染标签时出现
+            // （RN 的标签栏在结果页内、Creators tab 没有它）
+            if (state.tab == SearchTab.CHARACTERS) {
+                SearchTagBar(
+                    orderedTagIds = state.orderedTagIds,
+                    selectedTagIds = state.filter.tagIds,
+                    labels = state.tagLabels,
+                    onToggle = onTagToggle,
+                )
+            }
         }
 
         Box(modifier = Modifier.fillMaxSize()) {
@@ -193,6 +211,22 @@ internal fun SearchScreen(
         ClearHistoryDialog(
             onConfirm = onClearHistoryConfirm,
             onDismiss = onClearHistoryDismiss,
+        )
+    }
+
+    // 筛选抽屉盖在整页之上（含搜索栏）——对齐 RN 的 TipsyDrawer 是 portal。
+    // ⚠️ 放在根 Column **之外**：放里面会被 Column 的 padding 限制，
+    // 遮罩盖不住状态栏那条
+    if (state.isFilterDrawerOpen) {
+        SearchFilterDrawer(
+            state = state,
+            onDismiss = onFilterDrawerDismiss,
+            onGenderSelect = onFilterGenderSelect,
+            onSortingSelect = onFilterSortingSelect,
+            onContentRatingSelect = onFilterContentRatingSelect,
+            onReset = onFilterReset,
+            onDone = onFilterDone,
+            bottomPadding = listBottomPadding,
         )
     }
 }

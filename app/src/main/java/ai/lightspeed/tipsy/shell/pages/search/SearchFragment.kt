@@ -4,6 +4,7 @@ import ai.lightspeed.tipsy.shell.TipsyApplication
 import ai.lightspeed.tipsy.shell.auth.AuthStateHub
 import ai.lightspeed.tipsy.shell.i18n.L10n
 import ai.lightspeed.tipsy.shell.pages.home.HomeFeedItem
+import ai.lightspeed.tipsy.shell.pages.home.HomeApi
 import ai.lightspeed.tipsy.shell.pages.home.HomeFilterStore
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
@@ -61,6 +62,14 @@ class SearchFragment : Fragment() {
                 // 按最保守值走，不能默认 true
                 nsfwProvider = { HomeFilterStore(app.sharedMmkvStore).readNsfw() },
                 userIdProvider = { app.tokenStore.currentUserId() },
+                // 标签目录：与 Home 抽屉同源（`/character/tags`）。
+                // ⚠️ 不读 RN 的 config-persist —— 那里的 tags 由
+                // `index.surfaces.js` 的 hydrateTags 填，壳内可能还没跑过
+                // ⚠️ 带 nsfw 参数：标签目录本身随分级变化（同 Home 的调用）
+                tagSource = {
+                    HomeApi(app.apiClient)
+                        .fetchTags(HomeFilterStore(app.sharedMmkvStore).readNsfw())
+                },
             ) as T
         }
     }
@@ -128,6 +137,15 @@ class SearchFragment : Fragment() {
                     onCreateCharacterClick = {
                         requestRoute(AppRoute.CreateProfileDetail())
                     },
+                    // ── 筛选（P2，§2.34）────────────────────
+                    onFilterDrawerOpen = viewModel::onFilterDrawerOpen,
+                    onFilterDrawerDismiss = viewModel::onFilterDrawerDismiss,
+                    onFilterGenderSelect = viewModel::onFilterGenderSelect,
+                    onFilterSortingSelect = viewModel::onFilterSortingSelect,
+                    onFilterContentRatingSelect = viewModel::onFilterContentRatingSelect,
+                    onFilterReset = viewModel::onFilterReset,
+                    onFilterDone = viewModel::onFilterDone,
+                    onTagToggle = viewModel::onTagToggle,
                 )
             }
         }
@@ -137,6 +155,14 @@ class SearchFragment : Fragment() {
 
     override fun onStart() {
         super.onStart()
+        // 分级筛选的三重 gating 里，flavor 与 nsfw 镜像属壳环境不属状态，
+        // 故由这里灌入（见 SearchFilter.canPickContentRating）
+        val app = requireActivity().application as TipsyApplication
+        viewModel.onContentRatingAvailability(
+            SearchFilter.canPickContentRating(
+                nsfwEnabled = HomeFilterStore(app.sharedMmkvStore).readNsfw(),
+            ),
+        )
         viewModel.onAppear()
     }
 

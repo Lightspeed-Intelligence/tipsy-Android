@@ -1,6 +1,7 @@
 package ai.lightspeed.tipsy.shell.pages.search
 
 import ai.lightspeed.tipsy.shell.pages.home.HomeFeedItem
+import ai.lightspeed.tipsy.shell.pages.home.HomeTag
 
 /**
  * 搜索结果的 tab（`page.tsx:25` 的三态字符串）。
@@ -65,7 +66,47 @@ data class SearchState(
 
     /** 一次性 Toast（搜索失败等），消费后清空。 */
     val toastKey: String? = null,
+
+    // ── 筛选（P2，§2.34）────────────────────────────
+
+    /** 已生效的筛选（点 Done 才提交，见 [pendingFilter]）。 */
+    val filter: SearchFilter = SearchFilter(),
+    /**
+     * 抽屉里的待提交筛选；null = 抽屉未打开。
+     *
+     * RN 的三个 `current*` local state（`FilterDrawer.tsx:47-53`）——
+     * 打开时从 [filter] 复制，点 Done 才写回。⚠️ 关闭抽屉**不提交**
+     * （`handleClose` 只 `setOpen(false)`），所以待提交值要丢掉。
+     */
+    val pendingFilter: SearchFilter? = null,
+    /**
+     * 分级筛选是否可选（三重 gating，见 [SearchFilter.canPickContentRating]）。
+     * 由 Fragment 在构造时灌入 —— 它依赖 flavor 与 nsfw 镜像，不是纯状态。
+     */
+    val canPickContentRating: Boolean = false,
+    /** 标签目录（`/character/tags`，与 Home 抽屉同源）。 */
+    val tagCatalog: List<HomeTag> = emptyList(),
 ) {
+
+    /** 抽屉是否打开（等价于有待提交值）。 */
+    val isFilterDrawerOpen: Boolean get() = pendingFilter != null
+
+    /**
+     * 标签栏的展示顺序（`deriveResultTagOrder`，见 [SearchTagOrder]）。
+     *
+     * 派生而非存字段：三个输入任一变化都要重算，存字段容易漏更新。
+     * ⚠️ 只在**有结果**时渲染标签栏（RN 的标签栏在结果页内）。
+     */
+    val orderedTagIds: List<String>
+        get() = SearchTagOrder.derive(
+            tagIds = tagAggIds,
+            selectedTagIds = filter.tagIds,
+            configuredTags = tagCatalog,
+        )
+
+    /** id → 标签，UI 取展示文案用。 */
+    val tagLabels: Map<String, String>
+        get() = tagCatalog.associate { it.id to it.label }
 
     /**
      * 建议词列表：**原始输入恒在第一条**，且去重（`SuggestTags.tsx:54-63`）。

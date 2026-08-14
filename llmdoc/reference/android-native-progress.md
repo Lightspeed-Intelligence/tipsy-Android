@@ -17,25 +17,28 @@
 > Home 剩 banner / 彩蛋弹窗 / mp4 封面三项（前两项评估留 RN Surface）。
 > **W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 Grid 主链路
 > 已并入 main 且模拟器冒烟 PASS（§2.30）；Search P1 主链路已实现且 directApk
-> 真机冒烟 PASS（§2.31），P2 筛选器待后续包。
+> 真机冒烟 PASS（§2.31）；**P2 筛选器已实现**（§2.34）。
 > **他人主页已实现并并入 main**（§2.32，PR #28）：`AppRoute.UserProfile` 进白名单，
 > 搜索 → 创作者 → 主页成为**壳的第一条端到端可用路径**；真机冒烟未跑。
 > **Settings 列表 + 语言页已实现**（§2.33）：`AppRoute.Settings` 进白名单，
 > 壳终于有了改语言的入口；⚠️ 审计订正了一处读反的归属 —— **语言页要原生实现**，
-> 不在 `SettingsSurface` 里。真机冒烟未跑。
+> 不在 `SettingsSurface` 里。
+> **Search P2 筛选器已实现**（§2.34）：Search 达成完整对等；P1 主链路
+> owner 已在模拟器验过，**P2 真机冒烟未跑**。
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
 ## 0. 三十秒速览
 
-- **波次进度**：W0 完成；W1 的契约层全部落地且已在 CI 组合验证（§2.22），只剩 §12 实例关闭链与 P9；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 已随 PR #25 并入 main（§2.30）；**Search P1 主链路已实现并完成 directApk 冒烟**（§2.31），P2 筛选器待后续包。
+- **波次进度**：W0 完成；W1 的契约层全部落地且已在 CI 组合验证（§2.22），只剩 §12 实例关闭链与 P9；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 已随 PR #25 并入 main（§2.30）；**Search P1 主链路已实现并完成 directApk 冒烟**（§2.31）；**P2 筛选器已实现**（§2.34，Search 完整对等）。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`、`pages/chatlist/`、`pages/search/`**。
-- **submodule**：pin **`017e142ac4818bb11c792649c7607177e669d72f`**（§2.33 导出 `Limitless` / `New Version` 两词条，打破连续五包零改动；前一 pin 是 Search P1 的 `5a58be9d1881cb39a7229e84e65ac8214f9db3fe`）
+- **submodule**：pin **`a6b9fc56a88d97444fe5f1ce952068bb9222be82`**（§2.34 导出搜索筛选器 10 条词条；前一 pin `017e142ac` 是 §2.33 的 `Limitless` / `New Version`）
 - **已验证**：main 上 PR #25 的 G1 Fast Gate 全绿。W3 Search P1 提交前快照的本机证据：`lintDirectApkDebug` 无新增（baseline 5 条）、`assembleGooglePlayDebug`/`assembleDirectApkDebug` 通过、**DirectApk app 单测 695 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿；directApk 真机主链路冒烟 PASS（§2.31）。提交前审查再新增 13 条、扩展 2 条回归测试并修正并发/auth/Router/点击归因/分页去重行为，最终源码预计 708 条；**最终 head 未在本机重跑 Gradle，交 G1 验证**。
 - **他人主页已实现**（§2.32，2026-08-14）：6 文件 1,469 行，`AppRoute.UserProfile` 进白名单 —— **搜索 → 创作者 → 他人主页是壳的第一条端到端可用路径**。审计推翻了「复用自己视角」的前提（七处偏差）：只有 **1 个 tab**（RN 注释说两个，代码是一个）、数据源另有四条、`size` **200 且不翻页**、`/user/get/public` 走 `axiosAuth` 会对游客弹登录页、`/plot/list/creator` **现网从未被调用**、关注按钮在 `ProfileHeader.tsx` 而非 `user-profile.tsx`。真机冒烟 **NOT RUN**。
 - **Settings 列表 + 语言页已实现**（§2.33，8 文件 1,501 行）：补上了真实功能缺失 —— 此前**壳内没有任何入口能改语言**。审计订正三处：语言页**要原生实现**（RN 与 iOS 双证据）、`supportedLanguages` 壳内**恒为空**必须自己拉、Limitless 开关是 `nsfw` 的**唯一写方**且仅 directApk 可见。渠道 gating 收在 `SettingsRow` 并对三渠道各有单测。7 个 Surface 子屏（`AppRoute.SettingsSubScreen`）仍被明确拒绝。真机冒烟 **NOT RUN**。
 - **⚠️ 其余出口仍全部点不动**：Home/ChatList/Search 的卡片点击（`ChatDetail`）与 Profile 五个出口仍被 `rejectNotEnabled` 明确拒绝。解锁 ChatDetail 的前置是 P9 / §9.1 矩阵，且 §12 实例关闭链尚未闭环（TS `popSurface()` 无参，Android bridge 固定传 `null`）。
-- **不存在 / 未验**：Screen Tab 仍是占位页；ChatList 的 Map「時光長廊」视图与 Search 的筛选器均是 P2；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。生产路由白名单已放开三个纯原生目标（`Search` / `UserProfile` / `Settings`），但 ChatDetail 在 P9 前仍 disabled（Home/ChatList/Search 的卡片点击因此被明确拒绝），12 个业务 Surface 也全未过 §9.1（含 Settings 的 7 个子屏）。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
+- **Search P2 筛选器已实现**（§2.34，4 文件 723 行）：性别/排序/分级抽屉 + 二级标签栏，Search 达成完整对等。`SearchTagOrderTest` **逐条对拍 RN 的 144 行现成单测**。⚠️ 分级筛选的门是「非 GooglePlay && nsfw 开」，与 Settings 的 Limitless（只有 directApk）**不同轴** —— RuStore 在这里算可选。
+- **不存在 / 未验**：Screen Tab 仍是占位页；ChatList 的 Map「時光長廊」视图仍是 P2；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。生产路由白名单已放开三个纯原生目标（`Search` / `UserProfile` / `Settings`），但 ChatDetail 在 P9 前仍 disabled（Home/ChatList/Search 的卡片点击因此被明确拒绝），12 个业务 Surface 也全未过 §9.1（含 Settings 的 7 个子屏）。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
 
 ## 1. 波次状态
 
@@ -44,7 +47,7 @@
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟡 **契约层已收口且 CI 已验；§12 关闭链 + P9 未完** | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17 已并） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
-| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1–P4、P6，§2.25–§2.29，真机验证）；ChatList P1 Grid 主链路已并（§2.30，模拟器冒烟 PASS）；**Search P1 主链路已实现**（§2.31，directApk 真机冒烟 PASS）；**他人主页已实现**（§2.32，第一条端到端可用路径）；**Settings 列表 + 语言页已实现**（§2.33）；剩 Profile P5 ⋮ 菜单/P7 头像框、ChatList P2 Map、Search P2 筛选器 | `5a58be9d1881cb39a7229e84e65ac8214f9db3fe` | —（PR #21–#26 已并；他人主页在 `feat/android-w3-profile-other-user`） |
+| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1–P4、P6，§2.25–§2.29，真机验证）；ChatList P1 Grid 主链路已并（§2.30，模拟器冒烟 PASS）；**Search P1 主链路已实现**（§2.31，directApk 真机冒烟 PASS）；**他人主页已实现**（§2.32，第一条端到端可用路径）；**Settings 列表 + 语言页已实现**（§2.33）；**Search P2 筛选器已实现**（§2.34，Search 完整对等）；剩 Profile P5 ⋮ 菜单/P7 头像框、ChatList P2 Map | `a6b9fc56a88d97444fe5f1ce952068bb9222be82` | —（PR #21–#30 已并；Search P2 在 `feat/android-w3-search-p2`） |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | ⬜ 阻塞于 W3 | — | — |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
 
@@ -2204,6 +2207,128 @@ Done 不可点时给一档 alpha。RN 的 `doneText` 恒白、不可点时**无�
   RuStore 无 Limitless）、语言切换真机往返（切完 RN Surface 侧是否同步）、
   Done 乐观流与失败 Toast、账号安全展开、7 个子页被拒绝、三个外链能打开、
   登出链路、分级开关（仅 directApk）
+
+### 2.34 W3 Search P2 筛选器（2026-08-14）
+
+新增 4 文件 723 行（`SearchFilter` / `SearchTagOrder` / `SearchFilterDrawer` /
+`SearchTagBar`），扩 `HomeTag` 三字段。Search 从 P1 补到**完整对等**：
+性别/排序/分级筛选抽屉 + 二级横滑标签栏。
+
+Search P1 主链路已由 owner 在模拟器验过（2026-08-14）。
+
+#### ✅ 好消息：P1 已把管线铺好，本刀是纯 UI + 状态
+
+`SearchApi` 的 `CharacterSearchQuery` **早就有** `gender` / `sorting` /
+`contentRating` / `tagIds` 四个字段，且 `gender` 为 null 时**整键不发**
+（对齐 RN 的 `delete params.gender`）。P1 只是在调用点把它们**硬编码**成
+`null` / `Recommended` / `All` / `emptyList()`（`SearchViewModel.kt:276-282`）。
+所以本刀不动 API 层，只把真实状态串进去。
+
+#### 三组筛选值（逐个核实 `constants/common.ts`）
+
+- **`SexList`** = `All` / `Female` / `Male` / **`Non-binary`**（⚠️ 带连字符，
+  不是 `NonBinary` —— Home 侧的枚举是另一套写法，别复用）。
+  映射：`Female`→`female`、`Male`→`male`、`Non-binary`→`other`、
+  **`All`→ 整键不发**（`useSearch.ts:104-121` 的 `default: undefined`
+  加 `delete params.gender`）。
+- **`SearchSortingList`** 五值，**UI 文案 ≠ 后端枚举**
+  （`SearchSortingValueMap`）：`Most Interacted`→`MostInteracted`、
+  `Most Liked`→`MostLiked`、`Most Favorited`→`MostFavorited`，
+  `Recommended` / `Latest` 两端同名。**认不出的值回落 `Recommended`**
+  （`?? 'Recommended'`）。
+- **`ContentRatingList`** = `All` / `SFW` / `NSFW`，**值即契约**。
+  ⚠️ **三重 gating**：`Platform.OS === 'android' && !isGooglePlay && nsfw`
+  （`FilterDrawer.tsx:55-57`）—— 侧载渠道**且**全局 nsfw 开关打开才显示。
+  不显示的渠道**固定提交 `All`**（`:75-79` 注释「与线上一致」），
+  不是不发这个键。
+
+⚠️ 底部按钮是 **`Reset` + `Done`**，不是我先前计划里写的 `Apply`
+（`FilterDrawer.tsx:193-203` 实测）。抽屉标题是 **`Sort by`**，不是 `Filter`。
+
+#### ⚠️ 标签栏排序规则与壳现有 `HomeTag` **不兼容**
+
+`deriveResultTagOrder`（`searchTagOrder.ts` 81 行，配 144 行单测）的排序是
+四层优先级：① 选中项按**选择顺序**置前 ② 「特殊呈现」标签优先
+③ 有 `sort_order` 时按它排、否则按**配置顺序** ④ 同序按 `tag_aggs`
+的**聚合顺序**兜底。
+
+壳的 `HomeTagParser` **把 `sort_order` 排完就丢掉了**
+（`HomeTag.kt:47` 注释「只用于排序，不进模型」）——
+而这里需要**原始值**（判「有没有 sort_order」这一层），
+且需要「配置顺序」与「特殊呈现」两个额外信息。所以本刀要么扩 `HomeTag`
+带上这些字段，要么给 Search 单独一个标签模型。**倾向扩 `HomeTag`**：
+两处标签目录来自同一个 `/character/tags`，两套模型会漂移。
+
+**「特殊呈现」的判定**（`hasSpecialPresentation` + `resolveTagDisplay`）：
+`isEvent || iconRenderKind !== 'none' || watermarkRenderKind !== 'none' ||
+textColor` 任一为真。落到 API 字段是 `is_event` / `icon_type` + `icon_value`
+/ `watermark_url` / `text_color`，**外加一张 6 条的 legacy 名称回落表**
+（`tagDisplay.ts:73`：Halloween 2025 / Christmas 2025 / Valentines2026 /
+Under The Mask / Brewing & Coding / NewStart —— 按 id 或 alias 匹配）。
+
+⚠️ `resolveTagDisplay` 本体 441 行是**活动标签的图标/水印呈现配置**，
+本刀**不迁**：壳的标签行还没有 lottie / 水印渲染。只取
+`hasSpecialPresentation` 需要的那个布尔判定 —— 但**必须含 legacy 表**，
+否则万圣节这类历史活动标签的排序位置与现网不同。
+
+#### 标签数据源：`tag_aggs` 不是标签目录
+
+横滑栏的 id 列表来自**搜索响应的 `tag_aggs`**（`useSearch.ts:148-149`），
+是「本次全部命中结果的标签聚合」；标签的**展示信息**才来自
+`config-persist` 的标签目录（壳侧 = `/character/tags`）。
+两者是「哪些标签有结果」与「这个标签长什么样」的关系。
+
+⚠️ **选中标签后 `tag_aggs` 保持不变**（后端聚合时剔除 tags 筛选条件，
+`SearchTagBar.tsx:21-23` 注释）—— 壳不要在选中后重算这个列表，
+否则选一个标签就会让其余标签消失。
+
+#### 词条：bump submodule
+
+18 个词条里 8 个已在 SHELL_KEYS，缺 **10 个**：`Sort by`、`Content Rating`、
+`Close`、五个 sorting 文案、`SFW` / `NSFW`。全部在 RN 侧有译文，同 §2.33 的情形。
+已导出：**26 语言全命中，en 194/194 条，0 missing**。
+pin `017e142ac` → **`a6b9fc56a`**（已推远端）。
+
+⚠️ 顺带记一处**两壳文案不同轴**：导出清单里原有的 `Sort & Filter` / `Apply`
+是 **iOS 壳**的筛选器文案，而 RN 的 `FilterDrawer` 实测是标题 `Sort by` +
+底部 `Reset` / `Done`。两者都保留（SHELL_KEYS 不按平台分叉）——
+但**Android 要用 RN 那套**，照 iOS 壳的 key 做会与现网 Android 用户看到的不同
+（index.md 硬性纪律的「UI 照 RN 的对应平台分支」同型）。
+
+#### 实现要点
+
+- **P1 的管线直接可用**：`CharacterSearchQuery` 四个筛选字段早就在，
+  P1 只是把它们硬编码成默认值。本刀不动 API 层。
+- **`HomeTag` 扩三字段**（`sortOrder` / `configIndex` / `hasSpecialPresentation`）
+  而不是给 Search 建第二个标签模型 —— 两处目录同源，两套模型必然漂移。
+  ⚠️ `sortOrder` **必须保留 null 与 0 的区别**：`hasKnownSortOrder` 是
+  集合级判定，存成 0 会让「全无 sort_order」那条分支永远走不到
+  （单测 `全无 sort_order 时按配置数组顺序` 锁死）。
+- **`configIndex` 取排序后的下标**：RN 遍历的目录数组本身已按 `sort_order`
+  排过（`config_persist.ts:297`），所以对等的是排序后序不是接口返回序。
+- **筛选重查走 `isRefreshing` 不走 `isLoading`**：保留旧列表 + 不切 tab +
+  不发 `search_trigger_page_exposure`（那是「提交了新搜索词」的事件）。
+  清空会让筛选时列表闪空，RN 专门为此拆了 `refreshing`。
+- **标签点击立即重查**（无需 Done），而抽屉三项要点 Done 才生效 ——
+  两种交互刻意不同，对齐 RN。
+- **展开按钮用近似判定**：RN 靠 `onLayout` 测真实溢出
+  （`contentWidth > containerWidth + 1`），壳用「标签数 > 6」近似。
+  **已知偏差**：标签少但文案极长时壳可能不给展开按钮，反之多给一个。
+  只影响换行显示、不影响筛选结果，记在验收里。
+
+#### 验证
+
+- app 单测 **833 条**（+41：`SearchTagOrderTest` 8 + `SearchFilterTest` 21 +
+  `SearchViewModelTest` 净增 12），failures=0、**skipped=0**
+- ⭐ `SearchTagOrderTest` **逐条对拍 RN 的 `searchTagOrder.test.ts`**
+  （六个用例名与断言照抄，方案 §8.2 的用法）—— 四层优先级任一层写错都会被抓
+- `:tipsy-auth:testDebugUnitTest` 15 条全绿
+- lint 无新增（baseline 仍 5 条未改）；googlePlay + directApk assemble 通过
+- **未动** manifest / RN 依赖 / flavor
+- **真机冒烟 NOT RUN** —— 待跑：抽屉三段渲染与 Done/Reset、性别 All 不发键、
+  排序枚举生效（结果顺序真的变）、**分级三重 gating**（directApk+nsfw 开才出现，
+  GooglePlay 一定不出现）、标签 toggle 与选中置前、展开/收起、
+  筛选重查不闪空、翻页带筛选条件
 
 ## 3. 横切能力
 
