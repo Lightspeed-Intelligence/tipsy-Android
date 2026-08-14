@@ -76,11 +76,19 @@ pluginManagement {
     //
     // 真正的解法是让**进程本身**的 PATH 含 node 目录：
     //   - 终端跑 ./gradlew：shell PATH 已含（fnm/nvm 会注入），天然可用
-    //   - Android Studio 从 Dock/Finder 启动：走 launchd GUI 域，**不读 shell 配置**
-    //     → 必须 `launchctl setenv PATH …`（建议做成 LaunchAgent 固化）
-    //     → ⚠️ **改完必须完全退出 Studio 再打开**（⌘Q，不是 Sync/Invalidate Caches）：
-    //        launchctl setenv 只影响此后新启动的进程，Studio 及其派生的 Gradle
-    //        daemon 继承的是**它自己启动那一刻**的环境。
+    //   - Android Studio：**用 `/Applications/Android Studio (Tipsy).app` 启动**。
+    //     那是个 `#!/bin/zsh -l` 的包装 app：登录 shell 重建 PATH 后再 exec 真正的
+    //     Studio，因此 native environ 一定含 node。日志见
+    //     $TMPDIR/tipsy-studio-launcher.log。等价手段是从终端直接跑
+    //     `/Applications/Android\ Studio.app/Contents/MacOS/studio &`。
+    //
+    // ⚠️ **`launchctl setenv` / LaunchAgent 治不了这个坑**（2026-08-14 定论，
+    //    2026-08-10/11/13/14 四次复发换来的结论，别再往那个方向试）：
+    //    exec 解析 program name 读的是**native process environ**，而 Studio 的
+    //    "shell environment import" 只补 JVM 层的 env map。两者可以不一致 ——
+    //    这正是报错里 $PATH 看着是好的、fork 却仍 error=2 的原因。
+    //    且 runningboardd 按 bundle id **缓存** app 的 native 启动环境、缓存跨 ⌘Q 存活，
+    //    launchctl setenv 只改「launchd 往后发什么」，**无法失效已缓存的那份**。
     //
     // 所以这里只做检查并**明确报错**，而不是假装能修好 —— 否则失败点会漂移到
     // 某个 plugin 内部，报出无上下文的 `Cannot run program "node"`。
@@ -92,7 +100,6 @@ pluginManagement {
     //    /usr/bin:/bin:/usr/sbin:/sbin —— 检查通过，构建随后死在 Expo 内部，
     //    同一次构建的日志里既有 "[Tipsy] node vX" 又有 Cannot run program "node"。
     //    只有 fork 才测得到 Expo 真正走的那条路。
-    def nodeBinDir = new File(nodeExecutable).parentFile?.absolutePath
     def bareNodeError = null
     try {
         providers.exec {
@@ -113,21 +120,22 @@ pluginManagement {
             "（它可能看着是好的而子进程仍失败：Studio 启动时导入过 shell 环境。）\n" +
             "原始错误：${bareNodeError}\n" +
             "\n" +
-            "从 Android Studio（Dock/Finder）启动时最常见：它走 launchd GUI 域、\n" +
-            "**不读 shell 配置**，且 runningboardd 会按 bundle id **缓存**启动环境，\n" +
-            "该缓存跨「⌘Q 再打开」存活。修复（都在**终端**里执行）：\n" +
-            // ⚠️ 这里给的是**展开后的完整值**，不是 \$PATH 变量引用 ——
-            //    launchctl setenv 不做 shell 展开，写 \$PATH 会把字面量存进去。
-            "  1) launchctl getenv PATH —— 若不含 ${nodeBinDir}，则执行：\n" +
-            "     launchctl setenv PATH \"${nodeBinDir}${File.pathSeparator}${System.getenv('PATH') ?: ''}\"\n" +
-            "     ⚠️ launchctl 不做 shell 展开，别写 \\\$PATH。长期方案做成 LaunchAgent。\n" +
-            "  2) ./gradlew --stop        # 旧 daemon 带着坏 PATH，会被复用\n" +
-            "  3) 清掉 runningboardd 缓存的启动环境（⌘Q 往往不够）：\n" +
-            "     svc=\$(launchctl print gui/\$(id -u) | grep -o 'application\\.com\\.google\\.android\\.studio\\.[0-9]*\\.[0-9]*' | head -1)\n" +
-            "     launchctl kill SIGTERM gui/\$(id -u)/\$svc\n" +
-            "     然后 ⌘Q 退出 Studio、从 Dock 重开；仍不行就登出重登。\n" +
-            "  4) 验证**进程实际**的 PATH（不是 launchctl getenv，两者不一致正是本坑特征）：\n" +
-            "     ps eww \$(pgrep -f 'MacOS/studio' | head -1) | tr ' ' '\\n' | grep ^PATH=\n" +
+            "这说明 Studio 不是用包装 app 启动的（从 Dock 直接开原版 Studio 会命中\n" +
+            "runningboardd 缓存的裸 environ）。**三步修好**（终端里执行）：\n" +
+            "  1) ./gradlew --stop                        # 旧 daemon 带着坏 PATH，会被复用\n" +
+            "  2) ⌘Q 完全退出 Android Studio\n" +
+            "  3) 打开 `/Applications/Android Studio (Tipsy).app`（Dock 里换成这个图标）\n" +
+            "     它是 `#!/bin/zsh -l` 包装：先用登录 shell 重建 PATH 再 exec 真 Studio。\n" +
+            "     日志：\$TMPDIR/tipsy-studio-launcher.log\n" +
+            "     等价手段：终端跑 `/Applications/Android\\ Studio.app/Contents/MacOS/studio &`\n" +
+            "     若包装 app 不存在，见 llmdoc/reference/android-native-progress.md §2.3 重建。\n" +
+            "\n" +
+            "⚠️ **别再试 `launchctl setenv` / LaunchAgent** —— 已证实无效（详见上方注释）：\n" +
+            "   exec 解析 program name 读 native environ，Studio 只补 JVM env map，\n" +
+            "   且 runningboardd 的 bundle 级缓存跨 ⌘Q 存活、launchctl 无法使其失效。\n" +
+            "\n" +
+            "诊断要看**进程实际**的 PATH（不是 launchctl getenv，两者不一致正是本坑特征）：\n" +
+            "  ps eww \$(pgrep -f 'MacOS/studio' | head -1) | tr ' ' '\\n' | grep ^PATH=\n" +
             "\n" +
             "从终端跑通常不会遇到（shell PATH 已含 node）。\n" +
             "详见 llmdoc/reference/android-native-progress.md 的 §2.3 与方案 ADR-004 第 3 条。"
