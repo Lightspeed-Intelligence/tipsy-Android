@@ -925,13 +925,13 @@ git -C tipsy-app diff --name-status <wave-source-sha>..<candidate-sha> -- \
 
 | 维度 | 实测真值 | 原生实现要点 |
 | --- | --- | --- |
-| 数据源 | **按 AB 二选一**：`/character_distribution/list`（distribution）或 `/recommend/home/list`（recommendation），`src/apis/screen.ts:10-11`。走 **`axiosPublic`** → `OPPORTUNISTIC` | AB 分流逻辑必须对齐，否则推荐数据不可比。`page_size` 参数名与 Home 的 `size` **不同**，勿混 |
+| 数据源 | **按 AB 二选一**：`/character_distribution/list`（distribution）或 `/recommend/home/list`（recommendation），`src/apis/screen.ts:10-11`。走 **`axiosPublic`** → `OPPORTUNISTIC` | AB 分流逻辑必须对齐，否则推荐数据不可比。⚠️ **两处订正**（2026-08-14，§2.35）：① `page_size` 是 **TS 形参名**，实际请求体发的是 **`size`**（`screen.ts:36`）—— 原文「参数名与 Home 的 `size` 不同」读反了，两者线上同名；② **AB 分流是 Android 专属且要求已登录**：`Platform.OS !== 'android'` 恒走 distribution，`ownerUserId` 为空时 `resolveConfigsForCurrentOwner` 直接返回 `{}` → 游客也恒走 distribution（`abConfig/service.ts:23-27`）。flag key `enable_recsys_in_home_show_case`，bundle `tipsy-chat-app` |
 | 媒体三形态 | `media_source_type`：`animated_image` → `gif`、`static_image` → `single_character`、其余 → `showcase`（`tracking.ts` 实测的 `getHomeCardType`） | 映射直接影响埋点 `card_type` |
 | 支撑文件 | `layout.ts`(89) + `feedMediaItemAdapter.ts`(57) + `chatBackgroundPrefetch.ts`(35) + `useShowcaseFirstScreenCache.ts`(76) + `useShowcaseNextItemCache.ts`(71) + `recommendationAttribution.ts`(69) | **`recommendationAttribution` 与 `showcaseFirstScreenFeed` 都有现成单测**（92 + 53 行）——直接作为 Kotlin 侧对等 fixture |
 | 播放器 | 按设备内存定池大小；±1 借还 | Media3 ExoPlayer + **有界** preload manager。`largeHeap`(§2.3) + 有界池 + 图片内存上限**三件套必须同时到位** |
 | OOM | 现网已有崩溃（`withAndroidLargeHeap.js` 注释记录 `ExoPlayerImplInternal.shouldContinueLoading`） | **首要风险**。Macrobenchmark 进 gate |
 | 埋点 | `home_session_start`/`home_session_end`（uuid 会话）、`home_card_exposure`（会话内去重）、`home_card_{like,comment,share}_click`、`home_input_click`（一会话一报）、`screen_recommend_attribution_missing` | 最后一个是诊断事件，说明归因会丢，要保留 |
-| CTA | 进聊天恒普通聊天页（不走 html 分流），`transitionSource: 'big_screen'` | 对齐 RN，不要「顺手修正」 |
+| CTA | `transitionSource: 'big_screen'` + `sourceType: 'first_tab'` | ⚠️ **订正**（2026-08-14，§2.35）：原文「进聊天**恒**普通聊天页（不走 html 分流）」**不成立** —— 实测走 `resolveChatEntryScreen` **四路分流**（`screen.tsx:655`）：`isStory`/强制 → `ChatDetailPage`；`characterType===1 && contentType===2` → **`ChatDetailHtml`**；非 INTERACTIVE → `ChatDetailPage`；否则 `characterType===2 ? MultiCinema : Interactive`。Screen 传的 `chatMode` 恒为 `INTERACTIVE`、`isStory: false`，所以四路都可达。`chat_mode_lru.test.ts`(143) 是现成 fixture |
 | 二期可后置 | 动图 WebP 动画、fade 转场 + 预载、点赞增强（初始 `is_liked` 预拉 / echo 对账 / 动画）、分享增强 | iOS 至今仍在二期清单 |
 
 #### Login + Settings 列表 + 语言页

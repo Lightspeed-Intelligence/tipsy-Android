@@ -2330,6 +2330,94 @@ pin `017e142ac` → **`a6b9fc56a`**（已推远端）。
   GooglePlay 一定不出现）、标签 toggle 与选中置前、展开/收起、
   筛选重查不闪空、翻页带筛选条件
 
+### 2.35 W4 Screen（Tab1 大屏页）开工前审计（2026-08-14）
+
+**尚未实现，本节只记开工前的源码审计结论。** owner 2026-08-14 决定：
+真机冒烟推迟到功能全部完成后统一做，所以本刀起**待验清单只累积不清空**
+（当前已累积三刀 22 项，见 §2.32 / §2.33 / §2.34 的 NOT RUN 段）。
+
+Screen 是方案 §8.1 标「**放最后**」的一块，也是唯一**首要风险是 OOM**
+而不是数据正确性的页面。它同时是 **W4 的第一块** —— W3 只剩 ChatList P2 Map
+与 Profile P5（后者一半被未启用 Surface 阻塞）。
+
+#### 三处方案订正（都已改方案 §8.1 Screen 行）
+
+1. **`page_size` 读反了**。原文写「`page_size` 参数名与 Home 的 `size` **不同**，
+   勿混」—— 实际 `page_size` 只是 `getScreenList` 的 **TS 形参名**，
+   请求体里发的是 **`size`**（`screen.ts:36` `size: params.page_size ?? 20`）。
+   两个端点线上**同名**。照原文实现会发一个后端不认的 `page_size`，
+   而后端很可能回落默认页大小 —— **不报错**，只是分页边界与现网不同。
+2. **AB 分流是 Android 专属，且要求已登录**（`screen.tsx:191-197` +
+   `abConfig/service.ts:23-27`）：`Platform.OS !== 'android'` 恒走 distribution；
+   `ownerUserId` 为空（游客）时 `resolveConfigsForCurrentOwner` 直接返回 `{}`，
+   `?? false` → **也恒走 distribution**。所以壳侧：**游客与未 settle 的登录态
+   都必须走 distribution**，只有已登录且 flag 为真才走 recommendation。
+   flag key `enable_recsys_in_home_show_case`，bundle 名 `tipsy-chat-app`。
+3. **CTA 不是「恒普通聊天页」**。原文写「进聊天恒普通聊天页（不走 html 分流）」
+   —— 实测走 `resolveChatEntryScreen` **四路分流**（`screen.tsx:655-704`）：
+   `ChatDetailPage` / **`ChatDetailHtml`**（`characterType===1 && contentType===2`）/
+   `Interactive` / `MultiCinema`（`characterType===2`）。Screen 传
+   `chatMode: INTERACTIVE` + `isStory: false`，四路都可达。
+   ⚠️ 这条与 ChatList 的纪律**相反**：ChatList 侧壳**刻意不复刻**
+   `resolveChatEntryMode`（§2.30：只透传判定素材，由 ChatDetailSurface 自决），
+   而 Screen 的 RN 代码是在**页面内**分流的。壳侧仍应按 ChatList 那条做
+   （透传素材、不复刻分流）—— 但要知道这是**有意偏差**，不是照抄。
+
+#### OOM 是首要风险，且约束是可量化的
+
+现网已有崩溃（`withAndroidLargeHeap.js` 注释：`OutOfMemoryError @
+ExoPlayerImplInternal.shouldContinueLoading`，多个 ExoPlayer 并存时
+默认堆 192/256MB 不够）。RN 侧的三道闸都已实测到具体值：
+
+| 闸 | 实测值 | 出处 |
+| --- | --- | --- |
+| `largeHeap` | `true` | ✅ **壳 manifest 已有**（`AndroidManifest.xml:33`，W0 移植） |
+| 播放窗口 | **`abs(index - currentIndex) <= 1`** —— 只挂当前 ±1 三个播放器 | `FeedMediaItem.tsx:594` |
+| buffer 上限 | min 2500 / max **5000** / forPlayback 500 / afterRebuffer 1500 / backBuffer 2000 / 磁盘缓存 **50MB** | `FeedMediaItem.tsx:600-609` |
+
+⚠️ **`largeHeap` 已在但 Media3 依赖还没加** —— `app/build.gradle` 与
+`libs.versions.toml` 都搜不到 media3/exoplayer。加依赖时注意方案 §8.1 的
+「**三件套必须同时到位**」：largeHeap + 有界池 + 图片内存上限。
+只加播放器不设上限就是复现现网崩溃。
+
+#### 现成 fixture（方案 §8.2）
+
+- `recommendationAttribution.test.ts`(92) + `showcaseFirstScreenFeed.test.ts`(53)
+- `lib/screenRecommendationTracking/` **1,040 行**测试（manager 384 + models 214
+  + homeTracking 215 + exposureTracker 110 + queue 97 + retry 20）
+- `chat_mode_lru.test.ts`(143) —— CTA 四路分流的判定
+
+#### 两处容易写错的实测细节
+
+- **`position` 用去重**前**的下标**（`recommendationAttribution.ts:55`
+  `page * pageSize + rawIndex`）—— `rawIndex` 来自 `list.entries()`，
+  而同一循环里 `seenCharacterIds` 会 `continue` 掉重复项。所以去重后
+  第 3 条的 position 可能是 4。**照抄** —— 用去重后下标会让归因位置与后端对不上。
+- **首屏合并的 `slice(1)` 只在冷启动路径生效，且与「缓存第 0 条」配对**
+  （`screen.tsx:826-838`）：`pageNum === 0` 时先把 `nextMediaList[0]`
+  **写进缓存**，再走 `mergeShowcaseFirstScreenFeed` —— 那里
+  `networkItems.slice(1)` 丢掉的正是刚被缓存的那条，改由 `cachedHeadItem`
+  顶到列表头。所以**不丢数据**：缓存命中时头是上次的缓存卡，
+  未命中时头是本次网络第 2 条（第 1 条进了缓存、下次冷启动才上屏）。
+  **下拉刷新走另一条路**（`isRefresh` → 直接用 `nextMediaList` 全量，不 slice）。
+  ⚠️ 壳必须把「写缓存」与「合并」当成一个原子步骤实现 —— 只抄 `slice(1)`
+  不抄写缓存，会让首屏真的少一条。
+
+#### 分包（owner 2026-08-14 已定：先做 P1，不引 Media3）
+
+`screen.tsx` **1,492 行** + `FeedMediaItem.tsx` 982 + 五个支撑文件，
+且带 Media3 依赖引入。建议：
+- **P1（本刀，owner 选定）**：数据层 + 列表骨架 + 静态图/GIF 两形态 +
+  埋点会话 —— **不引 Media3**，`showcase`（视频）形态先显示
+  `thumbnail_url` 静态封面。这样 **OOM 风险为零**，先把 AB 分流、归因、
+  分页、会话埋点这些**数据正确性**问题解决。
+  ⚠️ 理由与真机验证推迟有关：OOM **只能真机暴露**，单测与 mock 都抓不到。
+  在冒烟推迟的前提下，把 Media3 与数据层放同一刀会让"绿的 CI + 未验的 OOM"
+  同时压在一个包里。
+- **P2**：Media3 + 有界播放器池 + ±1 窗口 + buffer 三件套。
+- **P3**：二期项（动图 WebP 动画、fade 转场预载、点赞增强、分享）——
+  方案已标「iOS 至今仍在二期清单」。
+
 ## 3. 横切能力
 
 
