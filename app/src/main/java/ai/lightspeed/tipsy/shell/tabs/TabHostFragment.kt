@@ -4,6 +4,7 @@ import ai.lightspeed.tipsy.shell.R
 import ai.lightspeed.tipsy.shell.pages.chatlist.ChatListFragment
 import ai.lightspeed.tipsy.shell.pages.home.HomeFragment
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileFragment
+import ai.lightspeed.tipsy.shell.pages.screen.ScreenFragment
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
@@ -142,9 +143,10 @@ class TabHostFragment : Fragment() {
         ShellTab.PROFILE -> ProfileFragment.newInstance()
         // ChatList W3 P1：Grid 视图 + 操作全链路；Map「時光長廊」是 P2
         ShellTab.CHAT_LIST -> ChatListFragment.newInstance()
-        // Screen 的原生页属 W4。用带明确文案的占位而不是空白 ——
-        // 空白会让人以为挂载失败
-        ShellTab.SCREEN -> TabPlaceholderFragment.newInstance(tab.routeName, "W4")
+        // Screen W4-P1：AB 分流 + 竖向翻页 + 归因 + 会话埋点。
+        // ⚠️ **不播视频**：showcase 形态显示静态封面，Media3 与有界播放器池
+        // 属 P2（§2.35：OOM 是首要风险且只能真机暴露）
+        ShellTab.SCREEN -> ScreenFragment.newInstance()
         // isRealTab 已在 onTabClick 拦下，走到这里说明有人改了那个判断
         ShellTab.CREATE -> error("Create 是伪 Tab，不应创建 Fragment")
     }
