@@ -904,7 +904,7 @@ git -C tipsy-app diff --name-status <wave-source-sha>..<candidate-sha> -- \
 | 操作接口（2026-08-12 逐个核实补齐） | `/user/chatted/{pin,unpin}`、`/user/chatted/{character,story,game}/delete`（character 删除带 `chat_mode` + `conversation_id`——小手机对话级精确定位，漏传会误删同角色其它入口）、`/user/chatted/update_push_message_view_time`（点击 `is_push_message` 条目时消红点）、铃铛未读 `/message/notification/get_unread_status`（POST，带 `platform`: `ios`/`google_play`/`apk` —— ⚠️ RN 的 SWR key 写的是 `/system_message_notification/read_status`，那是**缓存键不是端点**，照 key 实现会 404）。全部 `axiosAuth` → REQUIRED | pin/unpin 是**成功后**本地重排（pinned 组按 `latest_time` 插入）+ Toast；delete 是真乐观（先移除后调 API，失败 mutate 恢复）。**需 mutation generation**：在飞旧响应不得复活已删行（§4.4） |
 | 删除的跨界一致性 | RN `multi_cinema_round_cache.ts` 已就绪壳共享键契约：`multi-cinema-conv-epoch:${characterId}`（RN 默认 MMKV 实例；iOS 壳 `ChatListViewController.performDelete` 删除成功后写时间戳，RN 影院缓存写入时快照、读取时比对不一致即失效） | **壳删除会话成功后必须写同一键**（RN 侧零改动）。不写的后果：删会话后 seq 归零重开，旧影院轮缓存 seq 恒大于新会话，重进多角色影院**假命中旧剧情** |
 | 双视图 | `ChatGrid`(531) + `ChatMap`(562)。Map 是「時光長廊」廊道视觉。视图偏好 `chatPageType` 在 `config-persist-storage` 信封 | **不是地图，别去选地图 SDK**——已核实 `ChatMap.tsx` 只用 Reanimated(`interpolate`/`useAnimatedStyle`/`withTiming`) + `expo-image` 做滚动驱动的透视廊道，`package.json` **无任何 map/mapbox/amap 依赖**。Android 对应实现 = Compose 自绘 + `graphicsLayer` 变换，不涉及 SDK/API key/区域合规。`chatPageType` 壳可写（本地偏好，merge 写同 gender；继承进度文档 §2.23.1 信封缺失问题）。Map 分组标题：`formatChatMapTime` 返回裸 `Today`/`Yesterday`，但**消费点 `ChatMap.tsx:355` 对这两个值包 `t(key)`** —— 分组标题走翻译（2026-08-13 订正：先前误记为「裸英文不走 t」，那是把返回值层当成了展示层）；月份名（`D MMMM`/`MMM D, YYYY`）走 dayjs locale。⚠️ `Today`/`Yesterday`/`Chats`/`Story` 四词条**不在 SHELL_KEYS**（iOS 壳未迁 Map 视图），P2 需加词条 + bump submodule |
-| item | `ChatListItem`(668) + `ChatItem`(297)：LV 徽章 / streak / 未读红点 / html 型分流；名字过 `maskTextWithPlatform`（**GooglePlay 渠道**敏感词替换，壳已有 `HomeText.kt` 先例）；最后消息过 cinema XML 转换（`lib/cinema`，列表只需纯文本剥离） | 点击**只透传判定素材**：`chatEnterSource`/`isStory`/`characterType`/`contentType`（协议对齐 `useChatNavigation.ts` 壳分支的 bridgeParams）——html/影院分流由 ChatDetailSurface 挂载时 `resolveInitialParams` 自决，**壳不复刻 `resolveChatEntryMode`**。mini_phone 条目 → `MiniPhoneChat(characterId, parent_conversation_id)`；game 条目 → SimulatorGame WebView（不迁，对齐 Home World 的明确记日志） |
+| item | `ChatListItem`(668) + `ChatItem`(297)：LV 徽章 / streak / 未读红点 / html 型分流；名字过 `maskTextWithPlatform`（**GooglePlay 渠道**敏感词替换，壳已有 `HomeText.kt` 先例）；最后消息过 cinema XML 转换（`lib/cinema`，列表只需纯文本剥离） | 点击**只透传判定素材**：`chatEnterSource`/`isStory`/`characterType`/`contentType`——html/影院分流由 ChatDetailSurface 挂载时 `resolveInitialParams` 自决，**壳不复刻 `resolveChatEntryMode`**。⚠️ **订正**（2026-08-17，进度文档 §2.36）：原文「协议对齐 `useChatNavigation.ts` 壳分支的 bridgeParams」把四个素材说成同一通道，实际是 **2+2** —— `chatEnterSource`/`isStory` 走顶层 props（`ChatDetailSurface.tsx:356,378`），而 `characterType`/`contentType` **必须进嵌套 `preload`**：`resolveInitialParams` 读的是 `preloadState.*`（`:377-378`，由 `seedChatPreloadFromShell` 从 `props.preload` 灌入），`props.characterType` **全仓零命中**。平铺的表现是 html 富文本与多角色影院**一律落普通聊天页**，两端都不报错。且必须传**数字**（RN 用 `=== 1`/`=== 2` 严格比较，`"1" === 1` 为 false）。另：ChatList 的 `isStory` **只看 `item_type === 'story'`**（`ChatListItem.tsx:286`），不含角标那条 `character_type === 2`，否则多角色角色看不到影院。mini_phone 条目 → `MiniPhoneChat(characterId, parent_conversation_id)`；game 条目 → SimulatorGame WebView（不迁，对齐 Home World 的明确记日志） |
 | 跨容器刷新 | `CHATTED_LIST_REFRESH` 事件的发送方全在 ChatDetail 深栈（发消息/重开会话/翻译后让列表重拉），JS 进程内 eventEmitter **跨不过 Surface→原生页边界** | 原生对应 = Surface 返回 / Fragment 重新可见时标脏重拉；另按常驻 Fragment 纪律 didLogin 重拉 / didLogout 只清数据 |
 | 站内信 | `letter.tsx`(497) + `letter-detail.tsx`(343) + `LetterItem`(594)，入口是顶栏铃铛 → `NotificationStack` | **建议留 `NotificationSurface`**，减 1.4k；铃铛点击走 `AppRoute.Letter` |
 | 缓存/预取 | `useChatListCache`(88) | 启动后台预发 page 0（仅已登录、一次启动一次）；指纹只比 authScope，**语言不比** |
@@ -973,7 +973,7 @@ git -C tipsy-app diff --name-status <wave-source-sha>..<candidate-sha> -- \
 | 批次 | Surface | 时机 | 备注 |
 | --- | --- | --- | --- |
 | 0 | `DebugSurface` | W0 | 管线 gate，保持常绿；零业务依赖，用于二分「挂载层 vs 业务 import 链」 |
-| 1 | `ChatDetailSurface` | W1 | **第一个真实业务 Surface**，也是最重的一个（SSE、WebView DOM、媒体、深微栈）。它过了说明宿主可用 |
+| 1 | `ChatDetailSurface` | W1 | **第一个真实业务 Surface**，也是最重的一个（SSE、WebView DOM、媒体、深微栈）。它过了说明宿主可用。✅ **已启用**（进度文档 §2.36，2026-08-17）—— 微根 18 项机器断言 + 桥桩回填 + 判定素材透传；§9.1 真机十项待冒烟 |
 | 2 | `CreateSurface` | W2 | 五 Tab 的 Create 伪 Tab 落点；编辑走原始 JSON 透传（§8.1 Profile 行） |
 | 3 | `CommentsSurface` / `SettingsSurface` / `EditProfileSurface` | W3 | 分别由 Screen/Settings 列表/Profile 入口触达 |
 | 4 | `NotificationSurface` / `GemsSubscriptionSurface` / `UserCoinsSurface` | W4 | 涉及支付与站内信，需渠道分流验证 |
@@ -1029,11 +1029,18 @@ git -C tipsy-app diff --name-status <wave-source-sha>..<candidate-sha> -- \
 | Surface | 初始 route fixture | 未登录 | 登录切换 | 语言切换 | Back/栈底 | 旋转/进程恢复 | 首帧 | 50 次泄漏 | Embedded | OTA N/N-1 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | DebugSurface | W0 | N/A | N/A | — | ✎ | ✎ | ✎ | ✎ | ✎ | W4 |
-| ChatDetailSurface | W1 | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | W4 |
+| ChatDetailSurface | ✅ W1 | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | W4 |
 | CreateSurface | W2 | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | W4 |
 | 其余 10 个 | W4 | — | — | — | — | — | — | — | — | — |
 
 未填满的行**不得**标 production-ready。
+
+> **`ChatDetailSurface` 的当前状态**（进度文档 §2.36，2026-08-17）：
+> 「初始 route fixture」一列已完成 —— 微根 18 项与 5 个微栈目标由
+> `SurfaceDependencyChecklistTest` **对 RN 源码机器断言**（不是人工核对），
+> 判定素材的形状有 9 条单测且做过反向验证，桥依赖三个过期桩已回填。
+> **其余九列仍 `✎`**：那些只能真机验，按 owner 决定在 P9 冒烟那一次补齐。
+> 路由已进生产白名单，但**这一行填满前不得标 production-ready**。
 
 ### 9.2 页面/横切能力对等（十类证据）
 
