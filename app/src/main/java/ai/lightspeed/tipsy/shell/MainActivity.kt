@@ -72,6 +72,21 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
         app.onRouteRequested = { route, source ->
             runOnUiThread { router.handle(route, source) }
         }
+        // 桥的 requestLogin 出口（W2 §2.20）。
+        //
+        // ⚠️ 这条此前**没接** —— ShellAuthProvider.requestLogin 一直是
+        // notImplemented（debug 抛），而 axiosAuth 的每个未登录请求都会打到它。
+        //
+        // 走 navigator 的 requestLogin 而不是 router.handle(AppRoute.Login)：
+        // 桥这条**不带目标路由**（JS 只说"要登录"，没说登录后去哪），
+        // 而 handle() 会把 Login 本身当成待排队目标。openLogin() 的幂等
+        // 保证在下方那个方法里，连续 401 不会叠登录页。
+        app.onRequestLoginRequested = { reason ->
+            runOnUiThread {
+                Log.i(TAG, "桥请求登录：reason=$reason")
+                openLogin()
+            }
+        }
 
         // 语言可能在 RN Surface 里被改（语言设置页刻意留在 RN，方案 §8.1），
         // 而桥契约**没有 JS→壳 的语言通知方法**（已核实 tipsy-auth 只有壳→JS 的
@@ -207,6 +222,7 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
             it.onNavigateGemsPurchaseRequested = null
             // 漏了这个会泄漏本 Activity（Application 是进程级，回调捕获了 this）
             it.onRouteRequested = null
+            it.onRequestLoginRequested = null
         }
         // 必须 dispose：Router 订阅了 AuthStateHub（进程级），
         // 不解绑会让已销毁的 Activity 收到登录事件 → 往死掉的 FragmentManager 提交事务

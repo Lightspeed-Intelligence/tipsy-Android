@@ -167,6 +167,17 @@ class TipsyApplication : Application(), ReactApplication {
      */
     var onRouteRequested: ((AppRoute, AppRouter.Source) -> Unit)? = null
 
+    /**
+     * 拉起原生登录页（W2，§2.20）。同 [onPopSurfaceRequested] 的理由用回调转接。
+     *
+     * 单列一个而不是复用 [onRouteRequested]：登录不是导航到某个目标，而是
+     * `AppRouter.requestLogin` 的排队语义 —— 登录成功后要 flush pendingRoute。
+     *
+     * ⚠️ 为 null 时（无前台 Activity）**安全跳过并记日志**。桥的未登录路径
+     * 可能来自后台请求，那时没有 UI 可拉起登录页。
+     */
+    var onRequestLoginRequested: ((String?) -> Unit)? = null
+
     /** 业务页调这个而不是直接碰 Router。 */
     fun requestRoute(route: AppRoute, source: AppRouter.Source) {
         val handler = onRouteRequested
@@ -307,6 +318,11 @@ class TipsyApplication : Application(), ReactApplication {
             // 启动时读它对齐 i18next，运行中的变化经 onLanguageChanged 事件接力。
             languageCodeProvider = { L10n.current },
             onPopSurface = { instanceId -> onPopSurfaceRequested?.invoke(instanceId) },
+            // W2 §2.20：原生登录页。桥的 requestLogin 与 401 兜底走同一出口。
+            onRequestLogin = { reason -> onRequestLoginRequested?.invoke(reason) },
+            // 桥发起的导航统一经 Router（Source.BRIDGE）——白名单、auth gate、
+            // 去重只在 Router 判一次。为 null（无前台 Activity）时安全跳过。
+            onRequestRoute = { route -> requestRoute(route, AppRouter.Source.BRIDGE) },
             onNavigateGemsPurchase = { params ->
                 val handler = onNavigateGemsPurchaseRequested
                 if (handler == null) {
