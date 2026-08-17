@@ -1,5 +1,11 @@
 package ai.lightspeed.tipsy.shell.pages.screen
 
+import ai.lightspeed.tipsy.shell.R
+import androidx.compose.foundation.Image
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.res.painterResource
 import ai.lightspeed.tipsy.shell.i18n.rememberLocalizedString
 import ai.lightspeed.tipsy.shell.pages.home.HomeText
 import androidx.compose.foundation.background
@@ -254,59 +260,88 @@ private fun CreatorRow(item: ScreenFeedItem) {
 }
 
 /**
- * 点赞 / 评论 / 消息数。
+ * 点赞 / 评论 / 分享三个操作（`VideoActionButtons`，`layout="horizontal"`）。
  *
- * ⚠️ P1 **不做点赞写入**（初始 `is_liked` 预拉 / echo 对账 / 动画都在
- * 方案的二期清单里）—— 点击只报埋点，不改后端。数字来自列表响应的 stats。
+ * ⚠️ 形态是**图标在上、计数在下**，不是裸数字胶囊 —— 模拟器实测
+ * （2026-08-14）确认我第一版做成了胶囊，与现网差得明显。
+ * `:349-352` 的容器是 `flexDirection: row` + `gap: 24`，
+ * `:369-376` 的计数是 10sp 半粗白字**带阴影**（压在图片上要保可读性）。
+ *
+ * ⚠️ P1 **不做点赞写入**（初始 `is_liked` 预拉 / echo 对账 / 动画都在方案的
+ * 二期清单）—— 点击只报埋点。所以爱心恒为「未选中」态,
+ * 复用 Profile 的 `ic_profile_tab_like`；RN 的两个 like 图标是 **SVG**，
+ * Coil 不带 SVG decoder（缺 `coil-svg` artifact 时静默不显示）。
+ *
+ * 分享同样只报埋点：`MediaShareModal` 426 行 + `react-native-share` 原生库属后续包。
  */
 @Composable
 private fun StatsRow(item: ScreenFeedItem, onCardEvent: (ScreenCardEvent) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(STATS_GAP.dp)) {
-        StatChip(
-            label = HomeText.formatMessageCount(item.likeCount),
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(ACTION_GAP.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ActionButton(
+            iconRes = R.drawable.ic_profile_tab_like,
+            count = item.likeCount,
             testTag = "screen_card_like",
             onClick = { onCardEvent(ScreenCardEvent.LIKE_CLICK) },
         )
-        StatChip(
-            label = HomeText.formatMessageCount(item.commentCount),
+        ActionButton(
+            iconRes = R.drawable.ic_screen_comment,
+            count = item.commentCount,
             testTag = "screen_card_comment",
             onClick = { onCardEvent(ScreenCardEvent.COMMENT_CLICK) },
         )
-        StatChip(
-            label = HomeText.formatMessageCount(item.totalMessages),
-            testTag = "screen_card_messages",
-            onClick = null,
+        ActionButton(
+            iconRes = R.drawable.ic_screen_share,
+            // 分享没有计数（RN 那里也只有图标）
+            count = null,
+            testTag = "screen_card_share",
+            onClick = { onCardEvent(ScreenCardEvent.SHARE_CLICK) },
         )
     }
 }
 
+/** 图标在上、计数在下（`actionItem` + `countText`）。 */
 @Composable
-private fun StatChip(label: String, testTag: String, onClick: (() -> Unit)?) {
-    val base = Modifier
-        .clip(RoundedCornerShape(CHIP_RADIUS.dp))
-        .background(Color.White.copy(alpha = PLACEHOLDER_ALPHA))
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = (if (onClick != null) base.clickable(onClick = onClick) else base)
-            .padding(horizontal = CHIP_H_PADDING.dp, vertical = CHIP_V_PADDING.dp)
+private fun ActionButton(
+    iconRes: Int,
+    count: Long?,
+    testTag: String,
+    onClick: () -> Unit,
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clickable(onClick = onClick)
             .testTag(testTag),
     ) {
-        Text(text = label, color = Color.White, fontSize = CHIP_FONT.sp)
+        Image(
+            painter = painterResource(iconRes),
+            // 语义由相邻计数与 testTag 承载；图标本身是装饰
+            contentDescription = null,
+            modifier = Modifier.size(ACTION_ICON_SIZE.dp),
+        )
+        if (count != null) {
+            Text(
+                text = HomeText.formatMessageCount(count),
+                color = Color.White,
+                fontSize = ACTION_COUNT_FONT.sp,
+                fontWeight = FontWeight.SemiBold,
+                // 压在图片上，用阴影保可读性（对齐 RN 的 textShadow）
+                style = LocalTextStyle.current.copy(
+                    shadow = Shadow(
+                        color = Color.Black.copy(alpha = COUNT_SHADOW_ALPHA),
+                        offset = Offset(0f, COUNT_SHADOW_DY),
+                        blurRadius = COUNT_SHADOW_BLUR,
+                    ),
+                ),
+                modifier = Modifier.padding(top = ACTION_COUNT_GAP.dp),
+            )
+        }
     }
 }
 
-/**
- * 进聊天的 CTA。
- *
- * ⚠️ RN 那里是**输入框**（`AppChatBar` 1,400 行，点击后进聊天并带上输入内容），
- * P1 简化成按钮 —— 输入框要接 voice 分支与草稿透传，属后续包。
- * 埋点上两者等价（`home_input_click` + `input_type: text`）。
- *
- * ⚠️ 文案复用既有词条 **`Send`** 而不是新增 `Chat` —— P1 这个按钮是过渡形态，
- * 接了真输入框后它会消失。为一个将被替换的占位 UI bump submodule 不值得
- * （新增词条要改 `export-shell-locales.mjs` + 26 语言重导出 + 双仓 PR）。
- * 真输入框那一刀再按 `AppChatBar` 的实际 placeholder 补词条。
- */
 @Composable
 private fun ChatCta(onClick: () -> Unit) {
     Box(
@@ -393,11 +428,15 @@ private const val TAGLINE_FONT = 14
 private const val CREATOR_FONT = 13
 private const val AVATAR_SIZE = 32
 private const val AVATAR_GAP = 8
-private const val STATS_GAP = 8
-private const val CHIP_RADIUS = 16
-private const val CHIP_H_PADDING = 12
-private const val CHIP_V_PADDING = 6
-private const val CHIP_FONT = 12
+/** `horizontalContainer.gap: 24`（`VideoActionButtons.tsx:351`）。 */
+private const val ACTION_GAP = 24
+private const val ACTION_ICON_SIZE = 32
+private const val ACTION_COUNT_GAP = 2
+/** `countText.fontSize: s(10)`（`:371`）。 */
+private const val ACTION_COUNT_FONT = 10
+private const val COUNT_SHADOW_ALPHA = 0.45f
+private const val COUNT_SHADOW_DY = 1f
+private const val COUNT_SHADOW_BLUR = 2f
 private const val CTA_RADIUS = 24
 private const val CTA_V_PADDING = 14
 private const val CTA_H_PADDING = 24
