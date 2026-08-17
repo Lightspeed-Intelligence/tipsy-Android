@@ -1,6 +1,7 @@
 package ai.lightspeed.tipsy.shell
 
 import ai.lightspeed.tipsy.shell.analytics.Analytics
+import ai.lightspeed.tipsy.shell.i18n.L10n
 import ai.lightspeed.tipsy.shell.pages.login.LoginFragment
 import ai.lightspeed.tipsy.shell.pages.profile.PublicProfileFragment
 import ai.lightspeed.tipsy.shell.pages.search.SearchFragment
@@ -9,6 +10,7 @@ import ai.lightspeed.tipsy.shell.tabs.TabHostFragment
 import androidx.activity.enableEdgeToEdge
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
+import ai.lightspeed.tipsy.shell.surface.SurfaceProps
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
@@ -72,6 +74,21 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
         app.onRouteRequested = { route, source ->
             runOnUiThread { router.handle(route, source) }
         }
+        // 桥的 requestLogin 出口（W2 §2.20）。
+        //
+        // ⚠️ 这条此前**没接** —— ShellAuthProvider.requestLogin 一直是
+        // notImplemented（debug 抛），而 axiosAuth 的每个未登录请求都会打到它。
+        //
+        // 走 navigator 的 requestLogin 而不是 router.handle(AppRoute.Login)：
+        // 桥这条**不带目标路由**（JS 只说"要登录"，没说登录后去哪），
+        // 而 handle() 会把 Login 本身当成待排队目标。openLogin() 的幂等
+        // 保证在下方那个方法里，连续 401 不会叠登录页。
+        app.onRequestLoginRequested = { reason ->
+            runOnUiThread {
+                Log.i(TAG, "桥请求登录：reason=$reason")
+                openLogin()
+            }
+        }
 
         // 语言可能在 RN Surface 里被改（语言设置页刻意留在 RN，方案 §8.1），
         // 而桥契约**没有 JS→壳 的语言通知方法**（已核实 tipsy-auth 只有壳→JS 的
@@ -102,6 +119,18 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
                     supportFragmentManager.findFragmentByTag(
                         tagForUserProfile(route.userId),
                     ) == null
+            }
+            // ChatDetail / mini phone 同样必须用**谓词版**（P9）：两者都带参
+            // （characterId + 判定素材），相等判定拿不到那些值就永远不成立，
+            // 表现是「退出聊天后再点同一个角色永远打不开」。
+            //
+            // 判据是「栈里已无 ChatDetailSurface 容器」而不是比对 characterId：
+            // 两个 route 共用同一个 Surface 容器（同一个 componentName），
+            // 且壳内不叠两层聊天页 —— 容器没了就说明那条路由已关闭。
+            if (supportFragmentManager.findFragmentByTag(TAG_CHAT_DETAIL_SURFACE) == null) {
+                router.onDestinationClosed { route ->
+                    route is AppRoute.ChatDetail || route is AppRoute.MiniPhoneChat
+                }
             }
         }
 
@@ -207,6 +236,7 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
             it.onNavigateGemsPurchaseRequested = null
             // 漏了这个会泄漏本 Activity（Application 是进程级，回调捕获了 this）
             it.onRouteRequested = null
+            it.onRequestLoginRequested = null
         }
         // 必须 dispose：Router 订阅了 AuthStateHub（进程级），
         // 不解绑会让已销毁的 Activity 收到登录事件 → 往死掉的 FragmentManager 提交事务
@@ -224,7 +254,11 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
 
         override fun navigate(route: AppRoute, source: AppRouter.Source) {
             when (route) {
-                is AppRoute.ChatDetail -> openSurface("ChatDetailSurface")
+                // P9：ChatDetail 与 mini phone 是**同一个 Surface 的不同初始屏**，
+                // 不是两个 Surface（对齐 useChatNavigation.toChatPage 的分支）
+                is AppRoute.ChatDetail,
+                is AppRoute.MiniPhoneChat,
+                -> openSurface("ChatDetailSurface", route)
                 // W3：原生全屏页（不是 Surface）。白名单里为什么允许它们见
                 // `ProductionRoutePolicy`
                 is AppRoute.Search -> openSearch()
@@ -273,9 +307,43 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
         }
     }
 
-    private fun openSurface(componentName: String) {
+    /**
+     * 挂载一个业务 Surface。
+     *
+     * @param route 业务参数来源。**必须传** —— P9 前这里只传 componentName，
+     *   `SurfaceProps.forRoute` 的产出根本没接到调用链上，等于所有业务参数
+     *   都没送出去（`characterId` 恒 undefined，聊天页恢复上次会话）。
+     *   那正是 `SurfaceProps` 类注释里警告的「参数没生效」型漂移。
+     *
+     * ⚠️ 语言必须传壳的真值（`L10n.current`）：壳是唯一 writer（§2.16），
+     * 不传会让 Surface 用 JS 侧的陈旧值。
+     */
+    private fun openSurface(componentName: String, route: AppRoute) {
+        // ⚠️ **必须幂等**，同 [openLogin] / [openSearch]。
+        //
+        // Router 的去重只挡**同一个** route（lastHandled 是 route to source），
+        // 挡不住「快速点两张**不同**卡片」—— 那是两个不同 route，会叠两层
+        // Surface 容器。RN 侧对此有专门的 `globalNavigating` 闸
+        // （`useChatNavigation.ts:45`），壳侧对应物就是这里。
+        //
+        // 这条同时是 §12 实例关闭链「只有单层容器所以弹不错」那个前提的**保证**：
+        // 没有它，两层同类型容器一出现，固定传 null 的 popSurface 就会弹错。
+        if (supportFragmentManager.findFragmentByTag(componentName) != null) {
+            Log.i(TAG, "$componentName 已在栈中，忽略重复请求")
+            return
+        }
         supportFragmentManager.commit {
-            replace(R.id.surface_container, RNSurfaceFragment.newInstance(componentName))
+            replace(
+                R.id.surface_container,
+                RNSurfaceFragment.newInstance(
+                    componentName = componentName,
+                    routeParams = SurfaceProps.forRoute(route),
+                    languageCode = L10n.current,
+                ),
+                // tag 用 componentName：退栈后要靠它判「该 Surface 已关闭」
+                // 从而解除 Router 的去重（见 onBackStackChanged 监听）
+                componentName,
+            )
             addToBackStack(componentName)
         }
     }
@@ -355,6 +423,14 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
 
         /** 设置页的 Fragment tag —— [openSettings] 靠它做幂等判定。 */
         const val TAG_SETTINGS = "settings"
+
+        /**
+         * `ChatDetailSurface` 容器的 tag（P9）。
+         *
+         * 值等于 componentName —— [openSurface] 用 componentName 作 tag，
+         * 退栈后靠它判「该 Surface 已关闭」从而解除 Router 去重。
+         */
+        const val TAG_CHAT_DETAIL_SURFACE = "ChatDetailSurface"
 
         fun tagForUserProfile(userId: String) = "$TAG_USER_PROFILE_PREFIX$userId"
 

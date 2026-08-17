@@ -5,6 +5,11 @@ import ai.lightspeed.tipsy.shell.auth.AuthStateHub
 import ai.lightspeed.tipsy.shell.i18n.L10n
 import ai.lightspeed.tipsy.shell.pages.home.HomeFilterStore
 import ai.lightspeed.tipsy.shell.pages.home.MmkvHomeCacheStorage
+import ai.lightspeed.tipsy.shell.tabs.TAB_BAR_CONTENT_HEIGHT
+import ai.lightspeed.tipsy.shell.tabs.androidTabBarBottomInsetDp
+import ai.lightspeed.tipsy.shell.ui.ScaledMetrics
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
 import android.os.Bundle
@@ -145,10 +150,17 @@ class ScreenFragment : Fragment() {
                     statusBarPadding = WindowInsets.statusBars
                         .asPaddingValues()
                         .calculateTopPadding(),
-                    // 大屏页在 Tab 内，底部留白要含 Tab 栏
-                    bottomPadding = WindowInsets.systemBars
-                        .asPaddingValues()
-                        .calculateBottomPadding(),
+                    // ⚠️ **必须含 Tab 栏高度**，不能只用系统 inset。
+                    //
+                    // 壳的 tabbar 与内容是**叠放**（内容 fillMaxSize），而
+                    // RN 侧 tabbar 是 Tab.Navigator 的一部分、容器本来就不含它。
+                    // 只用 systemBars 的表现是「CTA 按钮被 tabbar 切掉」——
+                    // 模拟器实测（2026-08-14）确认，Home/ChatList 早已踩过同型
+                    // （`HomeFragment.listBottomPadding` 注释：「漏了的表现是
+                    // 最后一行卡片被 tabbar 压住一半」）。复用同一套算法
+                    bottomPadding = tabBarBottomPadding(
+                        WindowInsets.systemBars.asPaddingValues().calculateBottomPadding(),
+                    ),
                 )
             }
         }
@@ -200,20 +212,48 @@ class ScreenFragment : Fragment() {
      * ⚠️ 顺序照 RN（`screen.tsx:639-640`）：先报 `home_input_click`、
      * 再 `endHomeSession`、最后导航 —— 会话必须在离开前收掉。
      *
-     * `ChatDetail` 在 P9 前**不在白名单**，Router 会明确拒绝并记日志
-     * （不是 silent no-op）。⚠️ 壳**不复刻** `resolveChatEntryScreen`
-     * 四路分流（§2.35 记的有意偏差）：只透传 characterId，
-     * 由 `ChatDetailSurface` 自决入口屏 —— 与 ChatList 侧同一条纪律（§2.30）。
+     * ⚠️ 壳**不复刻** `resolveChatEntryScreen` 四路分流（§2.35 记的有意偏差）：
+     * 只透传判定素材，由 `ChatDetailSurface` 自决入口屏 —— 与 ChatList 侧
+     * 同一条纪律（§2.30）。
+     *
+     * ⚠️ 入口来源必须是 **`big_screen`**：RN 侧靠它把影院 `sourceType`
+     * 判成 `first_tab`（`useChatNavigation.ts:59` 的 `=== 'big_screen'`）。
+     * 传别的值不报错，只是影院埋点的来源轴变成 `chat_list`。
      */
     private fun onStartChat() {
         val item = viewModel.state.value.currentItem ?: return
         viewModel.onStartChat()
         val app = requireActivity().application as TipsyApplication
         app.requestRoute(
-            AppRoute.ChatDetail(characterId = item.characterId),
+            AppRoute.ChatDetail(
+                characterId = item.characterId,
+                chatEnterSource = AppRoute.ChatEnterSource.BIG_SCREEN,
+                characterType = item.characterType,
+                contentType = item.contentType,
+            ),
             AppRouter.Source.IN_APP,
         )
     }
+
+    /**
+     * 底部留白 = 设计稿常量（乘 scale）+ 系统 inset。
+     *
+     * 与 `HomeFragment.listBottomPadding` / `ChatListFragment` 同一套算法。
+     * ⚠️ **两个设计稿常量乘 scale，系统 inset 不乘**
+     * （见 `androidTabBarBottomInsetDp` 注释）。
+     *
+     * ⚠️ 大屏页**不加** `HOME_LIST_BOTTOM_EXTRA`：那 50dp 是给可滚动列表的
+     * 尾部余量，而这里是全屏单卡，加了会让 CTA 离 tabbar 过远。
+     */
+    private fun tabBarBottomPadding(systemBottom: Dp): Dp {
+        val scale = ScaledMetrics.scaleFactorFor(screenWidthDp())
+        val safeBottomDp = systemBottom.value
+        return (TAB_BAR_CONTENT_HEIGHT * scale +
+            androidTabBarBottomInsetDp(safeBottomDp, scale)).dp
+    }
+
+    private fun screenWidthDp(): Float =
+        resources.displayMetrics.widthPixels / resources.displayMetrics.density
 
     companion object {
         private const val TAG = "ScreenFragment"

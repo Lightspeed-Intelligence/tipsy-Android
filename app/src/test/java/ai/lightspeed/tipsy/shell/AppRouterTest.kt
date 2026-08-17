@@ -171,23 +171,107 @@ class AppRouterTest {
     /**
      * §8.3 纪律：路由到未启用目标必须给明确错误或安全兜底，**绝不 silent no-op**。
      * 静默的症状正是「点了没反应」。
+     *
+     * ⚠️ 主体从 `ChatDetail` 换成 `Letter`（2026-08-17，P9）：前者已过微根清单
+     * 与桥回填、进了白名单（见下一条），继续拿它当"未启用"样本会让这条纪律
+     * 测试与现实脱节。`Letter` 落 `NotificationSurface`，属 W4。
      */
     @Test
-    fun `P9 前 ChatDetail 被明确拒绝且不会导航`() {
+    fun `未启用的 Surface 目标被明确拒绝且不会导航`() {
         assertFalse(
-            "生产白名单本身必须锁住 ChatDetail，不能只靠 Activity 记得不启用",
-            AppRoute.ChatDetail::class.java in ProductionRoutePolicy.enabledRouteTypes,
+            "生产白名单本身必须锁住未过矩阵的 Surface，不能只靠 Activity 记得不启用",
+            AppRoute.Letter::class.java in ProductionRoutePolicy.enabledRouteTypes,
         )
         val f = fixture(
             loggedIn = true,
             enabled = ProductionRoutePolicy.enabledRouteTypes.toList(),
         )
-        val route = AppRoute.ChatDetail("c1")
+        val route = AppRoute.Letter
         f.router.handle(route)
 
         assertEquals("不该导航", 0, f.navigated.size)
         assertEquals("必须明确拒绝一次", 1, f.rejections.size)
         assertEquals(route, f.rejections.single())
+    }
+
+    /**
+     * P9：`ChatDetail` 与 `MiniPhoneChat` 进白名单 —— 四个原生列表页的
+     * 卡片点击至此**第一次真的有下一屏**。
+     *
+     * 这条锁的是「白名单与导航分支同时更新」：只加白名单不加
+     * `ShellNavigator.navigate` 分支会走到 `error()`（那是刻意的，
+     * 但要在这里先红）。
+     */
+    @Test
+    fun `ChatDetail 与 MiniPhone 在生产白名单内`() {
+        for (type in listOf(
+            AppRoute.ChatDetail::class.java,
+            AppRoute.MiniPhoneChat::class.java,
+        )) {
+            assertTrue(
+                "${type.simpleName} 必须在生产白名单里，否则卡片点击仍然点了没反应",
+                type in ProductionRoutePolicy.enabledRouteTypes,
+            )
+        }
+    }
+
+    /**
+     * ⚠️ **Router 的去重挡不住「点两张不同卡片」** —— 这条测试记录的是一个
+     * 已知边界，不是缺陷：`lastHandled` 是 `route to source`，两个不同
+     * characterId 是两个不同 route，两次都会 navigate。
+     *
+     * 幂等因此**必须由 Activity 侧补**（`openSurface` 用 componentName 作 tag
+     * 判栈里是否已有），RN 侧对应物是 `useChatNavigation.ts:45` 的
+     * `globalNavigating` 闸。不补的表现是叠两层 Surface 容器 ——
+     * 而那正好会让 §12 那个「单层容器所以 popSurface 弹不错」的前提失效。
+     *
+     * 写成测试而不是注释：将来若有人想把幂等收进 Router，这条会告诉他
+     * 当前语义是什么、以及为什么 Activity 那侧不能删。
+     */
+    @Test
+    fun `Router 不挡不同角色的连续点击 —— 幂等归 Activity`() {
+        val f = fixture(
+            loggedIn = true,
+            enabled = listOf(AppRoute.ChatDetail::class.java),
+        )
+
+        f.router.handle(AppRoute.ChatDetail("c1"))
+        f.router.handle(AppRoute.ChatDetail("c2"))
+
+        assertEquals(
+            "两个不同 route 都会到 navigator —— 幂等必须由 openSurface 的 tag 判定兜住",
+            2,
+            f.navigated.size,
+        )
+    }
+
+    /**
+     * 带参路由的去重必须能解除，否则「退出聊天后再点同一个角色永远打不开」。
+     *
+     * `ChatDetail` 带 characterId + 判定素材，**相等判定拿不到那些值** ——
+     * 所以 Activity 那侧用谓词版 `onDestinationClosed`。这条在 Router 层
+     * 验证谓词确实能放开它（Activity 的接线由冒烟覆盖）。
+     */
+    @Test
+    fun `ChatDetail 退出后可再次打开同一角色`() {
+        val f = fixture(
+            loggedIn = true,
+            enabled = listOf(AppRoute.ChatDetail::class.java),
+        )
+        val route = AppRoute.ChatDetail("c1", chatEnterSource = "home", characterType = 1)
+
+        f.router.handle(route)
+        assertEquals(1, f.navigated.size)
+
+        // 同一路由再来一次：在栈期间应被去重
+        f.router.handle(route)
+        assertEquals("在栈期间是重复投递", 1, f.navigated.size)
+
+        // 容器关闭 —— 谓词版按类型放开（壳内不叠两层聊天页）
+        f.router.onDestinationClosed { it is AppRoute.ChatDetail }
+
+        f.router.handle(route)
+        assertEquals("退出后再次点击是新意图", 2, f.navigated.size)
     }
 
     /**

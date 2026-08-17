@@ -2,6 +2,7 @@ package ai.lightspeed.tipsy.shell.bridge
 
 import ai.lightspeed.tipsy.shell.auth.ShellTokenStore
 import ai.lightspeed.tipsy.shell.network.ApiErrorGate
+import ai.lightspeed.tipsy.shell.router.AppRoute
 import android.util.Log
 import expo.modules.tipsyauth.TipsyAuthProvider
 import kotlinx.coroutines.CoroutineDispatcher
@@ -14,11 +15,18 @@ import kotlinx.coroutines.withContext
  * 壳侧 [TipsyAuthProvider] 实现。**注册它就等于让 RN 侧 `isShellHost()` 返回 true**，
  * 从而激活 RN 仓里那 55 个文件里已存在的壳适配分支（方案 §7.2）。
  *
- * ## 当前边界（W1-P1 已接通）
+ * ## 当前边界
  *
  * auth 生命周期（取 token / 刷新 / 登出 / 401 归属判定）已委派 [ShellTokenStore]。
- * P5 已由壳的 L10n 提供语言真值。仍未实现的：**登录 UI**（W2 原生 Login 页）
- * 与部分**导航目标**。402 已进共享 gate；宝石页未启用时由 Router 明确拒绝。
+ * P5 已由壳的 L10n 提供语言真值。**登录 UI**（W2，§2.20）与**他人主页**
+ * （W3，§2.32）已接通。402 已进共享 gate；宝石页未启用时由 Router 明确拒绝。
+ * 仍未实现的只有 [notifyOnboardingCompleted]（W4）。
+ *
+ * ⚠️ **能力落地后必须回来回填这里的 override**。2026-08-17 查出三个
+ * `notImplemented` 的波次标签早已过期（`requestLogin` 标 W2、两个
+ * `openUserProfile` 标 W1-P4），而对应能力分别在 §2.20 / §2.32 就落地了 ——
+ * 桩留在原地，debug 下变成「点了就崩」。根因是**桥能力回填此前零单测覆盖**，
+ * 现由 `ShellAuthProviderBridgeWiringTest` 逐个钉死。
  *
  * ⚠️ token 的**历史数据迁移**（MMKV 三形态兼容读已就位，SecureStore 兜底未做）
  * 属 P2 —— 覆盖升级设备上 SecureStore 里的 token 目前读不出来，
@@ -44,6 +52,29 @@ class ShellAuthProvider(
     private val apiBaseUrlProvider: () -> String? = { null },
     /** 关当前 Surface 容器。由 [ai.lightspeed.tipsy.shell.MainActivity] 注入。 */
     private val onPopSurface: (surfaceInstanceId: String?) -> Unit,
+    /**
+     * 拉起原生登录页（W2 已落地，§2.20）。
+     *
+     * ⚠️ **不能留 notImplemented**：`axios.ts:160` 在壳宿主下取不到有效 token
+     * 就调它，即**每个 axiosAuth 请求的未登录路径都会打到这里**，
+     * 而 [notImplemented] 在 debug 会抛。
+     *
+     * 之所以不走 [onRequestRoute]：登录不是"导航到 Login 目标"，而是
+     * `AppRouter.requestLogin` 的排队语义（登录后要 flush pendingRoute）。
+     * 混成一条会让「登录后恰好执行一次」那套逻辑绕过 Router。
+     */
+    private val onRequestLogin: (reason: String?) -> Unit = {},
+    /**
+     * 桥发起的导航请求。**统一经 Router**（`Source.BRIDGE`）而不是各给一个
+     * 专用回调 —— auth gate、白名单判定、去重都在 Router 一处，
+     * 桥不该有第二套判定（§4.7 单一入口）。
+     *
+     * ⚠️ 因此 `openUserProfile` 这类方法**不能留 notImplemented**：
+     * ChatDetail 深栈有三个调用点（`comments.tsx:2012`、
+     * `CharacterProfile.tsx:1291,1294`），且最后那处**没接 `.catch`** ——
+     * debug 抛会变成未处理的 promise rejection，表现是「聊天页点头像没反应」。
+     */
+    private val onRequestRoute: (route: AppRoute) -> Unit = {},
     /**
      * 导航到宝石购买页。402 兜底与桥的 `openGemsPurchase` **共用同一出口** ——
      * 两处各写一份会让「未启用」的判定漂移。
@@ -128,9 +159,15 @@ class ShellAuthProvider(
      */
     override suspend fun getValidToken(): String? = tokenStore.getValidToken()
 
-    /** 原生 Login UI 属 W2；P1 只接通 token 生命周期，不含登录入口。 */
-    override fun requestLogin(reason: String?) =
-        notImplemented("requestLogin(reason=$reason)", wave = "W2（原生 Login 页）")
+    /**
+     * 拉起原生登录页（W2 已落地，§2.20）。
+     *
+     * ⚠️ 曾经标 `notImplemented(wave = "W2")` 并**在原生登录页落地后忘了回填**
+     * （2026-08-17 查出，P9 前置）。它是 `axiosAuth` 未登录路径的终点，
+     * debug 下那个 throw 会让每个未登录请求崩一次。
+     * 幂等在 Router/Activity 一侧（登录页可能被 401、深链、点击三路并发触发）。
+     */
+    override fun requestLogin(reason: String?) = onRequestLogin(reason)
 
     /**
      * 当前语义：失效 auth generation / 废弃 refresh / 清 token / 广播一次 / 收栈。
@@ -204,11 +241,29 @@ class ShellAuthProvider(
      */
     override fun popSurface(surfaceInstanceId: String?) = onPopSurface(surfaceInstanceId)
 
+    /**
+     * 打开他人主页（W3 已落地，§2.32；`AppRoute.UserProfile` 在生产白名单里）。
+     *
+     * ⚠️ 曾经标 `notImplemented(wave = "W1-P4")` 并**在他人主页落地后忘了回填**
+     * （2026-08-17 查出，P9 前置）。ChatDetail 深栈三个调用点会打到这里，
+     * 其中 `CharacterProfile.tsx:1294` 未接 `.catch`。
+     *
+     * 空 userId 的拦截在 Router（单一入口，挡住所有调用方），这里不重复判。
+     */
     override fun openUserProfile(userId: String) =
-        notImplemented("openUserProfile", wave = "W1-P4（Router）")
+        onRequestRoute(AppRoute.UserProfile(userId))
 
+    /**
+     * 带推荐归因的他人主页（`CharacterProfile.tsx:1287`）。
+     *
+     * JS 侧对这个方法的失败**有 `.catch` 回落到 [openUserProfile]**，所以即使
+     * 归因链路出问题也还能开页 —— 但那条回落过去同样落在 throw 上，
+     * 两个都得实现才有意义。
+     */
     override fun openUserProfileWithRecommendation(userId: String, contextJSON: String) =
-        notImplemented("openUserProfileWithRecommendation", wave = "W1-P4")
+        onRequestRoute(
+            AppRoute.UserProfile(userId, recommendationContextJSON = contextJSON),
+        )
 
     /**
      * 打开宝石购买页。

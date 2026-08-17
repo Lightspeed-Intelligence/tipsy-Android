@@ -128,14 +128,14 @@ object SurfaceContract {
         languageCode: String?,
         environment: String,
         distribution: String,
-        routeParams: Map<String, String> = emptyMap(),
+        routeParams: Map<String, Any> = emptyMap(),
     ): Bundle {
         assertNoShellKeyClash(routeParams.keys)
 
         return Bundle().apply {
             // 业务参数先放，壳字段后放 —— 顺序不影响结果（已有撞名守卫），
             // 但这样读起来更清楚「壳字段是附加在业务 props 之上的」
-            for ((key, value) in routeParams) putString(key, value)
+            putRouteParams(routeParams)
 
             putInt(KEY_CONTRACT_VERSION, CONTRACT_VERSION)
             putString(KEY_INSTANCE_ID, instanceId)
@@ -153,6 +153,49 @@ object SurfaceContract {
                 },
             )
             // ⚠️ 这里**没有** token，且不要加。见类注释。
+        }
+    }
+
+    /**
+     * 按值类型分派地写入业务参数（P9 起 props 不再全是 String）。
+     *
+     * ## 为什么必须分派而不是一律 `putString`
+     *
+     * RN 侧对分流素材用**严格相等**：`characterType === 1` / `=== 2`
+     * （`chat_mode_lru.ts:77,83`）。`"1" === 1` 在 JS 里是 `false`，
+     * 所以 `putString("1")` 的表现是 html 富文本与多角色影院**一律落到
+     * 普通聊天页**，两端都不报错。`Boolean` 同理：RN 用 `?? false`
+     * 而非真值判定，字符串 `"false"` 会被当成 `true`。
+     *
+     * 支持的类型对应 Expo 的 `Bundle → JS` 转换：
+     * `String`/`Int`/`Long`/`Double`/`Boolean` → 标量，
+     * `Map` → 嵌套对象（`preload` 走这条）。
+     *
+     * @throws IllegalArgumentException 遇到不支持的类型。**刻意抛**：
+     *   静默跳过一个参数的表现是「某个 prop 恒 undefined」，
+     *   与本类注释里那个 `props.route` 事故同型。
+     */
+    private fun Bundle.putRouteParams(params: Map<String, Any>) {
+        for ((key, value) in params) {
+            when (value) {
+                is String -> putString(key, value)
+                is Int -> putInt(key, value)
+                is Long -> putLong(key, value)
+                is Double -> putDouble(key, value)
+                is Boolean -> putBoolean(key, value)
+                is Map<*, *> -> putBundle(
+                    key,
+                    Bundle().apply {
+                        @Suppress("UNCHECKED_CAST")
+                        putRouteParams(value as Map<String, Any>)
+                    },
+                )
+
+                else -> throw IllegalArgumentException(
+                    "Surface prop『$key』的类型不受支持：${value.javaClass.name}。" +
+                        "静默跳过会让该 prop 在 JS 侧恒为 undefined —— 请扩展 putRouteParams。",
+                )
+            }
         }
     }
 

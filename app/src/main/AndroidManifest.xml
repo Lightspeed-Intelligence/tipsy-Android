@@ -47,6 +47,54 @@
             android:name="tipsy.largeHeap.note"
             android:value="see android:largeHeap on application" />
 
+        <!--
+          react-native-fbsdk-next 的 config plugin 等价处理（2026-08-17 实测）。
+
+          ⚠️ **缺了这几项会让挂载任何 RN Surface 直接 SIGABRT**，不是 Kotlin
+          异常而是 native abort，所以 try/catch 拦不住：
+
+            JNI DETECTED ERROR IN APPLICATION: ... pending exception
+            com.facebook.FacebookSdkNotInitializedException
+              at com.facebook.AccessTokenTracker.<init>(AccessTokenTracker.kt:49)
+              at FBAccessTokenModule.initialize(FBAccessTokenModule.java:61)
+              at TurboModuleManager.getOrCreateModule(TurboModuleManager.kt:259)
+
+          `TurboModuleManager` 在 Surface 起 runtime 时实例化全部 legacy 模块，
+          `FBAccessTokenModule` 一构造就要求 SDK 已初始化。**与哪个 Surface 无关**
+          （崩溃 trace 里零壳类）—— 只是 P9 放开 ChatDetail 后第一次可达。
+
+          注意这个 plugin **不在** `tipsy-app/plugins/` 里（方案 §2.3 列的那 6 个），
+          它由 node_modules 自带、`app.config.js:271` 配置，所以按「六个 plugin」
+          清单逐项移植时会漏掉它。`FacebookInitProvider` 本身被 autolinking
+          合并进来了，缺的只有 meta-data —— 这也是它在构建期查不出来的原因。
+
+          ⚠️ **值走 CI secret / placeholder，不抄 app.config.js 的字面量**：
+          那里的 appID/clientToken 属方案 §12.7 的 credential-like 值，
+          安全 owner 出结论前不读取、不复制进本仓。当前 placeholder 让壳能跑通
+          Surface；**真实登录/归因要等凭据到位**（同 §12.8 签名指纹的处理方式）。
+
+          `AutoInitEnabled=false` 与 `AutoLogAppEventsEnabled=false` 是**现网配置**
+          （`app.config.js` 的 `isAutoInitEnabled/autoLogAppEventsEnabled: false`），
+          别顺手改成 true —— 那会让壳的埋点行为与现网不一致。
+          初始化由 JS 侧 `Settings.initializeSDK()` 显式调用
+          （`lib/attribution/providers/meta.ts:17`）。
+        -->
+        <meta-data
+            android:name="com.facebook.sdk.ApplicationId"
+            android:value="@string/facebook_app_id" />
+        <meta-data
+            android:name="com.facebook.sdk.ClientToken"
+            android:value="@string/facebook_client_token" />
+        <meta-data
+            android:name="com.facebook.sdk.AutoInitEnabled"
+            android:value="false" />
+        <meta-data
+            android:name="com.facebook.sdk.AutoLogAppEventsEnabled"
+            android:value="false" />
+        <meta-data
+            android:name="com.facebook.sdk.AdvertiserIDCollectionEnabled"
+            android:value="false" />
+
         <activity
             android:name=".MainActivity"
             android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"

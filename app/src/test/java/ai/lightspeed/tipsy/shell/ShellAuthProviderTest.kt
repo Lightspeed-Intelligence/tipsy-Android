@@ -5,6 +5,7 @@ import ai.lightspeed.tipsy.shell.auth.Generations
 import ai.lightspeed.tipsy.shell.auth.ShellTokenStore
 import ai.lightspeed.tipsy.shell.bridge.ShellAuthProvider
 import ai.lightspeed.tipsy.shell.network.ApiErrorGate
+import ai.lightspeed.tipsy.shell.router.AppRoute
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -331,12 +332,17 @@ class ShellAuthProviderTest {
     // ── 未实现项必须可见（P0 建立的纪律，P1 不得破坏）───────────
 
     /**
-     * `requestLogin` 属 W2。debug 下必须**抛**，不能静默 no-op ——
-     * 静默的症状是「点了没反应」，不报错不崩溃，只能靠用户反馈发现。
+     * debug 下未实现项必须**抛**，不能静默 no-op —— 静默的症状是
+     * 「点了没反应」，不报错不崩溃，只能靠用户反馈发现。
+     *
+     * ⚠️ 主体从 `requestLogin` 换成了 `notifyOnboardingCompleted`（2026-08-17）：
+     * 前者在 §2.20 原生登录页落地后**已接通**，继续拿它当"未实现"的样本
+     * 会让这条纪律测试与现实脱节。`notifyOnboardingCompleted` 属 W4，
+     * 是当前唯一真正未实现的桥方法。
      */
     @Test(expected = NotImplementedError::class)
     fun `debug 下未实现项抛异常`() = runTest {
-        fixture(persisted = null, isDebug = true).provider.requestLogin("test")
+        fixture(persisted = null, isDebug = true).provider.notifyOnboardingCompleted()
     }
 
     /** release 下记 error 日志并继续，不把用户卡死在未接线的入口上。 */
@@ -345,11 +351,97 @@ class ShellAuthProviderTest {
         // 能走到断言即未抛。android.util.Log 的静态方法在 JVM 返回 int，
         // 不属于"调用即抛"那类 stub；若将来变了这个测试会红，那也是有用的信号
         val fixture = fixture(persisted = null, isDebug = false)
-        fixture.provider.requestLogin("test")
+        fixture.provider.notifyOnboardingCompleted()
         assertTrue(
             "release 不抛，但必须留下 error 日志 —— 否则就是静默 no-op",
             fixture.logs.any { it.startsWith("ERROR:") && it.contains("尚未实现") },
         )
+    }
+
+    // ── 桥能力回填（P9 前置，2026-08-17）────────────────────────
+
+    /*
+     * 这一组存在的理由：`requestLogin` 与两个 `openUserProfile` 曾在对应能力
+     * （§2.20 原生登录页 / §2.32 他人主页）落地后**忘了回填 override**，
+     * 桩留在原地三天没人发现 —— 因为此前**桥能力回填零单测覆盖**。
+     *
+     * debug 下 `notImplemented` 会抛，所以这些测试全部用 isDebug = true：
+     * 一旦有人把某个 override 改回 notImplemented，测试会以
+     * NotImplementedError 失败而不是静默通过。
+     */
+
+    /**
+     * `requestLogin` 是 `axiosAuth` 未登录路径的终点（`axios.ts:160`）——
+     * **每个未登录请求都会打到它**。留 notImplemented 等于每次都崩一下。
+     */
+    @Test
+    fun `requestLogin 转发到原生登录页而不是抛未实现`() = runTest {
+        val f = fixture(persisted = null, isDebug = true)
+
+        f.provider.requestLogin("axios-auth")
+
+        assertEquals(listOf("axios-auth"), f.loginReasons)
+    }
+
+    /** reason 为 null（JS 不带原因）也要照常转发，不能被判成缺参。 */
+    @Test
+    fun `requestLogin 的 reason 可为 null`() = runTest {
+        val f = fixture(persisted = null, isDebug = true)
+
+        f.provider.requestLogin(null)
+
+        assertEquals(listOf<String?>(null), f.loginReasons)
+    }
+
+    /**
+     * `openUserProfile` 在 ChatDetail 深栈有三个调用点，其中
+     * `CharacterProfile.tsx:1294` **没接 `.catch`** —— 抛出去就是未处理的
+     * promise rejection，表现为「聊天页点头像没反应」。
+     */
+    @Test
+    fun `openUserProfile 经 Router 而不是抛未实现`() = runTest {
+        val f = fixture(persisted = null, isDebug = true)
+
+        f.provider.openUserProfile("u42")
+
+        assertEquals(listOf(AppRoute.UserProfile("u42")), f.routeRequests)
+    }
+
+    /**
+     * 带归因那条把 contextJSON 放进 route，**不丢**。
+     *
+     * 丢了的表现是他人主页的推荐归因静默失效（页面照常打开，
+     * 只是后端收不到来源）—— 属于两端都不报错的那类偏差。
+     */
+    @Test
+    fun `openUserProfileWithRecommendation 把归因上下文带进 route`() = runTest {
+        val f = fixture(persisted = null, isDebug = true)
+
+        f.provider.openUserProfileWithRecommendation("u42", """{"source":"chat"}""")
+
+        assertEquals(
+            listOf(
+                AppRoute.UserProfile(
+                    "u42",
+                    recommendationContextJSON = """{"source":"chat"}""",
+                ),
+            ),
+            f.routeRequests,
+        )
+    }
+
+    /**
+     * 桥不自己判空 userId —— 那是 Router 的活（§4.7 单一入口，
+     * `ShellNavigator` 已有该拦截）。这里断言"照常转发"，
+     * 免得将来有人在桥里加第二套判定导致两处漂移。
+     */
+    @Test
+    fun `openUserProfile 不在桥侧拦空 userId`() = runTest {
+        val f = fixture(persisted = null, isDebug = true)
+
+        f.provider.openUserProfile("")
+
+        assertEquals(listOf(AppRoute.UserProfile("")), f.routeRequests)
     }
 
     // ── helpers ───────────────────────────────────────────────
@@ -364,6 +456,10 @@ class ShellAuthProviderTest {
         val gemsPurchaseCalls: List<Map<String, String>>,
         val gate: ApiErrorGate,
         val rnLogoutCounter: () -> Int,
+        /** `requestLogin` 收到的 reason，按调用顺序。 */
+        val loginReasons: List<String?>,
+        /** `onRequestRoute` 收到的路由，按调用顺序。 */
+        val routeRequests: List<AppRoute>,
     ) {
         val popSurfaceCount: Int get() = popSurfaceCounter()
         val logoutCount: Int get() = logoutCounter()
@@ -412,6 +508,8 @@ class ShellAuthProviderTest {
 
         val logs = mutableListOf<String>()
         val gemsCalls = mutableListOf<Map<String, String>>()
+        val loginReasons = mutableListOf<String?>()
+        val routeRequests = mutableListOf<AppRoute>()
         lateinit var provider: ShellAuthProvider
         val gate = ApiErrorGate(
             onAuthRejected = { provider.handleServerAuthRejectedForToken(it) },
@@ -428,6 +526,8 @@ class ShellAuthProviderTest {
                 onPopSurfaceHook()
             },
             onNavigateGemsPurchase = { gemsCalls.add(it) },
+            onRequestLogin = { loginReasons.add(it) },
+            onRequestRoute = { routeRequests.add(it) },
             tokenStore = tokenStore,
             apiErrorGate = gate,
             scope = this,
@@ -440,6 +540,7 @@ class ShellAuthProviderTest {
         return Fixture(
             provider, persistence, generations,
             { popCount }, { logoutCount }, logs, gemsCalls, gate, { rnLogoutCount },
+            loginReasons, routeRequests,
         )
     }
 

@@ -173,14 +173,24 @@ class SearchFragment : Fragment() {
     }
 
     /**
-     * 点角色卡 → 聊天页。
+     * 点角色卡 → 聊天页。判定素材 P9 起透传，壳不复刻分流。
      *
-     * `ChatDetail` 在 P9 前**不在白名单**，Router 会明确拒绝并记日志
-     * （不是 silent no-op）—— 与 Home/ChatList 点卡片同样的现状。
+     * ⚠️ 入口来源是 **`home`** 而不是某个 `search` 值：搜索结果列表复用
+     * `HomeCard`（`CharacterResultList.tsx:88`），而它硬编码传 `'home'`
+     * （`HomeCard.tsx:178`）。`ChatEnterSource` 联合类型里也**没有**
+     * `search`（`navigation/type.ts:21-26`）—— 编一个新值不报错，
+     * 只是入口模式判定会落到 else 分支，与现网不同。
      */
     private fun onCharacterClick(item: HomeFeedItem.Character, itemPosition: Int) {
         viewModel.onCharacterClick(item, itemPosition)
-        requestRoute(AppRoute.ChatDetail(characterId = item.characterId))
+        requestRoute(
+            AppRoute.ChatDetail(
+                characterId = item.characterId,
+                chatEnterSource = AppRoute.ChatEnterSource.HOME,
+                characterType = item.characterType,
+                contentType = item.contentType,
+            ),
+        )
     }
 
     private fun onCreatorClick(creator: CreatorResult, itemPosition: Int) {

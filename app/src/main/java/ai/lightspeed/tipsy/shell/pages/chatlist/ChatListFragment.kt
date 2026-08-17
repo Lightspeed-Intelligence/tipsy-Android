@@ -173,10 +173,9 @@ class ChatListFragment : Fragment() {
      * 点会话行：埋点/红点在 ViewModel（[ChatListViewModel.onThreadClicked]），
      * 导航在这里经 Router。
      *
-     * 判定素材（isStory/characterType/contentType/chatEnterSource）P9 接
-     * ChatDetailSurface 时随 route 参数透传 —— `AppRoute.ChatDetail` 当前
-     * 只带 characterId，扩参属 P9 包（先扩会让未启用的路由类型积累
-     * 未验证字段）。
+     * 判定素材（isStory/characterType/contentType/chatEnterSource）**P9 已透传**。
+     * 壳只给素材、不复刻分流 —— 由 `ChatDetailSurface.resolveInitialParams`
+     * 自决初始屏（分流存两份必漂移）。
      */
     private fun onThreadClick(thread: ChatThread) {
         viewModel.onThreadClicked(thread)
@@ -186,11 +185,23 @@ class ChatListFragment : Fragment() {
                 // 明确记日志而非静默（同 Home World 卡）
                 android.util.Log.w(TAG, "SimulatorGame 条目点击：WebView 不迁，无导航目标")
 
+            // mini phone 走独立初始屏，不参与影院/html 分流，故不带素材
+            // （RN 侧 `:297` 那个分支只读 characterId + parentConversationId）
             thread.isMiniPhone -> requestRoute(
                 AppRoute.MiniPhoneChat(characterId = thread.itemId),
             )
 
-            else -> requestRoute(AppRoute.ChatDetail(characterId = thread.itemId))
+            else -> requestRoute(
+                AppRoute.ChatDetail(
+                    characterId = thread.itemId,
+                    chatEnterSource = AppRoute.ChatEnterSource.CHAT_LIST,
+                    // ⚠️ isStoryEntry，**不是** showStoryTag —— 后者把多角色
+                    // 也算进来，会让影院角色落到普通聊天页（见其 KDoc）
+                    isStory = thread.isStoryEntry,
+                    characterType = thread.characterType,
+                    contentType = thread.contentType,
+                ),
+            )
         }
     }
 

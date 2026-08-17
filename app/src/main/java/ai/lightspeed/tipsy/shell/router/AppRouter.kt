@@ -23,6 +23,21 @@ object ProductionRoutePolicy {
      * 点击仍会被拒绝（列表内部再走一次 Router）。
      * 语言页由 Settings 压栈打开，**不是独立路由目标**（RN 侧也没有深链到它）。
      *
+     * ## `ChatDetail` / `MiniPhoneChat` 是第一批进来的 **RN Surface**（P9）
+     *
+     * 它们与上面三个不同轴 —— 走的是 `ChatDetailSurface`，所以确实要过 §9.1。
+     * 放开的依据（进度文档 §2.36）：
+     * - 微根 18 项已逐行核对 `ChatDetailSurface.tsx:546-631`，顺序一致
+     * - 5 个微栈目标已枚举，均在栈内（不存在 `RoleCardSurface` 那种死链）
+     * - 三个过期桥桩已回填（`openUserProfile` 系在深栈有三个调用点，
+     *   留 `notImplemented` 会让「点头像」debug 崩）
+     * - 判定素材经 route 透传且形状有单测（`preload` 嵌套那条尤其容易写错）
+     *
+     * ⚠️ §12 **实例关闭链仍是已接受偏差**：TS 侧 `popSurface()` 无参，
+     * Android 桥固定传 `null`，所以 `MainActivity.popSurface` 的实例比对
+     * 恒短路成「栈里有就 pop」。当前只有单层 Surface 容器，弹不错；
+     * 真出现多层（如 ChatDetail 内再开 Comments）之前必须根治。
+     *
      * ⚠️ 别据此推论「原生页都能随便加」：加任何目标都要先有对应的单测与冒烟，
      * 且这里与 `ShellNavigator.navigate` 的分支必须同时更新 ——
      * 只加白名单不加分支会走到 `error()`（刻意不做 silent no-op）。
@@ -31,6 +46,8 @@ object ProductionRoutePolicy {
         AppRoute.Search::class.java,
         AppRoute.UserProfile::class.java,
         AppRoute.Settings::class.java,
+        AppRoute.ChatDetail::class.java,
+        AppRoute.MiniPhoneChat::class.java,
     )
 }
 

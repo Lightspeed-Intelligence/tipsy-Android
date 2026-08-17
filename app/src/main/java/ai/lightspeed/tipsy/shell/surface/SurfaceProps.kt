@@ -41,6 +41,52 @@ object SurfaceProps {
     /** mini phone 聊天页的初始屏值（`:118` 注释：对齐 `toChatPage` 的 mini_phone 分支）。 */
     const val CHAT_SCREEN_MINI_PHONE = "MiniPhoneChat"
 
+    /*
+     * ── ChatDetail 的判定素材（P9）─────────────────────────
+     *
+     * ⚠️ **两个平铺 + 两个必须走 `preload`** —— 这不是风格选择，是实测的
+     * 消费方差异（`ChatDetailSurface.tsx`，2026-08-17 逐行核实）：
+     *
+     * | 素材 | 消费方 | 形状 |
+     * | --- | --- | --- |
+     * | `chatEnterSource` | `props.chatEnterSource`（`:356`） | 平铺 |
+     * | `isStory` | `props.isStory`（`:378`、`:424`） | 平铺 |
+     * | `characterType` | **`preloadState.characterType`**（`:377`） | 嵌套 preload |
+     * | `contentType` | **`preloadState.contentType`**（`:378`） | 嵌套 preload |
+     *
+     * `resolveInitialParams` 里 `props.characterType` / `props.contentType`
+     * **全仓零命中** —— 它读的是 `getChatPreloadCache(id).getState()`，
+     * 而那份 state 由 `seedChatPreloadFromShell(props)`（`:496`，在
+     * `resolveInitialParams` 之前跑）从 **`props.preload`** 灌进去。
+     *
+     * 所以把 characterType 平铺在顶层的表现是：**html 富文本角色与多角色影院
+     * 一律落到普通聊天页**，且两端都不报错 —— 正是本类注释警告的那类漂移。
+     *
+     * ⚠️ 壳**不传 `initialScreen`**（mini phone 除外）：`resolveInitialParams`
+     * 会用这些素材自决，壳再传目标屏等于把分流复刻成两份（§2.30 纪律）。
+     */
+
+    /** 入口来源（`:77` `chatEnterSource?: ChatEnterSource`）。平铺。 */
+    const val CHAT_ENTER_SOURCE = "chatEnterSource"
+
+    /** story 标记（`:76` `isStory?: boolean`）。平铺。 */
+    const val CHAT_IS_STORY = "isStory"
+
+    /**
+     * 壳侧列表数据子集（`:57` `ChatDetailSurfacePreload`）。**嵌套对象**。
+     *
+     * 声明了 14 个可选字段，壳当前只喂分流必需的两个 —— 其余
+     * （nickname/imageUrl/imgPrimaryColor 等）是首帧背景优化，属独立包。
+     * RN 侧对缺省字段有 `?? state` 逐字段保旧，少传不会抹掉已有值。
+     */
+    const val CHAT_PRELOAD = "preload"
+
+    /** `preload.characterType`（`2` = 多角色）。 */
+    const val PRELOAD_CHARACTER_TYPE = "characterType"
+
+    /** `preload.contentType`（配合 `characterType == 1` 判 html 富文本）。 */
+    const val PRELOAD_CONTENT_TYPE = "contentType"
+
     // ── 通用 ────────────────────────────────────────────────
 
     /** 用户 id。`openUserProfile` 的目标页属 W3，此处先留常量。 */
@@ -62,10 +108,22 @@ object SurfaceProps {
     /**
      * 把 route 转成业务 props。
      *
-     * @return 平铺的业务参数；无参数的 route 返回**空 map**。
+     * @return 业务参数；无参数的 route 返回**空 map**。
      *   空 map 与 null 在这里没有语义差别，返回空 map 让调用方少一层判空。
+     *
+     * ## 值类型是 `Any`，不是 `String`
+     *
+     * P9 起有三种非字符串值：`Boolean`（`isStory`）、`Int`
+     * （`preload.characterType`）、嵌套 `Map`（`preload` 本身）。
+     *
+     * **不能都塞成字符串**：RN 侧按 `characterType === 1` / `=== 2` 严格比较
+     * （`chat_mode_lru.ts:77,83`），`"1" === 1` 在 JS 里是 `false` ——
+     * 传字符串的表现是分流恒落普通聊天页，**不报错**。
+     * `isStory` 同理走 `?? false` 而不是真值判定，`"false"` 会被当成真。
+     *
+     * 转 `Bundle` 时按值类型分派，见 `SurfaceContract.buildInitialProps`。
      */
-    fun forRoute(route: AppRoute): Map<String, String> = when (route) {
+    fun forRoute(route: AppRoute): Map<String, Any> = when (route) {
         is AppRoute.ChatDetail -> buildMap {
             // characterId 是必填 prop，但 route 里可空（RN 侧该深链参数可选，
             // 进去后恢复上次会话）。
@@ -79,6 +137,27 @@ object SurfaceProps {
             route.characterId?.takeIf { it.isNotBlank() }?.let {
                 put(CHAT_CHARACTER_ID, it)
             }
+
+            // 入口来源：不传时 RN 侧 `?? 'home'`（`:356`），与发现页同义。
+            // 壳侧四个入口各有值，所以正常不会走那个兜底。
+            route.chatEnterSource?.takeIf { it.isNotBlank() }?.let {
+                put(CHAT_ENTER_SOURCE, it)
+            }
+
+            // isStory 只在为真时放。false 与缺省在 RN 侧等价（`?? false`），
+            // 少一个键让 props 更能反映「壳到底判定了什么」
+            if (route.isStory) put(CHAT_IS_STORY, true)
+
+            // ⚠️ 这两个**必须进嵌套 preload** —— resolveInitialParams 读的是
+            // preload store，不是顶层 props（见上方对照表）。
+            // 都没有就整个 preload 不放：空 preload 会让
+            // seedChatPreloadFromShell 走到 `!preload` 提前返回，等价于不传，
+            // 但少一个空对象更清楚
+            val preload = buildMap<String, Any> {
+                route.characterType?.let { put(PRELOAD_CHARACTER_TYPE, it) }
+                route.contentType?.let { put(PRELOAD_CONTENT_TYPE, it) }
+            }
+            if (preload.isNotEmpty()) put(CHAT_PRELOAD, preload)
         }
 
         is AppRoute.MiniPhoneChat -> buildMap {

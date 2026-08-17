@@ -1,6 +1,11 @@
 # W1-CLOSEOUT-1 READY：认证与网络安全收口
 
-> 状态：IMPLEMENTED / VALIDATION NOT RUN（2026-08-11）
+> 状态：**已完成并经 CI 验证**（进度文档 §2.22）。本文是该工作包**当时**的边界与
+> 验收记录，**不是当前状态** —— 状态一律看
+> [`../reference/android-native-progress.md`](../reference/android-native-progress.md)。
+> ⚠️ 下文「ChatDetail 保持 disabled」是本包的停止条件，**已不成立**：
+> P9 已于 2026-08-17 放开该路由（§2.36）。
+> 原记录：IMPLEMENTED / VALIDATION NOT RUN（2026-08-11）
 > 原始实现 base：`3f2f4675eda17f11134fe9b6182348932bf50de2`
 > 冲突同步 base：`61e465b`（P5 PR #15 已合入）
 > 当前 RN pin：`95760a6622424bc9be238e7790fdbf38fe7c7fb2`

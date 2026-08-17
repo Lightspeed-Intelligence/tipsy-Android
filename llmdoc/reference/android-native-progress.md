@@ -6,10 +6,11 @@
 > **W1 基本收尾**（细化方案见 [`../architecture/android-w1-plan.md`](../architecture/android-w1-plan.md)）：
 > **P0 桥注册已接通、完整能力 PARTIAL**（§2.11）｜ **P1 auth closeout 已实现且 CI 已验**（§2.13 / §2.18 / §2.22）｜ **P2 机制已验、兜底推迟**（§2.12）
 > ｜ **P2 剩余 + P3 已决定合并推迟到上线前**（2026-08-10，见 W1 计划 §5.6）
-> ｜ **P4 Router/parser 机制已落地，ChatDetail 在 P9 前关闭**｜ **P5 i18n 已完成**（§2.16）
+> ｜ **P4 Router/parser 机制已落地，ChatDetail 已于 P9 放开**（§2.36）｜ **P5 i18n 已完成**（§2.16）
 > ｜ **P6 network closeout 已实现且 CI 已验**（§2.14 / §2.22）
 > ｜ **§12 Fragment 机制已落地、真实实例关闭链待收口**（§2.15）
-> ｜ **P7 Qt / P8 Sentry 已决定推迟到业务迁移后**（2026-08-11，见 §2.17）｜ **P9 未开始**
+> ｜ **P7 Qt / P8 Sentry 已决定推迟到业务迁移后**（2026-08-11，见 §2.17）
+> ｜ **P9 已完成**（§2.36，2026-08-17；真机十项待冒烟）
 > ｜ **原生登录页：邮箱验证码链路真机已验**（§2.20）—— Google/Apple 受 §12.8 签名指纹阻塞未接
 >
 > **W2 进行中**：五 Tab shell + Home 首屏（§2.23，主链路真机已验）+ 标签筛选抽屉
@@ -27,30 +28,36 @@
 > owner 已在模拟器验过。
 > **W4 起步：Screen（Tab1 大屏页）P1 已实现**（§2.35）——**五个 Tab 至此
 > 全部有真实页面**；P1 刻意不引 Media3（不播视频），OOM 风险为零。
+> **W1-P9 已完成**（§2.36，2026-08-17）：`ChatDetail` / `MiniPhoneChat` 进生产
+> 白名单，**四个原生列表页的卡片点击第一次有下一屏**；顺带查出三个过期桥桩
+> （`requestLogin` / `openUserProfile` 系，debug 会抛）与「`openSurface`
+> 从来没传业务参数」两个真实缺陷。§12 实例关闭链按 owner 决定记为**已接受偏差**。
 > ⚠️ owner 2026-08-14 决定**真机冒烟统一推迟到功能完成后**，
-> 故待验清单只累积不清空（当前四刀）。
+> 故待验清单只累积不清空（当前四刀）；但 owner 2026-08-17 追加决定
+> **P9 与 Screen P2（Media3）各插一次冒烟** —— 这两刀的失败模式
+> （Surface 泄漏、OOM）只能真机暴露，单测与 mock 都抓不到。
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
 
 ## 0. 三十秒速览
 
-- **波次进度**：W0 完成；W1 的契约层全部落地且已在 CI 组合验证（§2.22），只剩 §12 实例关闭链与 P9；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 已随 PR #25 并入 main（§2.30）；**Search P1 主链路已实现并完成 directApk 冒烟**（§2.31）；**P2 筛选器已实现**（§2.34，Search 完整对等）。
+- **波次进度**：W0 完成；**W1 完成**（契约层已在 CI 组合验证（§2.22）；**P9 已完成**（§2.36）；§12 关闭链记为已接受偏差）；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 已随 PR #25 并入 main（§2.30）；**Search P1 主链路已实现并完成 directApk 冒烟**（§2.31）；**P2 筛选器已实现**（§2.34，Search 完整对等）。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`、`pages/chatlist/`、`pages/search/`**。
 - **submodule**：pin **`a6b9fc56a88d97444fe5f1ce952068bb9222be82`**（§2.34 导出搜索筛选器 10 条词条；前一 pin `017e142ac` 是 §2.33 的 `Limitless` / `New Version`）
 - **已验证**：main 上 PR #25 的 G1 Fast Gate 全绿。W3 Search P1 提交前快照的本机证据：`lintDirectApkDebug` 无新增（baseline 5 条）、`assembleGooglePlayDebug`/`assembleDirectApkDebug` 通过、**DirectApk app 单测 695 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿；directApk 真机主链路冒烟 PASS（§2.31）。提交前审查再新增 13 条、扩展 2 条回归测试并修正并发/auth/Router/点击归因/分页去重行为，最终源码预计 708 条；**最终 head 未在本机重跑 Gradle，交 G1 验证**。
 - **他人主页已实现**（§2.32，2026-08-14）：6 文件 1,469 行，`AppRoute.UserProfile` 进白名单 —— **搜索 → 创作者 → 他人主页是壳的第一条端到端可用路径**。审计推翻了「复用自己视角」的前提（七处偏差）：只有 **1 个 tab**（RN 注释说两个，代码是一个）、数据源另有四条、`size` **200 且不翻页**、`/user/get/public` 走 `axiosAuth` 会对游客弹登录页、`/plot/list/creator` **现网从未被调用**、关注按钮在 `ProfileHeader.tsx` 而非 `user-profile.tsx`。真机冒烟 **NOT RUN**。
 - **Settings 列表 + 语言页已实现**（§2.33，8 文件 1,501 行）：补上了真实功能缺失 —— 此前**壳内没有任何入口能改语言**。审计订正三处：语言页**要原生实现**（RN 与 iOS 双证据）、`supportedLanguages` 壳内**恒为空**必须自己拉、Limitless 开关是 `nsfw` 的**唯一写方**且仅 directApk 可见。渠道 gating 收在 `SettingsRow` 并对三渠道各有单测。7 个 Surface 子屏（`AppRoute.SettingsSubScreen`）仍被明确拒绝。真机冒烟 **NOT RUN**。
-- **⚠️ 其余出口仍全部点不动**：Home/ChatList/Search 的卡片点击（`ChatDetail`）与 Profile 五个出口仍被 `rejectNotEnabled` 明确拒绝。解锁 ChatDetail 的前置是 P9 / §9.1 矩阵，且 §12 实例关闭链尚未闭环（TS `popSurface()` 无参，Android bridge 固定传 `null`）。
+- **✅ 卡片点击已解锁**（§2.36，2026-08-17）：`ChatDetail` / `MiniPhoneChat` 进白名单，Home/ChatList/Search/Screen 四个页面的卡片点击**第一次有下一屏**。⚠️ 仍点不动的是 **Profile 的五个出口**（`EditProfileSurface` / `GemsSubscriptionSurface` / `UserCoinsSurface` / `RoleCardSurface` / Follow）与 Settings 的 7 个子屏 —— 那些 Surface 未过 §9.1。§12 实例关闭链**记为已接受偏差**（单层容器弹不错；根治要改 RN 侧 9 个调用点 + 双壳回归）。
 - **Screen P1 已实现**（§2.35，10 文件 2,131 行）：**Screen Tab 从占位换成真实页面，五个 Tab 全部落地**。AB 端点分流（游客/未登录恒 distribution）、归因、首屏缓存、会话埋点双轴、静态图/GIF 两形态。⚠️ **不播视频**：Media3 与有界播放器池属 P2，故 OOM 风险为零。两份 RN fixture 在提交前抓到我两个设计缺陷（归因 position 用原始下标、首屏缓存要在发请求前读）。
 - **Search P2 筛选器已实现**（§2.34，4 文件 723 行）：性别/排序/分级抽屉 + 二级标签栏，Search 达成完整对等。`SearchTagOrderTest` **逐条对拍 RN 的 144 行现成单测**。⚠️ 分级筛选的门是「非 GooglePlay && nsfw 开」，与 Settings 的 Limitless（只有 directApk）**不同轴** —— RuStore 在这里算可选。
-- **不存在 / 未验**：ChatList 的 Map「時光長廊」视图仍是 P2；Screen 的视频播放（Media3）属 P2；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。生产路由白名单已放开三个纯原生目标（`Search` / `UserProfile` / `Settings`），但 ChatDetail 在 P9 前仍 disabled（Home/ChatList/Search 的卡片点击因此被明确拒绝），12 个业务 Surface 也全未过 §9.1（含 Settings 的 7 个子屏）。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
+- **不存在 / 未验**：ChatList 的 Map「時光長廊」视图仍是 P2；Screen 的视频播放（Media3）属 P2；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。生产路由白名单五个目标（三纯原生 + `ChatDetail`/`MiniPhoneChat`），**`ChatDetailSurface` 的 §9.1 真机十项仍 NOT RUN**；其余 11 个业务 Surface 全未过矩阵（含 Settings 的 7 个子屏与 Profile 的五个出口）。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
 
 ## 1. 波次状态
 
 | 波次 | 内容 | 业务量 | 状态 | source_rn_sha | target_android_sha |
 | --- | --- | --- | --- | --- | --- |
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
-| W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟡 **契约层已收口且 CI 已验；§12 关闭链 + P9 未完** | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17 已并） |
+| W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟢 **完成**：契约层已收口且 CI 已验；**P9 已完成**（§2.36，白名单放开 + 桥桩回填）；§12 关闭链记为**已接受偏差**（owner 2026-08-17）。真机冒烟待跑 | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17 已并；P9 在 `feat/android-w4-screen-p1`） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
 | W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1–P4、P6，§2.25–§2.29，真机验证）；ChatList P1 Grid 主链路已并（§2.30，模拟器冒烟 PASS）；**Search P1 主链路已实现**（§2.31，directApk 真机冒烟 PASS）；**他人主页已实现**（§2.32，第一条端到端可用路径）；**Settings 列表 + 语言页已实现**（§2.33）；**Search P2 筛选器已实现**（§2.34，Search 完整对等）；剩 Profile P5 ⋮ 菜单/P7 头像框、ChatList P2 Map | `a6b9fc56a88d97444fe5f1ce952068bb9222be82` | —（PR #21–#30 已并；Search P2 在 `feat/android-w3-search-p2`） |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | 🟡 **起步**：Screen **P1 已实现**（§2.35，数据层 + 翻页 + 埋点，**不含 Media3**）；剩 Screen P2（Media3 + 有界播放器池 + buffer 三件套，**OOM 首要风险**）与 P3 二期项、12 个 Surface、系统能力、OTA | `a6b9fc56a88d97444fe5f1ce952068bb9222be82` | —（Screen P1 在 `feat/android-w4-screen-p1`） |
@@ -2494,17 +2501,158 @@ artifact，当前只显示首帧）、tagline 展开（`FeedMediaTaglineOverlay`
   首屏缓存冷启动秒开、会话埋点四个时机（切 Tab / 按 Home 键往返）、
   归因诊断事件、三形态渲染（含 GIF 只显首帧这个已知偏差）
 
+### 2.36 W1-P9：ChatDetailSurface gate（2026-08-17）
+
+`AppRoute.ChatDetail` 与 `MiniPhoneChat` 进生产白名单 —— **四个原生列表页的
+卡片点击第一次真的有下一屏**。此前壳唯一可用路径是「搜索 → 创作者 →
+他人主页」（§2.32）；Home/ChatList/Search/Screen 的数据链全通但主操作点
+一律 `rejectNotEnabled`。
+
+放开依据：微根 18 项已核对 `ChatDetailSurface.tsx:546-631`（顺序一致）、
+5 个微栈目标均在栈内无死链、三个过期桥桩已回填（见下）。
+⚠️ 微根核对**不是人工的**：`SurfaceDependencyChecklistTest` 7 条直接读
+RN 源文件断言（组件在场 / PortalHost 无遗漏 / SurfaceToastHost 在具名群之前 /
+刻意不挂的池初始化器确实不在），改 RN 微根时会红。
+
+#### 开工前查出三个过期桥桩（P9 的真实前置）
+
+`ShellAuthProvider` 里三个 override 的波次标签早已过期、代码却还指向
+`notImplemented`（debug **throw**，release 记 error 后继续）：
+
+| 方法 | 标的波次 | 能力实际落地于 |
+| --- | --- | --- |
+| `requestLogin` | W2（原生 Login 页） | §2.20 |
+| `openUserProfile` | W1-P4（Router） | §2.32 |
+| `openUserProfileWithRecommendation` | W1-P4 | §2.32 |
+
+- `requestLogin` 是 `axiosAuth` 未登录路径的终点（`axios.ts:160`），
+  **每个未登录请求都会打到它**。
+- `openUserProfile` 在 ChatDetail 深栈有三个调用点（`comments.tsx:2012`、
+  `CharacterProfile.tsx:1291,1294`）。JS 只有 `?.()` **方法存在性**守卫，
+  而方法在 Android 模块里注册着（`TipsyAuthModule.kt:123`）—— 守卫过得去，
+  throw 变成 promise rejection，且 `:1294` 那处**没接 `.catch`**。
+  表现是「聊天页点头像 debug 崩、release 静默没反应」。
+
+根因是**桥能力回填此前零单测覆盖**（`app/src/test/` 里搜不到任何
+`openUserProfile` 断言），所以桩能在白名单放开后静默留三天。已补 5 条
+断言逐个钉死转发目标，并反向验证过（改回 notImplemented 时 4 条会红）。
+两条「未实现项必须可见」的纪律测试主体也从已接通的 `requestLogin` 换成
+`notifyOnboardingCompleted`（W4，当前唯一真正未实现的桥方法）。
+
+⚠️ `notifyChatBackgroundReady` **不在**此列 —— Android 模块根本没注册它，
+JS 的 `?.()` 直接短路，属预期降级，**别去"修"**。
+
+#### 判定素材：两个平铺 + 两个必须进嵌套 `preload`
+
+壳**不复刻** `resolveChatEntryScreen`，只透传素材由 Surface 自决初始屏
+（§2.30 纪律；与 Screen 的 RN 页内分流是有意偏差，§2.35 已记）。
+但素材的**通道不同**，逐行核实后确认：
+
+| 素材 | 消费方 | 形状 |
+| --- | --- | --- |
+| `chatEnterSource` | `props.chatEnterSource`（`:356`） | 平铺 |
+| `isStory` | `props.isStory`（`:378`、`:424`） | 平铺 |
+| `characterType` | **`preloadState.characterType`**（`:377`） | 嵌套 `preload` |
+| `contentType` | **`preloadState.contentType`**（`:378`） | 嵌套 `preload` |
+
+`props.characterType` 在 `resolveInitialParams` 里**全仓零命中** —— 它读
+`getChatPreloadCache().getState()`，那份 state 由
+`seedChatPreloadFromShell(props)`（`:496`，跑在 resolve 之前）从
+**`props.preload`** 灌进去。平铺的表现是 **html 富文本与多角色影院一律落
+普通聊天页**，两端都不报错。
+
+故 `SurfaceProps.forRoute` 与 `RNSurfaceFragment.newInstance` 的值类型从
+`String` 放宽到 `Any`，`buildInitialProps` 新增 `putRouteParams` 按类型分派
+（String/Int/Long/Double/Boolean/嵌套 Map，遇未知类型**抛**而不是跳过）。
+**不能全塞字符串**：RN 按 `characterType === 1 && contentType === 2` 严格
+比较（`chat_mode_lru.ts:77`），`"1" === 1` 在 JS 里是 `false`；
+`isStory` 走 `?? false`，字符串 `"false"` 会被当成真。
+
+#### 顺带修掉一个真实缺陷：`openSurface` 从来没传业务参数
+
+P9 前 `openSurface(componentName)` 只传组件名，**`SurfaceProps.forRoute`
+的产出根本没接到调用链上** —— 等于 `characterId` 恒 undefined、聊天页
+永远恢复上次会话。正是 `SurfaceProps` 类注释里警告的那型漂移（原实现把
+参数塞进无人读的 `route` 子 Bundle），只是此前 ChatDetail 未启用没人踩到。
+同时补上 `languageCode`（壳是语言唯一 writer，§2.16）。
+`openDebugSurface` 刻意不传（W0 管线 gate，零业务依赖）。
+
+#### 两处容易写错的实测细节
+
+- **入口来源没有 `search`**。`ChatEnterSource` 联合类型只有
+  home / big_screen / chat_list / profile / unknown（`navigation/type.ts:21-26`）。
+  搜索页复用 `HomeCard`（`CharacterResultList.tsx:88`），传的是 **`'home'`**
+  （`HomeCard.tsx:178` 硬编码）。编个 `'search'` 不报错，只是入口模式判定
+  落到 else 分支。Screen 必须是 `big_screen` —— RN 靠它把影院 `sourceType`
+  判成 `first_tab`（`useChatNavigation.ts:59`）。
+- **ChatList 的 `isStory` 不是角标那个判定**。壳原有 `showStoryTag` 多带一条
+  `characterType == 2`（角标把多角色也画成 story 样式），而
+  `ChatListItem.tsx:286` 写入 preload 的 `isStory` **只看
+  `item_type === 'story'`**。复用角标判定会让多角色角色从聊天列表进去
+  **看不到影院**（`isStory` 在 `resolveChatEntryScreen` 里优先级最高，
+  `chat_mode_lru.ts:74`）。已新增 `isStoryEntry` 与角标分开。
+
+#### 去重必须用谓词版
+
+`ChatDetail` 带参（characterId + 三个素材），相等判定拿不到那些值就永远
+不成立 —— 表现是「退出聊天后再点同一个角色永远打不开」（`UserProfile`
+踩过同型，§2.32）。判据用「栈里已无 `ChatDetailSurface` 容器」而不是比对
+characterId：两个 route 共用同一容器（同 componentName），壳内不叠两层聊天页。
+
+#### ⚠️ §12 实例关闭链：记为已接受偏差（owner 2026-08-17 决定）
+
+TS 侧 `popSurface()` **无参**，Android 桥固定传 `null`
+（`TipsyAuthModule.kt:120`），所以 `MainActivity.popSurface` 的实例比对
+**恒短路**成「栈里有 Surface 就 pop」。壳侧其实已把 `surfaceInstanceId`
+下发进 initial props（`SurfaceContract.kt:83`），但**RN 侧无人读**（已核实）。
+
+当前只有单层 Surface 容器，弹不错，故按可接受偏差记录。**真出现多层容器
+（ChatDetail 内再开 Comments）之前必须根治** —— 根治要改 RN 侧 9 个
+`popSurface()` 调用点让它们带上 instanceId，且 `index.surfaces.js` 系文件
+是双壳共用，需 iOS 回归。
+
+#### 未做（明确边界）
+
+`preload` 只喂分流必需的两个字段。RN 声明了 14 个（nickname / imageUrl /
+imgPrimaryColor / greeting 等），其余是**首帧背景优化**（免去 mount 后
+`getCharacterAuth` 往返才拿到背景 URL 的等待），要求四个页面各自把列表
+子集喂进来，属独立包。RN 侧对缺省字段逐字段 `?? state` 保旧，少传不会
+抹掉已有值。
+
+其余仍未接：`CHATTED_LIST_REFRESH` 跨容器刷新（发送方在 ChatDetail 深栈，
+现在才第一次有真实发送方）、`RELATIONSHIP_LEVEL_UPDATED` 徽章重拉、
+ChatList 点击的 `recommendTracking` 透传。
+
+#### 验证
+
+- app 单测 **891 条**（+15：`SurfacePropsTest` +9 含 preload 嵌套/数字类型/
+  入口来源取值对拍 RN 联合类型；`AppRouterTest` +2；`ShellAuthProviderTest`
+  +5 桥回填），failures=0、**skipped=0**
+- **两组测试都做过反向验证**：把 override 改回 notImplemented → 4 条红；
+  把 preload 改成平铺字符串 → 3 条红。不是"写了就绿"的测试
+- `:tipsy-auth:testDebugUnitTest` 15 条全绿
+- lint 无新增（baseline 仍 5 条）；googlePlay + directApk assemble 通过
+- **未动** manifest / RN 依赖 / flavor / submodule（pin 仍 `a6b9fc56a`）
+- **真机冒烟 NOT RUN** —— owner 2026-08-17 决定 P9 与 Media3 各插一次，
+  故本刀的冒烟**不并入累积清单**，待跑：①四个入口各进一次聊天
+  （Home/ChatList/Search/Screen 卡片点击）②html 富文本角色落
+  `ChatDetailHtml`、多角色落 `MultiCinema`（这两条正是 preload 嵌套那个
+  缺陷的暴露点）③story 卡恒普通聊天页 ④mini phone 会话行落对初始屏
+  ⑤聊天页点头像进他人主页（桥回填的验证点）⑥退出后再点同一角色能重开
+  ⑦§9.1 十项：未登录 / 登录切换 / 语言切换 / Back 栈底 / 旋转进程恢复 /
+  首帧 / 50 次开关泄漏（Runtime 数应恒 1）/ Embedded
+
 ## 3. 横切能力
 
 
 | 能力 | 状态 | 落地处 |
 | --- | --- | --- |
 | Auth 所有权 | 🟡 **closeout 已实现且 CI 已验**（§2.22） | `shell/auth/`（§2.13 / §2.18）。single-flight/generation/原子条件清理已收口；历史 token 迁移未完（P2） |
-| `tipsy-auth` Android 实现 | 🟡 **桥已注册、能力 PARTIAL** | `modules/tipsy-auth/android/` + `ShellAuthProvider`；主线程约束已落地，Login/Profile 等真实能力仍按波次接线 |
+| `tipsy-auth` Android 实现 | 🟡 **桥已注册、能力 PARTIAL** | `modules/tipsy-auth/android/` + `ShellAuthProvider`；主线程约束已落地。§2.36 回填了 `requestLogin` / `openUserProfile` 系三个**标签过期的桩**（debug 会抛）—— ⚠️ **能力落地后必须回来改 override**，且现由 5 条单测钉死；仍未实现的只有 `notifyOnboardingCompleted`（W4）。Android 模块注册 16 个方法，iOS 30 个，其余按 Surface 启用增量补 |
 | 网络层 | 🟡 **closeout 已实现且 CI 已验**（§2.22） | `shell/network/`（§2.14 / §2.18）。过期 token 发送守门与双入口共享 gate 已实现。**未引 Retrofit** |
 | i18n | 🟢 **已完成**（含语言设置页） | `shell/i18n/`（§2.16）。壳是唯一 writer；key-based 查表 + 两条 normalize 规则 + Compose 自订阅组件。**原生语言设置页已实现**（§2.33）—— RN 的 `SettingsSurface` 白名单刻意不含 `Language`，iOS 侧也是原生 `LanguageViewController`；写入走 `POST /user/set_language` → 重拉 `/user/info`，不经 Zustand 信封。真机冒烟未跑 |
-| Router / 深链 | 🟡 parser/router 机制已落地，**白名单放开三个纯原生目标** | `shell/router/`；`AppRoute.Search`（§2.31）、`AppRoute.UserProfile`（§2.32）与 `AppRoute.Settings`（§2.33）已进 `enabledRouteTypes` —— 两者都是纯原生 Fragment，不受 §9.1 Surface 矩阵约束。`onDestinationClosed` 另有谓词版供带参路由解除去重（§2.32）。真实 Surface 参数与 P9 matrix 未完成，ChatDetail 在 P9 前保持关闭 |
-| RN Surface 宿主 | 🟡 机制已落地、闭环待收口 | `RNSurfaceFragment`（共享单 ReactHost）；UUID/首帧/reappear/props builder 已有，真实 instance-aware close 尚未闭环 |
+| Router / 深链 | 🟡 parser/router 机制已落地，**白名单放开五个目标** | `shell/router/`；三个纯原生（`Search` §2.31 / `UserProfile` §2.32 / `Settings` §2.33，不受 §9.1 约束）+ **两个 Surface 目标**（`ChatDetail` / `MiniPhoneChat`，§2.36 P9 已过矩阵）。`onDestinationClosed` 的**谓词版是带参路由的唯一正确用法**（§2.32 / §2.36）——相等判定拿不到参数，会让目标永久打不开 |
+| RN Surface 宿主 | 🟡 机制已落地；**业务参数通道 P9 才真正接上** | `RNSurfaceFragment`（共享单 ReactHost）；UUID/首帧/reappear/props builder 已有。⚠️ §2.36 查出 `openSurface` **此前从不传 routeParams**（`SurfaceProps.forRoute` 没接到调用链），已修；props 值类型放宽到 `Any` 以支持嵌套 `preload` 与数字（RN 用严格相等）。真实 instance-aware close **记为已接受偏差**（§2.36） |
 | Push | 🔴 未开始 | — |
 | Analytics（Qt） | ⏸️ **推迟，但 facade 已落地** | `shell/analytics/Analytics`（§2.23）：业务页照常调用、uid 排队语义照搬 RN，debug 落日志。Qt 接线本身仍推迟（§2.17）—— ⚠️ **`preInit` 一次都不会调**，facade 存在 ≠ 埋点在上报 |
 | 营销 SDK（ATT/AppsFlyer/FB/TikTok） | 🔴 未开始 | iOS 事故点，方案 §4.2 |
@@ -2516,9 +2664,17 @@ artifact，当前只显示首帧）、tagline 展开（`FeedMediaTaglineOverlay`
 ## 4. Surface 验收矩阵
 
 `DebugSurface` 已完成 W0 的宿主机制验证，但它是自检入口，不代表生产 Surface
-通过 §9.1。其余 12 个生产 Surface 均未验收，且 ChatDetail 在 P9 前保持 disabled：
+通过 §9.1。
 
-`ChatDetailSurface` / `CommentsSurface` / `OnboardingSurface` / `CreateSurface` / `DeleteAccountSurface` / `EditProfileSurface` / `GemsSubscriptionSurface` / `NotificationSurface` / `RoleCardSurface` / `SettingsSurface` / `UserCoinsSurface` / `WidgetSurface`
+**`ChatDetailSurface` 是第一个进生产白名单的业务 Surface**（§2.36，P9）：
+微根 18 项与 5 个微栈目标已由 `SurfaceDependencyChecklistTest` 对 RN 源码
+机器断言，桥依赖已回填。⚠️ **§9.1 那十项的真机部分（未登录/登录切换/
+语言切换/Back 栈底/旋转恢复/首帧/50 次泄漏/Embedded）仍 NOT RUN** ——
+按 owner 决定 P9 插一次冒烟时补齐。**在那之前这一行不得标 production-ready。**
+
+其余 11 个生产 Surface 均未验收：
+
+`CommentsSurface` / `OnboardingSurface` / `CreateSurface` / `DeleteAccountSurface` / `EditProfileSurface` / `GemsSubscriptionSurface` / `NotificationSurface` / `RoleCardSurface` / `SettingsSurface` / `UserCoinsSurface` / `WidgetSurface`
 
 矩阵表格见方案 §9.1。**未填满的行不得标 production-ready。**
 
@@ -2530,6 +2686,12 @@ artifact，当前只显示首帧）、tagline 展开（`FeedMediaTaglineOverlay`
   二选一前提也已被源码证据推翻。
 - **§12.5 `AuthBootstrapSurface`** 随 P2 剩余/P3 合并推迟到上线前。
 - **§12.3 QA 分发形态**仍需发布阶段定案，但 W0 已完成，不能继续写成“阻塞 W0”。
+- **§12.1 Surface 实例关闭链**（`popSurface` 的 instanceId）✅ **已定为可接受偏差**
+  （owner 2026-08-17，§2.36）：TS 契约无参、Android 桥固定传 `null`，实例比对
+  恒短路。**单层容器下弹不错**，故不改跳仓。⚠️ **多层容器出现前必须根治** ——
+  第一个会触发的场景是 ChatDetail 内再开 `CommentsSurface`（§8.3 批次 3）。
+  根治成本：RN 侧 9 个 `popSurface()` 调用点带上 instanceId + 双壳回归
+  （`index.surfaces.js` 系文件 iOS 共用）。壳侧已下发该字段，RN 侧无人读。
 
 当前仍需 owner 结论的 W1 项：
 

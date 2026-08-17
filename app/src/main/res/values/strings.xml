@@ -1,3 +1,22 @@
 <resources>
     <string name="app_name">tipsy-Android</string>
+
+    <!--
+      react-native-fbsdk-next 要求的两个字符串（plugin 里的资源名固定为
+      facebook_app_id / facebook_client_token，见
+      node_modules/react-native-fbsdk-next/plugin/build/withFacebookAndroid.js:12-14）。
+      manifest 的 com.facebook.sdk.* meta-data 引用它们，缺了会让挂载任何
+      RN Surface 直接 SIGABRT（详见 AndroidManifest.xml 那段注释）。
+
+      ⚠️ **这里是 placeholder，不是真值。** 真实 appID/clientToken 属方案 §12.7
+      的 credential-like 值（在 tipsy-app/app.config.js 的 facebookConfig 里，
+      且 dev/prod 两套），安全 owner 出结论前不读取、不复制进本仓。
+      接真值的方式与签名指纹（§12.8）同轨：CI secret 注入或 local.properties，
+      **不要直接把字面量写进这个文件**。
+
+      placeholder 的后果是明确的、不静默：SDK 能初始化（Surface 不再崩），
+      但 FB 登录与归因上报会被服务端拒绝。所以**别据此声称 FB 能力已验**。
+    -->
+    <string name="facebook_app_id" translatable="false">000000000000000</string>
+    <string name="facebook_client_token" translatable="false">placeholder_client_token</string>
 </resources>

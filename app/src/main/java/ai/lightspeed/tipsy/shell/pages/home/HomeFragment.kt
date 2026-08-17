@@ -203,15 +203,30 @@ class HomeFragment : Fragment() {
         viewModel.onItemClicked(item)
         val app = requireActivity().application as TipsyApplication
         when (item) {
-            // 进聊天：ChatDetail 在 P9 / §9.1 矩阵前不在生产白名单里，
-            // Router 会走 rejectNotEnabled 记录明确拒绝（方案 §8.3：不做 silent no-op）
+            // 进聊天。判定素材 P9 起随 route 透传，壳不复刻分流
+            // （由 ChatDetailSurface.resolveInitialParams 自决初始屏）。
+            //
+            // ⚠️ 入口来源是 **home**：RN 的 `HomeCard.tsx:178` 硬编码传 `'home'`，
+            // 而搜索页复用同一个 HomeCard —— 所以两处同值，别自作主张给搜索
+            // 编一个 `'search'`（那个值不在 ChatEnterSource 联合类型里）
             is HomeFeedItem.Character -> app.requestRoute(
-                AppRoute.ChatDetail(item.characterId),
+                AppRoute.ChatDetail(
+                    characterId = item.characterId,
+                    chatEnterSource = AppRoute.ChatEnterSource.HOME,
+                    characterType = item.characterType,
+                    contentType = item.contentType,
+                ),
                 AppRouter.Source.IN_APP,
             )
-            // 故事卡也进聊天（RN 的 toChatPage 对 story 型走同一入口）
+            // 故事卡也进聊天（RN 的 toChatPage 对 story 型走同一入口）。
+            // isStory = true 让 resolveChatEntryScreen 恒落普通聊天页 ——
+            // 它的优先级高于 html 与影院分流（`chat_mode_lru.ts:74`）
             is HomeFeedItem.Story -> app.requestRoute(
-                AppRoute.ChatDetail(item.storyId),
+                AppRoute.ChatDetail(
+                    characterId = item.storyId,
+                    chatEnterSource = AppRoute.ChatEnterSource.HOME,
+                    isStory = true,
+                ),
                 AppRouter.Source.IN_APP,
             )
             // World 落 SimulatorGame WebView —— **不迁**（方案 §8.1）。

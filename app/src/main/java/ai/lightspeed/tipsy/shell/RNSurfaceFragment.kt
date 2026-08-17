@@ -181,11 +181,13 @@ class RNSurfaceFragment : ReactFragment() {
          * @param routeParams 业务参数，**平铺**进 initial props 的顶层 ——
          *   13 个 Surface 一律读平铺 props，塞进 `route` 子 Bundle 它们读不到
          *   （详见 [SurfaceContract] 类注释）。
+         *   值类型为 `Any`：P9 起有 Int/Boolean/嵌套 Map（`preload`），
+         *   全塞成字符串会让 RN 的严格相等判定失效（见 `putRouteParams`）。
          * @param languageCode 壳的语言意见；null = 无意见。
          */
         fun newInstance(
             componentName: String,
-            routeParams: Map<String, String> = emptyMap(),
+            routeParams: Map<String, Any> = emptyMap(),
             languageCode: String? = null,
             environment: String = if (BuildConfig.DEBUG) "development" else "production",
             distribution: String = BuildConfig.DOWNLOAD_CHANNEL,
