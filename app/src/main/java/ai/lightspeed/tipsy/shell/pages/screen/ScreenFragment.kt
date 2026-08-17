@@ -212,17 +212,25 @@ class ScreenFragment : Fragment() {
      * ⚠️ 顺序照 RN（`screen.tsx:639-640`）：先报 `home_input_click`、
      * 再 `endHomeSession`、最后导航 —— 会话必须在离开前收掉。
      *
-     * `ChatDetail` 在 P9 前**不在白名单**，Router 会明确拒绝并记日志
-     * （不是 silent no-op）。⚠️ 壳**不复刻** `resolveChatEntryScreen`
-     * 四路分流（§2.35 记的有意偏差）：只透传 characterId，
-     * 由 `ChatDetailSurface` 自决入口屏 —— 与 ChatList 侧同一条纪律（§2.30）。
+     * ⚠️ 壳**不复刻** `resolveChatEntryScreen` 四路分流（§2.35 记的有意偏差）：
+     * 只透传判定素材，由 `ChatDetailSurface` 自决入口屏 —— 与 ChatList 侧
+     * 同一条纪律（§2.30）。
+     *
+     * ⚠️ 入口来源必须是 **`big_screen`**：RN 侧靠它把影院 `sourceType`
+     * 判成 `first_tab`（`useChatNavigation.ts:59` 的 `=== 'big_screen'`）。
+     * 传别的值不报错，只是影院埋点的来源轴变成 `chat_list`。
      */
     private fun onStartChat() {
         val item = viewModel.state.value.currentItem ?: return
         viewModel.onStartChat()
         val app = requireActivity().application as TipsyApplication
         app.requestRoute(
-            AppRoute.ChatDetail(characterId = item.characterId),
+            AppRoute.ChatDetail(
+                characterId = item.characterId,
+                chatEnterSource = AppRoute.ChatEnterSource.BIG_SCREEN,
+                characterType = item.characterType,
+                contentType = item.contentType,
+            ),
             AppRouter.Source.IN_APP,
         )
     }

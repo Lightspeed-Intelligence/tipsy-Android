@@ -1,6 +1,7 @@
 package ai.lightspeed.tipsy.shell
 
 import ai.lightspeed.tipsy.shell.analytics.Analytics
+import ai.lightspeed.tipsy.shell.i18n.L10n
 import ai.lightspeed.tipsy.shell.pages.login.LoginFragment
 import ai.lightspeed.tipsy.shell.pages.profile.PublicProfileFragment
 import ai.lightspeed.tipsy.shell.pages.search.SearchFragment
@@ -9,6 +10,7 @@ import ai.lightspeed.tipsy.shell.tabs.TabHostFragment
 import androidx.activity.enableEdgeToEdge
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
+import ai.lightspeed.tipsy.shell.surface.SurfaceProps
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
@@ -117,6 +119,18 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
                     supportFragmentManager.findFragmentByTag(
                         tagForUserProfile(route.userId),
                     ) == null
+            }
+            // ChatDetail / mini phone 同样必须用**谓词版**（P9）：两者都带参
+            // （characterId + 判定素材），相等判定拿不到那些值就永远不成立，
+            // 表现是「退出聊天后再点同一个角色永远打不开」。
+            //
+            // 判据是「栈里已无 ChatDetailSurface 容器」而不是比对 characterId：
+            // 两个 route 共用同一个 Surface 容器（同一个 componentName），
+            // 且壳内不叠两层聊天页 —— 容器没了就说明那条路由已关闭。
+            if (supportFragmentManager.findFragmentByTag(TAG_CHAT_DETAIL_SURFACE) == null) {
+                router.onDestinationClosed { route ->
+                    route is AppRoute.ChatDetail || route is AppRoute.MiniPhoneChat
+                }
             }
         }
 
@@ -240,7 +254,11 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
 
         override fun navigate(route: AppRoute, source: AppRouter.Source) {
             when (route) {
-                is AppRoute.ChatDetail -> openSurface("ChatDetailSurface")
+                // P9：ChatDetail 与 mini phone 是**同一个 Surface 的不同初始屏**，
+                // 不是两个 Surface（对齐 useChatNavigation.toChatPage 的分支）
+                is AppRoute.ChatDetail,
+                is AppRoute.MiniPhoneChat,
+                -> openSurface("ChatDetailSurface", route)
                 // W3：原生全屏页（不是 Surface）。白名单里为什么允许它们见
                 // `ProductionRoutePolicy`
                 is AppRoute.Search -> openSearch()
@@ -289,9 +307,30 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
         }
     }
 
-    private fun openSurface(componentName: String) {
+    /**
+     * 挂载一个业务 Surface。
+     *
+     * @param route 业务参数来源。**必须传** —— P9 前这里只传 componentName，
+     *   `SurfaceProps.forRoute` 的产出根本没接到调用链上，等于所有业务参数
+     *   都没送出去（`characterId` 恒 undefined，聊天页恢复上次会话）。
+     *   那正是 `SurfaceProps` 类注释里警告的「参数没生效」型漂移。
+     *
+     * ⚠️ 语言必须传壳的真值（`L10n.current`）：壳是唯一 writer（§2.16），
+     * 不传会让 Surface 用 JS 侧的陈旧值。
+     */
+    private fun openSurface(componentName: String, route: AppRoute) {
         supportFragmentManager.commit {
-            replace(R.id.surface_container, RNSurfaceFragment.newInstance(componentName))
+            replace(
+                R.id.surface_container,
+                RNSurfaceFragment.newInstance(
+                    componentName = componentName,
+                    routeParams = SurfaceProps.forRoute(route),
+                    languageCode = L10n.current,
+                ),
+                // tag 用 componentName：退栈后要靠它判「该 Surface 已关闭」
+                // 从而解除 Router 的去重（见 onBackStackChanged 监听）
+                componentName,
+            )
             addToBackStack(componentName)
         }
     }
@@ -371,6 +410,14 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
 
         /** 设置页的 Fragment tag —— [openSettings] 靠它做幂等判定。 */
         const val TAG_SETTINGS = "settings"
+
+        /**
+         * `ChatDetailSurface` 容器的 tag（P9）。
+         *
+         * 值等于 componentName —— [openSurface] 用 componentName 作 tag，
+         * 退栈后靠它判「该 Surface 已关闭」从而解除 Router 去重。
+         */
+        const val TAG_CHAT_DETAIL_SURFACE = "ChatDetailSurface"
 
         fun tagForUserProfile(userId: String) = "$TAG_USER_PROFILE_PREFIX$userId"
 

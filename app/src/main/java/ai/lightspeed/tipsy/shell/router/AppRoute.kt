@@ -44,9 +44,67 @@ sealed interface AppRoute {
      * `chat/detail` —— 聊天详情。W1-P9 的 gate 对象。
      *
      * `characterId` 可空：RN 侧该路由的参数是可选的（进去后恢复上次会话）。
+     *
+     * ## 其余三个参数是**判定素材**，不是目标屏（P9）
+     *
+     * 壳**刻意不复刻** `resolveChatEntryMode` / `resolveChatEntryScreen` 的分流：
+     * 只把素材透传给 `ChatDetailSurface`，由它挂载时 `resolveInitialParams`
+     * 自决初始屏（§2.30 定的纪律，Screen 那刀也照此办）。
+     *
+     * ⚠️ 这与 Screen 的 RN 代码是**有意偏差**：`screen.tsx:655-704` 是在
+     * 页面内做四路分流的。壳侧仍按 ChatList 那条做 —— 分流逻辑存在两份
+     * 就一定会漂移，而漂移的表现是「同一个角色从不同入口进去落在不同屏」。
+     *
+     * 参数形状对齐 `useChatNavigation.ts:91-105` 壳分支的 `bridgeParams`
+     * （那是 RN 侧自己经桥转发时用的形状，跟着它走天然对等）。
+     *
+     * @param chatEnterSource 入口来源。影响影院 `sourceType` 与入口模式判定
+     *   （`big_screen` → `first_tab`，其余 → `chat_list`）。
+     * @param isStory story 恒普通聊天页，优先级高于影院分流。
+     * @param characterType `2` = 多角色。**缺失不等于 1** —— RN 按
+     *   `resolvedCharacterType !== 2` 判，缺失时靠 `interactive.tsx`
+     *   on-mount 兜底纠偏，所以壳传 null 是安全的。
+     * @param contentType 与 `characterType == 1` 合起来判 html 富文本
+     *   （`1 + 2` → `ChatDetailHtml`）。
      */
-    data class ChatDetail(val characterId: String? = null) : AppRoute {
+    data class ChatDetail(
+        val characterId: String? = null,
+        val chatEnterSource: String? = null,
+        val isStory: Boolean = false,
+        val characterType: Int? = null,
+        val contentType: Int? = null,
+    ) : AppRoute {
         override val requiresAuth = true
+    }
+
+    /**
+     * `chatEnterSource` 的取值（`types/chat.ts` 的 `ChatEnterSource`）。
+     *
+     * 壳侧只用得到这几个 —— 每个原生列表页各对应一个入口。
+     * ⚠️ **值是跨仓契约**，RN 侧按字符串比对（`useChatNavigation.ts:59`
+     * 用 `=== 'big_screen'` 决定影院 sourceType），拼错不报错、只是走错分支。
+     */
+    object ChatEnterSource {
+        /** Screen 大屏页 CTA（`screen.tsx`）—— 影院 sourceType 走 `first_tab`。 */
+        const val BIG_SCREEN = "big_screen"
+
+        /** 聊天列表会话行。 */
+        const val CHAT_LIST = "chat_list"
+
+        /**
+         * 发现页卡片 —— RN 侧固定 normal 模式，不读角色 LRU。
+         *
+         * ⚠️ **搜索结果也用这个值**，不是 `"search"`：搜索页复用
+         * `HomeCard`（`CharacterResultList.tsx:88`），而它硬编码传 `'home'`
+         * （`HomeCard.tsx:178`）。`ChatEnterSource` 联合类型里根本没有
+         * `search`（`navigation/type.ts:21-26` 只有 home / big_screen /
+         * chat_list / profile / unknown）—— 传个不存在的值不报错，
+         * 只是入口模式判定会落到 else 分支。
+         */
+        const val HOME = "home"
+
+        /** 他人主页的角色卡（W3 已实现，但那里的卡片点击尚未接 ChatDetail）。 */
+        const val PROFILE = "profile"
     }
 
     /** `chat/mini-phone` —— mini phone 聊天。 */

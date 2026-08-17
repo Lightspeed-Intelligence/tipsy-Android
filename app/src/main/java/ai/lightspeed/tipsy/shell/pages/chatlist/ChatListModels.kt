@@ -76,6 +76,22 @@ data class ChatThread(
         get() = itemType == TYPE_STORY || characterType == CHARACTER_TYPE_STORY
 
     /**
+     * 进聊天时透传给 `ChatDetailSurface` 的 `isStory`（P9）。
+     *
+     * ⚠️ **与 [showStoryTag] 不是同一个判定**，别复用那个 —— 它多带一条
+     * `characterType == 2`（角标把多角色也画成 story 样式），而
+     * `ChatListItem.tsx:286` 写入 preload 的 `isStory` **只看
+     * `item_type === 'story'`**。
+     *
+     * 差别在多角色角色上会体现：`isStory` 为真时
+     * `resolveChatEntryScreen` 恒落普通聊天页（优先级最高，
+     * `chat_mode_lru.ts:74`），而 `characterType == 2` 本该进 **MultiCinema**。
+     * 用角标那个判定的表现是「多角色角色从聊天列表进去看不到影院」，
+     * 且不报错。
+     */
+    val isStoryEntry: Boolean get() = itemType == TYPE_STORY
+
+    /**
      * 与另一条是否指同一业务实体（pin/delete 的匹配判定，
      * `index.tsx:156-163` / `ChatListItem.tsx:178-183` 的比对条件）。
      */

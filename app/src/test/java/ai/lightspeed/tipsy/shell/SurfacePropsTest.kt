@@ -5,6 +5,7 @@ import ai.lightspeed.tipsy.shell.surface.SurfaceContract
 import ai.lightspeed.tipsy.shell.surface.SurfaceProps
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -39,6 +40,138 @@ class SurfacePropsTest {
         assertTrue(SurfaceProps.forRoute(AppRoute.ChatDetail(null)).isEmpty())
         assertTrue(SurfaceProps.forRoute(AppRoute.ChatDetail("")).isEmpty())
         assertTrue(SurfaceProps.forRoute(AppRoute.ChatDetail("   ")).isEmpty())
+    }
+
+    // ── ChatDetail 判定素材（P9）──────────────────────────────
+
+    /*
+     * 这一组防的是**四个素材各自的形状**。它们的共同特征是错了不报错：
+     * RN 侧 initial props 运行期不校验，分流判定又用严格相等 ——
+     * 症状是「某类角色从某个入口进去落错屏」，只能靠逐个入口人工点。
+     */
+
+    /**
+     * `characterType` / `contentType` **必须在嵌套 `preload` 里**，不是顶层。
+     *
+     * `resolveInitialParams` 读的是 `preloadState.characterType`
+     * （`ChatDetailSurface.tsx:377`）—— `props.characterType` 全仓零命中。
+     * 平铺的表现是 html 富文本与多角色影院一律落普通聊天页。
+     */
+    @Test
+    fun `分流素材必须进嵌套 preload 而不是顶层`() {
+        val props = SurfaceProps.forRoute(
+            AppRoute.ChatDetail(
+                characterId = "c1",
+                characterType = 1,
+                contentType = 2,
+            ),
+        )
+
+        assertNull("characterType 平铺在顶层 RN 读不到", props["characterType"])
+        assertNull("contentType 平铺在顶层 RN 读不到", props["contentType"])
+
+        val preload = props["preload"] as? Map<*, *>
+        assertNotNull("缺少 preload —— 分流素材没有别的通道", preload)
+        assertEquals(1, preload!!["characterType"])
+        assertEquals(2, preload["contentType"])
+    }
+
+    /**
+     * 素材必须是**数字**，不能是字符串。
+     *
+     * RN 按 `characterType === 1 && contentType === 2` 判 html
+     * （`chat_mode_lru.ts:77`），而 `"1" === 1` 在 JS 里是 `false`。
+     */
+    @Test
+    fun `分流素材是数字类型不是字符串`() {
+        val preload = SurfaceProps.forRoute(
+            AppRoute.ChatDetail("c1", characterType = 2),
+        )["preload"] as Map<*, *>
+
+        assertTrue(
+            "characterType 必须是 Int —— 字符串会让 JS 的 === 判定恒假",
+            preload["characterType"] is Int,
+        )
+    }
+
+    /** 两个素材都缺时整个 preload 不放（空对象在 RN 侧等价于不传）。 */
+    @Test
+    fun `无分流素材时不放空 preload`() {
+        val props = SurfaceProps.forRoute(AppRoute.ChatDetail("c1"))
+        assertNull(props["preload"])
+    }
+
+    /** 只有一个素材时也要放 preload —— 缺的那个由 RN 侧 `?? state` 保旧。 */
+    @Test
+    fun `单个分流素材也产出 preload`() {
+        val preload = SurfaceProps.forRoute(
+            AppRoute.ChatDetail("c1", contentType = 2),
+        )["preload"] as Map<*, *>
+
+        assertEquals(2, preload["contentType"])
+        assertNull(preload["characterType"])
+    }
+
+    /**
+     * `chatEnterSource` 与 `isStory` 走**顶层**（RN 侧确实读 props 那两个：
+     * `:356` 与 `:378`）。`isStory` 是 Boolean 而不是字符串 ——
+     * RN 用 `?? false`，字符串 `"false"` 会被当成真。
+     */
+    @Test
+    fun `入口来源与 story 标记走顶层且类型正确`() {
+        val props = SurfaceProps.forRoute(
+            AppRoute.ChatDetail(
+                characterId = "s1",
+                chatEnterSource = AppRoute.ChatEnterSource.BIG_SCREEN,
+                isStory = true,
+            ),
+        )
+
+        assertEquals("big_screen", props["chatEnterSource"])
+        assertEquals(true, props["isStory"])
+        assertTrue("isStory 必须是 Boolean", props["isStory"] is Boolean)
+    }
+
+    /** `isStory = false` 与缺省在 RN 侧等价（`?? false`），不放该键。 */
+    @Test
+    fun `isStory 为假时不放该键`() {
+        val props = SurfaceProps.forRoute(AppRoute.ChatDetail("c1", isStory = false))
+        assertNull(props["isStory"])
+    }
+
+    /**
+     * `chatEnterSource` 的取值是跨仓契约，必须落在 RN 的联合类型里
+     * （`navigation/type.ts:21-26`）。
+     *
+     * ⚠️ 特别是**没有 `search`** —— 搜索页复用 `HomeCard`，传的是 `home`。
+     * 编一个新值不报错，只是入口模式判定落到 else 分支。
+     */
+    @Test
+    fun `入口来源取值都在 RN 的联合类型里`() {
+        val rnUnion = setOf("home", "big_screen", "chat_list", "profile", "unknown")
+        val shellValues = setOf(
+            AppRoute.ChatEnterSource.HOME,
+            AppRoute.ChatEnterSource.BIG_SCREEN,
+            AppRoute.ChatEnterSource.CHAT_LIST,
+            AppRoute.ChatEnterSource.PROFILE,
+        )
+
+        assertTrue(
+            "壳用了 RN 不认的入口来源：${shellValues - rnUnion}",
+            rnUnion.containsAll(shellValues),
+        )
+        assertFalse(
+            "RN 的 ChatEnterSource 里没有 search —— 搜索页复用 HomeCard 传 home",
+            rnUnion.contains("search"),
+        )
+    }
+
+    /** mini phone 不参与影院/html 分流，故不带素材（RN `:297` 那支只读两个参数）。 */
+    @Test
+    fun `MiniPhone 不带分流素材`() {
+        val props = SurfaceProps.forRoute(AppRoute.MiniPhoneChat("c1"))
+        assertNull(props["preload"])
+        assertNull(props["isStory"])
     }
 
     @Test
