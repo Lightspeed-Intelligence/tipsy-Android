@@ -216,6 +216,36 @@ class AppRouterTest {
     }
 
     /**
+     * ⚠️ **Router 的去重挡不住「点两张不同卡片」** —— 这条测试记录的是一个
+     * 已知边界，不是缺陷：`lastHandled` 是 `route to source`，两个不同
+     * characterId 是两个不同 route，两次都会 navigate。
+     *
+     * 幂等因此**必须由 Activity 侧补**（`openSurface` 用 componentName 作 tag
+     * 判栈里是否已有），RN 侧对应物是 `useChatNavigation.ts:45` 的
+     * `globalNavigating` 闸。不补的表现是叠两层 Surface 容器 ——
+     * 而那正好会让 §12 那个「单层容器所以 popSurface 弹不错」的前提失效。
+     *
+     * 写成测试而不是注释：将来若有人想把幂等收进 Router，这条会告诉他
+     * 当前语义是什么、以及为什么 Activity 那侧不能删。
+     */
+    @Test
+    fun `Router 不挡不同角色的连续点击 —— 幂等归 Activity`() {
+        val f = fixture(
+            loggedIn = true,
+            enabled = listOf(AppRoute.ChatDetail::class.java),
+        )
+
+        f.router.handle(AppRoute.ChatDetail("c1"))
+        f.router.handle(AppRoute.ChatDetail("c2"))
+
+        assertEquals(
+            "两个不同 route 都会到 navigator —— 幂等必须由 openSurface 的 tag 判定兜住",
+            2,
+            f.navigated.size,
+        )
+    }
+
+    /**
      * 带参路由的去重必须能解除，否则「退出聊天后再点同一个角色永远打不开」。
      *
      * `ChatDetail` 带 characterId + 判定素材，**相等判定拿不到那些值** ——

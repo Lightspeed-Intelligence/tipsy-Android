@@ -319,6 +319,19 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
      * 不传会让 Surface 用 JS 侧的陈旧值。
      */
     private fun openSurface(componentName: String, route: AppRoute) {
+        // ⚠️ **必须幂等**，同 [openLogin] / [openSearch]。
+        //
+        // Router 的去重只挡**同一个** route（lastHandled 是 route to source），
+        // 挡不住「快速点两张**不同**卡片」—— 那是两个不同 route，会叠两层
+        // Surface 容器。RN 侧对此有专门的 `globalNavigating` 闸
+        // （`useChatNavigation.ts:45`），壳侧对应物就是这里。
+        //
+        // 这条同时是 §12 实例关闭链「只有单层容器所以弹不错」那个前提的**保证**：
+        // 没有它，两层同类型容器一出现，固定传 null 的 popSurface 就会弹错。
+        if (supportFragmentManager.findFragmentByTag(componentName) != null) {
+            Log.i(TAG, "$componentName 已在栈中，忽略重复请求")
+            return
+        }
         supportFragmentManager.commit {
             replace(
                 R.id.surface_container,
