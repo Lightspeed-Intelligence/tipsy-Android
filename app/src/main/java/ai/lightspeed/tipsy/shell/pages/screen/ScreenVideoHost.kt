@@ -61,6 +61,8 @@ fun ScreenVideoHost(
     pool: ScreenPlayerPool,
     /** 播完回调 —— 上层据此切 tagline（`hasUserInteracted` 的判定在上层）。 */
     onPlaybackEnded: () -> Unit,
+    /** 播放出错 —— 上层据此把封面重新显示出来（对齐 RN `setShowThumbnail(true)`）。 */
+    onPlaybackError: () -> Unit,
     /** 首帧已渲染 —— 上层据此隐藏封面并结算首屏埋点。 */
     onFirstFrame: () -> Unit,
     modifier: Modifier = Modifier,
@@ -101,9 +103,15 @@ fun ScreenVideoHost(
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                // 对齐 RN handleVideoError：不崩、不重试，把封面图留着
-                // （上层的 showThumbnail 本就还是 true —— 首帧没来过就没隐藏过）
+                // 对齐 RN `handleVideoError`（`FeedMediaItem.tsx:495-499`）：
+                // 不崩、不重试，**并且把封面重新显示出来** —— RN 那里明写
+                // `setShowThumbnail(true)`。
+                //
+                // ⚠️ 首帧之后才出错（网络断/解码失败）时必须复位，否则视频层
+                // 停在最后一帧或黑帧上、封面被它盖住 —— 表现是「画面冻住」。
+                // 早前只 pause 不复位就是这个缺陷（Codex review 第 4 条）。
                 current.pause()
+                onPlaybackError()
             }
         }
         current.addListener(listener)

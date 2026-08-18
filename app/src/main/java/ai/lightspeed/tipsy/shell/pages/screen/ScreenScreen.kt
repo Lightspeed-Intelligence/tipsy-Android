@@ -76,6 +76,8 @@ fun ScreenScreen(
     isActive: Boolean,
     /** 声音开关初值，见 [ScreenSoundPreference]。 */
     soundEnabled: Boolean,
+    /** 声音开关点击 —— 只改内存不持久化，见 `ScreenFragment.soundEnabled`。 */
+    onSoundToggle: () -> Unit,
     /** 有界播放器池；null 表示本次组合不播视频（预览/测试）。 */
     playerPool: ScreenPlayerPool?,
     onPageChanged: (Int) -> Unit,
@@ -113,6 +115,7 @@ fun ScreenScreen(
                 state = state,
                 isActive = isActive,
                 soundEnabled = soundEnabled,
+                onSoundToggle = onSoundToggle,
                 playerPool = playerPool,
                 onPageChanged = onPageChanged,
                 onStartChat = onStartChat,
@@ -130,6 +133,7 @@ private fun ScreenPager(
     state: ScreenState,
     isActive: Boolean,
     soundEnabled: Boolean,
+    onSoundToggle: () -> Unit,
     playerPool: ScreenPlayerPool?,
     onPageChanged: (Int) -> Unit,
     onStartChat: () -> Unit,
@@ -144,28 +148,72 @@ private fun ScreenPager(
         snapshotFlow { pagerState.settledPage }.collect { onPageChanged(it) }
     }
 
-    VerticalPager(
-        state = pagerState,
-        // ⚠️ 保持默认 0：这个值决定同时存活的相邻页数量，
-        // P2 接播放器后它就是 OOM 的直接来源，见文件头注释
-        modifier = Modifier.fillMaxSize().testTag("screen_pager"),
-        key = { state.items[it].characterId },
-    ) { page ->
-        ScreenCard(
-            item = state.items[page],
-            // ±1 窗口（对齐 RN `FeedMediaItem.tsx:594` 与 iOS 池）：
-            // 窗口外只渲染封面图，不挂播放器。与池容量共同构成 OOM 上界。
-            isWithinVideoWindow = kotlin.math.abs(page - pagerState.currentPage) <= 1,
-            isCurrentPage = page == pagerState.currentPage,
-            isPageActive = isActive,
+    Box(Modifier.fillMaxSize()) {
+        VerticalPager(
+            state = pagerState,
+            // ⚠️ 保持默认 0：这个值决定同时存活的相邻页数量，
+            // P2 接播放器后它就是 OOM 的直接来源，见文件头注释
+            modifier = Modifier.fillMaxSize().testTag("screen_pager"),
+            key = { state.items[it].characterId },
+        ) { page ->
+            ScreenCard(
+                item = state.items[page],
+                // ±1 窗口（对齐 RN `FeedMediaItem.tsx:594` 与 iOS 池）：
+                // 窗口外只渲染封面图，不挂播放器。与池容量共同构成 OOM 上界。
+                isWithinVideoWindow = kotlin.math.abs(page - pagerState.currentPage) <= 1,
+                isCurrentPage = page == pagerState.currentPage,
+                isPageActive = isActive,
+                soundEnabled = soundEnabled,
+                playerPool = playerPool,
+                onStartChat = onStartChat,
+                onCardEvent = onCardEvent,
+                statusBarPadding = statusBarPadding,
+                bottomPadding = bottomPadding,
+            )
+        }
+
+        // 声音开关：右上角覆盖层，**在 Pager 之外**（对齐 RN 的
+        // `TipsyHeaderLayout` 也是 FlatList 的兄弟节点而非 item 内部）。
+        // 放进卡片里会让每张卡各有一个按钮，且翻页时跟着滑走
+        SoundToggleButton(
             soundEnabled = soundEnabled,
-            playerPool = playerPool,
-            onStartChat = onStartChat,
-            onCardEvent = onCardEvent,
-            statusBarPadding = statusBarPadding,
-            bottomPadding = bottomPadding,
+            onToggle = onSoundToggle,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = statusBarPadding)
+                .padding(end = SOUND_BUTTON_END_PADDING.dp, top = SOUND_BUTTON_TOP_PADDING.dp),
         )
     }
+}
+
+/**
+ * 右上角声音开关（对齐 RN `screen.tsx:1300-1318` 的 `screen.soundToggleButton`）。
+ *
+ * iOS 研究文档 §3.1 把它列在「常驻控件」里 —— 两端都有，是必做项。
+ *
+ * ⚠️ 点击**只改内存不持久化**（本刀刻意接受的临时偏差）：写回
+ * `chat-persist-storage` 属共享键写协议，另包解决。见
+ * [ScreenSoundPreference] 的所有权说明。
+ */
+@Composable
+private fun SoundToggleButton(
+    soundEnabled: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Image(
+        painter = painterResource(
+            if (soundEnabled) R.drawable.ic_screen_sound_on else R.drawable.ic_screen_sound_off,
+        ),
+        // 无障碍：读出当前状态而不是"按钮"，否则用户不知道点了会变成什么
+        contentDescription = rememberLocalizedString(
+            if (soundEnabled) "Sound on" else "Sound off",
+        ),
+        modifier = modifier
+            .size(SOUND_BUTTON_SIZE.dp)
+            .testTag("screen_sound_toggle")
+            .clickable(onClick = onToggle),
+    )
 }
 
 /**
@@ -224,6 +272,9 @@ private fun ScreenCard(
                 onFirstFrame = { videoHasFrame = true },
                 // 播完 → 回首帧 + 重新露出封面（切 tagline 的判定属 P3 状态机）
                 onPlaybackEnded = { videoHasFrame = false },
+                // 出错也要把封面放回来（对齐 RN handleVideoError），
+                // 否则首帧后出错会停在黑帧/冻结帧上
+                onPlaybackError = { videoHasFrame = false },
                 modifier = Modifier
                     .fillMaxSize()
                     .alpha(if (videoHasFrame) 1f else 0f)
@@ -468,6 +519,12 @@ private fun parsePrimaryColor(raw: String?): Color {
 // ── 视觉常量（对着 FeedMediaItem.tsx 取）──────────
 
 /** 渐变四段（`:672-683` 的 colors + locations）。 */
+// 声音开关（对齐 RN `screen.tsx` styles：soundButtonIcon 32×32、
+// soundHeader paddingRight 12 / height 44 —— 按钮在 44 高的头部里右对齐）
+private const val SOUND_BUTTON_SIZE = 32
+private const val SOUND_BUTTON_END_PADDING = 12
+private const val SOUND_BUTTON_TOP_PADDING = 6
+
 private const val GRADIENT_TOP_ALPHA = 0.7f
 private const val GRADIENT_BOTTOM_ALPHA = 0.8f
 private const val GRADIENT_STOP_UPPER = 0.15f

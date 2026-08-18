@@ -112,12 +112,16 @@ class ScreenFragment : Fragment() {
     private var playerPool: ScreenPlayerPool? = null
 
     /**
-     * 声音开关初值。只读 RN 的 `chat-persist-storage`，见 [ScreenSoundPreference]
-     * —— ⚠️ 那里记着一处**待 owner 定**的所有权例外。
+     * 声音开关。只读 RN 的 `chat-persist-storage` 作**每次可见时的初值**，
+     * 页内点击只改内存、**不写回** —— 见 [ScreenSoundPreference] 的所有权说明。
+     *
+     * ⚠️ **必须每次 `onStart` 重读，不能 `by lazy`**：用户可能在 RN 的 Screen 页
+     * 或 Chat Settings 里改过这个开关（那边是唯一 writer）。只读一次的表现是
+     * 「在别处关了声音，回到原生大屏页又出声」—— 而这种不一致用户不会报成缺陷。
+     *
+     * 页内点击不持久化是**本刀刻意接受的临时偏差**：写回属共享键写协议，另包解决。
      */
-    private val soundEnabled by lazy {
-        ScreenSoundPreference.read(LegacyMmkvStore.open(requireContext()))
-    }
+    private val soundEnabled = mutableStateOf(ScreenSoundPreference.DEFAULT_SOUND_ENABLED)
 
     /**
      * 前台轴观察者。**必须在 onDestroyView 反注册** ——
@@ -179,7 +183,9 @@ class ScreenFragment : Fragment() {
                 ScreenScreen(
                     state = state,
                     isActive = playbackActive.value,
-                    soundEnabled = soundEnabled,
+                    soundEnabled = soundEnabled.value,
+                    // 页内切换只改内存（刻意不写回 RN 的共享键，见 soundEnabled 注释）
+                    onSoundToggle = { soundEnabled.value = !soundEnabled.value },
                     playerPool = playerPool,
                     onPageChanged = viewModel::onPageChanged,
                     onRefresh = viewModel::onRefresh,
@@ -210,18 +216,43 @@ class ScreenFragment : Fragment() {
 
     override fun onStart() {
         super.onStart()
-        isFocused = true
-        playbackActive.value = true
-        viewModel.onFocusChanged(focused = true)
+        // ⚠️ 切 Tab **不会**走 onStart —— TabHostFragment 用 show/hide 保状态
+        // （对齐 RN 的 `detachInactiveScreens={false}`），hide 不改生命周期状态。
+        // 所以真正的「Tab 可见性」轴在 onHiddenChanged，不在这里。
+        // 这里只覆盖「Activity 级别可见」（冷启/回前台/进程恢复）
+        if (!isHidden) applyVisible(true)
         viewModel.onAppear()
     }
 
+    /**
+     * Tab 切换轴（**show/hide 不触发 onStart/onStop，所以必须有这个**）。
+     *
+     * 漏了它的后果有两个，都不报错：
+     * 1. 切到别的 Tab 后**视频继续在后台播**（`playbackActive` 不复位）；
+     * 2. 从 RN 侧改过声音开关再切回来仍用旧值（不重读 MMKV）。
+     */
+    override fun onHiddenChanged(hidden: Boolean) {
+        super.onHiddenChanged(hidden)
+        applyVisible(!hidden)
+    }
+
+    /** 可见性收口：两条轴（Activity 生命周期 + Tab show/hide）都汇到这里。 */
+    private fun applyVisible(visible: Boolean) {
+        isFocused = visible
+        playbackActive.value = visible
+        if (visible) {
+            // ⚠️ 每次真正可见都重读，**不是只在创建时读一次**：RN 侧（Screen 页 /
+            // Chat Settings）是这个开关的唯一 writer，用户在那边改过我们必须跟上。
+            // 漏了的表现是「在别处关了声音、回到原生大屏页又出声」，用户不会报
+            soundEnabled.value = ScreenSoundPreference.read(LegacyMmkvStore.open(requireContext()))
+        }
+        viewModel.onFocusChanged(focused = visible)
+    }
+
     override fun onStop() {
-        isFocused = false
         // 停播（对齐 RN 失焦立即 pause）。⚠️ **只停播不销毁池** ——
-        // iOS 研究文档 §4「聚焦/失焦」明写「不重置状态，保留缓冲快速恢复」。
-        playbackActive.value = false
-        viewModel.onFocusChanged(focused = false)
+        // iOS 研究文档 §4「聚焦/失焦」明写「不重置状态，保留缓冲快速恢复」
+        applyVisible(false)
         super.onStop()
     }
 

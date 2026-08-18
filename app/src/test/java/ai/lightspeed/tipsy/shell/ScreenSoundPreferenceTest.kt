@@ -55,6 +55,23 @@ class ScreenSoundPreferenceTest {
     }
 
     @Test
+    fun `同一信封两次读出不同值 —— 钉住必须每次重读`() {
+        // ⚠️ 这条守的是「读一次就缓存」那个缺陷：`by lazy` / 单次 init 会让
+        // 用户在 RN 侧（Screen 页 / Chat Settings，那边是唯一 writer）改过开关后，
+        // 回到原生大屏页仍用旧值 —— 表现是「在别处关了声音、回来又出声」。
+        //
+        // parse 本身必须是纯函数：同一输入恒同一输出、不同输入必须给不同输出。
+        // 调用方（ScreenFragment）在每次 onStart 重读，那部分由真机冒烟覆盖
+        val on = """{"state":{"videoSoundEnabled":true}}"""
+        val off = """{"state":{"videoSoundEnabled":false}}"""
+        assertTrue(ScreenSoundPreference.parse(on))
+        assertFalse(ScreenSoundPreference.parse(off))
+        // 再读一次，确认没有内部缓存
+        assertTrue(ScreenSoundPreference.parse(on))
+        assertFalse(ScreenSoundPreference.parse(off))
+    }
+
+    @Test
     fun `不读顶层同名字段`() {
         // Zustand persist 的值一定在 state 下。顶层同名字段是别的东西，
         // 读它等于绕过信封契约 —— 与 AccountLanguageReader 同一条纪律
