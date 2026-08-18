@@ -263,7 +263,12 @@ private fun ScreenCard(
         // 靠「有没有渲染封面」而不是 alpha 来决定露哪个。
         // 封面在需要时整块盖住视频，不需要时不组合。
         val videoVisible = item.isVideo && isWithinVideoWindow && playerPool != null
-        var videoHasFrame by remember(item.characterId, item.backgroundUrl) {
+        // ⚠️ key 要含 `videoVisible`：离开 ±1 窗口时播放器被归还、视频层被卸载，
+        // 若 frame 状态还留着 true，下次进窗口的**第一帧到达前**封面不会显示
+        // —— 那一瞬间露出的是上一个播放器的残留画面或黑帧，
+        // 正是防黑帧那条时序要挡的东西。
+        // URL 也在 key 里：URL 变了就是另一条媒体，旧的 frame 状态不适用
+        var videoHasFrame by remember(item.characterId, item.backgroundUrl, videoVisible) {
             mutableStateOf(false)
         }
 

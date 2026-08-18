@@ -98,9 +98,12 @@ class ScreenPlayerPool(
         // 抛出去就是整页崩。除了 cache（已在 dataSourceFactory 里降级），
         // ExoPlayer 构造本身也可能失败（设备解码器耗尽、厂商 ROM 差异），
         // 而播视频是**可选增强** —— 失败时降级封面图，不是让大屏页不可用
-        val player = runCatching {
+        // ⚠️ `catch (Exception)` 而**不是** `runCatching` —— 后者会连
+        // `OutOfMemoryError` 一起吞。而 OOM 恰恰是本页首要风险（方案 §8.1），
+        // 吞掉它只会让崩溃移到别处、更难归因
+        val player = try {
             ledger.borrow { playerFactory?.invoke() ?: createPlayer() }
-        }.getOrElse { error ->
+        } catch (error: Exception) {
             Log.w(TAG, "创建播放器失败，降级封面图", error)
             null
         }
@@ -109,11 +112,11 @@ class ScreenPlayerPool(
             Log.d(TAG, "池满/已释放/创建失败（capacity=$capacity），降级封面图")
             return null
         }
-        return runCatching {
+        return try {
             player.setMediaItem(MediaItem.fromUri(url))
             player.prepare()
             player
-        }.getOrElse { error ->
+        } catch (error: Exception) {
             // ⚠️ 坏掉的实例要 **discard 而不是 recycle** —— 它的状态已不可信，
             // 放回 idle 会被下一张卡借走，于是「一次装载失败」变成
             // 「之后每张卡都可能拿到坏播放器」。discard 从账上销掉 + release 一次，
@@ -310,63 +313,93 @@ class ScreenPlayerPool(
         private var videoCache: androidx.media3.datasource.cache.SimpleCache? = null
 
         /**
-         * 取缓存 —— **已就绪才返回，否则返回 null**（降级 upstream）。
+         * 取缓存 —— **只返回已在后台就绪的那个**，否则 null（本次走 upstream）。
          *
-         * ## 为什么不能只 `runCatching { SimpleCache(...) }`
+         * ## 为什么必须后台初始化，不能在调用处等
          *
-         * `SimpleCache` 的构造只对**一种**失败抛异常：目录已被另一实例锁住
+         * `SimpleCache` 构造只对**一种**失败抛：目录被另一实例锁住
          * （`SimpleCache.java:215` `lockFolder` → `IllegalStateException`）。
          *
-         * 真正常见的那些失败 —— 索引损坏、DB 初始化失败、建目录失败、
-         * `listFiles()` 返回 null —— 都发生在构造器**启动的后台线程**里
-         * （`SimpleCache.java:228-240`，线程名 `ExoPlayer:SimpleCacheInit`），
-         * 而 `initialize()` 把它们**存进 `initializationException` 而不是抛**
-         * （`:519-560`）。它们只在 `checkInitialization()` 或后续读写时才浮出来
-         * —— 那时已经在播放链路上了。
+         * 索引损坏、DB 初始化失败、建目录失败、`listFiles()` 返回 null
+         * 都发生在构造器**启动的后台线程**（`:228-240`
+         * `ExoPlayer:SimpleCacheInit`），`initialize()` 把它们**存进
+         * `initializationException` 而不是抛**（`:519-560`），
+         * 只在 `checkInitialization()` 才浮出来。
          *
-         * 所以流程必须是：**建 candidate → `checkInitialization()` 通过 → 才发布**。
-         * 失败要 `release()`（否则文件夹锁不释放，下次连重试都会被
-         * `lockFolder` 挡住），然后 memoize 失败、永久走 upstream。
+         * ⚠️ 而 `checkInitialization()` 是 **`synchronized`**（`:249`），
+         * 那个后台线程在 `initialize()` **全程持有同一把锁**（`:233`）——
+         * 所以在主线程调它会**阻塞到整目录扫描完成**。50MB 缓存目录冷启时
+         * 这就是几十到几百毫秒的主线程卡顿（首次进大屏页最明显），
+         * 而且卡顿只在缓存已经攒起来之后才出现，本地空缓存测不出来。
          *
-         * ⚠️ **catch `Exception` 而不是用 `runCatching`**：后者连
-         * `OutOfMemoryError` / `StackOverflowError` 一起吞，那类错误吞下去
-         * 只会让后面在更奇怪的地方崩。
+         * 所以：**构造 + 校验整段都放后台线程**，主线程只读结果。
+         * 就绪前的那几次 borrow 走无缓存 upstream（不省流量而已，不影响播放）。
          */
         @UnstableApi
         private fun cacheOrNull(context: Context): androidx.media3.datasource.cache.SimpleCache? {
             videoCache?.let { return it }
-            if (cacheOpenFailed) return null
-            return synchronized(this) {
-                videoCache?.let { return@synchronized it }
-                if (cacheOpenFailed) return@synchronized null
+            if (cacheState.get() == CACHE_IDLE) startCacheInit(context)
+            // 未就绪就先不带 cache —— 不阻塞主线程等它
+            return videoCache
+        }
 
-                var candidate: androidx.media3.datasource.cache.SimpleCache? = null
-                try {
-                    candidate = androidx.media3.datasource.cache.SimpleCache(
-                        java.io.File(context.cacheDir, CACHE_DIR_NAME),
-                        androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor(
-                            CACHE_SIZE_BYTES,
-                        ),
-                        androidx.media3.database.StandaloneDatabaseProvider(context),
-                    )
-                    // ⚠️ 关键一步：后台 initialize() 的失败只在这里浮出来
-                    candidate.checkInitialization()
-                    videoCache = candidate
-                    candidate
-                } catch (error: Exception) {
-                    // 释放文件夹锁 —— 不 release 的话锁一直留着，
-                    // 连"下次重试"都会被 lockFolder 直接挡掉
-                    candidate?.let { c -> try { c.release() } catch (ignored: Exception) { } }
-                    cacheOpenFailed = true
-                    Log.w(TAG, "视频磁盘缓存不可用，降级为无缓存播放", error)
-                    null
-                }
+        /** 只启动一次后台初始化。 */
+        @UnstableApi
+        private fun startCacheInit(context: Context) {
+            if (!cacheState.compareAndSet(CACHE_IDLE, CACHE_OPENING)) return
+            val appContext = context.applicationContext
+            Thread({ openCacheBlocking(appContext) }, "TipsyScreenCacheInit").apply {
+                priority = Thread.MIN_PRIORITY
+                isDaemon = true
+            }.start()
+        }
+
+        /**
+         * 后台建缓存：candidate → `checkInitialization()` 通过 → 才发布。
+         *
+         * 失败要**同时** `release()` 缓存（解开文件夹锁，否则下次连重试都会被
+         * `lockFolder` 挡掉）**和** `close()` database provider
+         * （`StandaloneDatabaseProvider` 持有 SQLite 句柄，不 close 就泄漏）。
+         *
+         * ⚠️ `catch (Exception)` 而**不是** `runCatching`/`Throwable`：
+         * 后者会把 `OutOfMemoryError` 一并吞掉，吞下去只会让后面在更奇怪的地方崩。
+         */
+        @UnstableApi
+        private fun openCacheBlocking(context: Context) {
+            var candidate: androidx.media3.datasource.cache.SimpleCache? = null
+            var provider: androidx.media3.database.StandaloneDatabaseProvider? = null
+            try {
+                provider = androidx.media3.database.StandaloneDatabaseProvider(context)
+                candidate = androidx.media3.datasource.cache.SimpleCache(
+                    java.io.File(context.cacheDir, CACHE_DIR_NAME),
+                    androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor(
+                        CACHE_SIZE_BYTES,
+                    ),
+                    provider,
+                )
+                // 后台 initialize() 的失败只在这里浮出来（本方法已在后台线程）
+                candidate.checkInitialization()
+                videoCache = candidate
+                cacheState.set(CACHE_READY)
+            } catch (error: Exception) {
+                // 顺序：先 release 缓存（解锁文件夹），再 close provider（放 SQLite 句柄）
+                candidate?.let { c -> try { c.release() } catch (ignored: Exception) { } }
+                provider?.let { p -> try { p.close() } catch (ignored: Exception) { } }
+                cacheState.set(CACHE_FAILED)
+                Log.w(TAG, "视频磁盘缓存不可用，降级为无缓存播放", error)
             }
         }
 
-        /** 缓存构造失败过 —— 不再重试，见 [cacheOrNull]。 */
-        @Volatile
-        private var cacheOpenFailed = false
+        private const val CACHE_IDLE = 0
+        private const val CACHE_OPENING = 1
+        private const val CACHE_READY = 2
+        private const val CACHE_FAILED = 3
+
+        /**
+         * 缓存初始化状态机。FAILED 后不再重试 —— 目录锁/损坏索引这类问题
+         * 重试也不会好，而每次 borrow 都试一遍会让每张卡都卡一下。
+         */
+        private val cacheState = java.util.concurrent.atomic.AtomicInteger(CACHE_IDLE)
 
         /**
          * DataSource 工厂。

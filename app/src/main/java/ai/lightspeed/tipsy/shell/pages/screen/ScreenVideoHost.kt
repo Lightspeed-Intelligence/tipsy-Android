@@ -80,8 +80,13 @@ fun ScreenVideoHost(
     // 借到的实例；null 表示池已满 —— 此时**什么都不渲染**，上层的封面图留在原位。
     var player by remember(url) { mutableStateOf<ExoPlayer?>(null) }
 
-    // 借还与 url 绑定：url 变了就是另一条卡，必须换 item 而不是复用旧的
-    DisposableEffect(url, pool) {
+    // 借还与 url 绑定：url 变了就是另一条卡，必须换 item 而不是复用旧的。
+    //
+    // ⚠️ **`isCurrent` 也是 key**：翻页快时邻页可能借不到（池满，正常降级），
+    // 但它随后**成为当前页**时必须再试一次 —— 此时别的卡已经归还了播放器。
+    // 不重试的表现是「快速划到某张卡后它永远只显示封面」，
+    // 而且只在快划时出现、慢慢划测不出来。
+    DisposableEffect(url, pool, isCurrent) {
         val borrowed = pool.borrow(url)
         player = borrowed
         onDispose {
@@ -138,28 +143,43 @@ fun ScreenVideoHost(
     // 合并成一条的后果：切个 Tab 回来视频从头开始（该保进度的没保住），
     // 或者划走再划回接着上次播（该重置的没重置）。两个方向都不对等。
 
-    // 轴一：是否当前页 —— 变化时重置（对齐 RN 的 seek(0) + 显示封面）
-    LaunchedEffect(current, isCurrent) {
-        if (isCurrent) {
-            current.seekTo(0)
-            delay(PLAY_START_DELAY_MS)
-            if (isActive) current.playWhenReady = true
-        } else {
-            // 划离：暂停 + 回首帧 + 让上层重新显示封面
+    // ## 一个 effect 管两条轴 —— **不能拆成两个**
+    //
+    // 拆成 `LaunchedEffect(isCurrent)` + `LaunchedEffect(isActive)` 会有跨轴竞态：
+    // 两个 effect 各自 `delay(PLAY_START_DELAY_MS)` 后写 `playWhenReady`，
+    // 而 Compose 只在**自己的 key 变化**时取消自己那个协程。于是
+    // 「划走（或切 Tab）刚好落在另一条轴的 delay 窗口里」时，
+    // 那条 delay 醒来仍会把 `playWhenReady = true` 写下去 ——
+    // 表现是**已经离开的卡片/已经切走的页面又开始播**（还占着音频焦点）。
+    //
+    // 合成一个 effect 后，任一轴变化都会取消并重启整段，delay 期间的
+    // 状态变化不可能"漏写"。两条轴的**语义差别**仍然保留（见下）。
+    //
+    // | 情形 | RN 行为（`FeedMediaItem.tsx:326-334`） | 这里 |
+    // | --- | --- | --- |
+    // | **卡片划离/划回** | `setShowThumbnail(true)` + `seek(0)` + 重置 | 复位封面 + seekTo(0) |
+    // | **Tab/Surface/App 失焦** | 只 `setIsPlaying(false)`，**不重置** | 只 pause，保住进度与缓冲 |
+    //
+    // RN 那行注释原文：「页面失去焦点时只暂停，不重置状态（保持缓冲，快速恢复）」。
+    // 合并这两种语义的后果是「切 Tab 回来从头播」或「划走再划回接着上次播」，
+    // 两个方向都不对等。
+    LaunchedEffect(current, isCurrent, isActive) {
+        if (!isCurrent) {
+            // 划离：暂停 + 回首帧 + 让上层重新显示封面（对齐 RN 切卡）
             current.playWhenReady = false
             current.seekTo(0)
             onResetToCover()
+            return@LaunchedEffect
         }
-    }
-
-    // 轴二：页面是否可见 —— 只控制播放/暂停，**不 seek、不复位封面**
-    LaunchedEffect(current, isActive) {
-        if (isActive && isCurrent) {
-            delay(PLAY_START_DELAY_MS)
-            current.playWhenReady = true
-        } else if (!isActive) {
+        if (!isActive) {
+            // 失焦：**只** pause —— 不 seek、不复位封面，保住进度与缓冲
             current.playWhenReady = false
+            return@LaunchedEffect
         }
+        // 当前页且可见：起播。轻微延后避免翻页动画未落定就争解码器；
+        // 这段 delay 期间任一轴变化都会取消本协程，不会再写 playWhenReady
+        delay(PLAY_START_DELAY_MS)
+        current.playWhenReady = true
     }
 
     LaunchedEffect(current, soundEnabled) {
