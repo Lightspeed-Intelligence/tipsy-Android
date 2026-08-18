@@ -144,6 +144,49 @@ sealed interface AppRoute {
         override val requiresAuth = true
     }
 
+    /**
+     * 角色创建流程 → `CreateSurface`（Tab3 伪 Tab 的目标，W4）。
+     *
+     * ## 壳**只传入口来源**，不传目标屏与 triggerSource
+     *
+     * RN 侧 `TabNavigator.tsx:425-430` 的 tabPress 里带了四个参数
+     * （`screen: 'ProfileDetail'` + `from` / `triggerSource` / `operationType`），
+     * 但那是**完整 App 内**跳 `CreateTabStack` 用的形状。壳侧不复刻：
+     * `CreateSurface` 自己就是那层微容器，它按 `isEdit` 自决落地页与参数
+     * （`CreateSurface.tsx:113-135` 的 `initialParams`），并把
+     * `createEnterSource` 过一遍 `normalizeCharacterTriggerSource` 得出
+     * `triggerSource`。
+     *
+     * 壳再传一份的表现是「同一个入口在两处各判一次」——§2.30 已定的纪律
+     * （ChatDetail 那刀同理：只传素材，分流留给 Surface）。
+     *
+     * @param enterSource 进入来源，进 `createEnterSource` prop。
+     *   ⚠️ 取值必须落在 `normalizeCharacterTriggerSource`
+     *   （`characterCreateAnalytics.ts:106-122`）认识的集合里 ——
+     *   不认识的值返回 `null`，Surface 会兜底成 `tab_bar_plus`，
+     *   表现是**埋点归因串到 Tab 入口**而不报错。见 [CreateEnterSource]。
+     */
+    data class Create(
+        val enterSource: String = CreateEnterSource.TAB_BAR_PLUS,
+    ) : AppRoute {
+        override val requiresAuth = true
+    }
+
+    /**
+     * `createEnterSource` 的取值（`normalizeCharacterTriggerSource` 认识的那些）。
+     *
+     * ⚠️ **跨仓契约**，RN 侧按字符串比对后归一到三个埋点值:
+     * `tab_bar_plus` / `draft_box` / `cha_edit`。拼错不报错,只是归一失败
+     * 落到 Surface 的 `|| 'tab_bar_plus'` 兜底。
+     */
+    object CreateEnterSource {
+        /** Tab3 的 ➕ —— 对齐 RN tabPress 传的 `triggerSource: 'tab_bar_plus'`。 */
+        const val TAB_BAR_PLUS = "tab_bar_plus"
+
+        /** 草稿箱入口（壳内尚无该入口，值先备好）。 */
+        const val DRAFT_BOX = "draft_box"
+    }
+
     // ── Profile 的出口（方案 §8.1 记的 5 个，W3 起陆续启用）──────────
     //
     // ⚠️ 这些类型**现在都不在** `ProductionRoutePolicy.enabledRouteTypes` 里，

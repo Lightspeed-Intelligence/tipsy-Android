@@ -106,6 +106,15 @@ object SurfaceProps {
     const val SETTINGS_INITIAL_SCREEN = "initialScreen"
 
     /**
+     * `CreateSurface` 的进入来源（`CreateSurface.tsx:25` `createEnterSource?`）。
+     *
+     * 值经 `normalizeCharacterTriggerSource` 归一成埋点用的 `triggerSource`；
+     * 不认识的值归一为 `null` 后被 `|| 'tab_bar_plus'` 兜底 —— 拼错的表现是
+     * **归因静默串到 Tab 入口**。取值见 `AppRoute.CreateEnterSource`。
+     */
+    const val CREATE_ENTER_SOURCE = "createEnterSource"
+
+    /**
      * 把 route 转成业务 props。
      *
      * @return 业务参数；无参数的 route 返回**空 map**。
@@ -196,6 +205,22 @@ object SurfaceProps {
          * 别把语言页做成这个 route。
          */
         is AppRoute.SettingsSubScreen -> mapOf(SETTINGS_INITIAL_SCREEN to route.screen)
+
+        /*
+         * `CreateSurface`（Tab3，W4）。**只有一个 prop**。
+         *
+         * ⚠️ 壳刻意**不传** `screen` / `from` / `triggerSource` / `operationType` ——
+         * RN 侧 `TabNavigator.tsx:425` 那四个参数是完整 App 内跳
+         * `CreateTabStack` 的形状，而 `CreateSurface` 自己就是那层容器：
+         * 它按 `isEdit` 自决 `initialParams`（`CreateSurface.tsx:113-135`），
+         * 并从 `createEnterSource` 推出 `triggerSource`。
+         * 壳再传一份就是把分流复刻成两份（§2.30）。
+         *
+         * ⚠️ 编辑模式的 `editCharacter` / `editCharacterId` 属 Profile 创作卡片
+         * 菜单那条入口，**不是本 route** —— 那条要透传整个角色对象
+         * （原封喂 `initCharStateUpdate` 才不丢字段），届时单开 route。
+         */
+        is AppRoute.Create -> mapOf(CREATE_ENTER_SOURCE to route.enterSource)
 
         // 其余 route 的目标页尚未启用（Router 会先拦下）。
         // **不写 else -> null**：加新 route 时编译器要强制我来这里想一次

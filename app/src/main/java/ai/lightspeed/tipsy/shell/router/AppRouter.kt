@@ -48,6 +48,10 @@ object ProductionRoutePolicy {
         AppRoute.Settings::class.java,
         AppRoute.ChatDetail::class.java,
         AppRoute.MiniPhoneChat::class.java,
+        // Tab3 创建入口（W4）。CreateSurface 在 RN 侧已注册
+        //（`index.surfaces.js:136`），且 §9.1 的单层容器/popSurface 收口
+        // 与 ChatDetail 同一条链
+        AppRoute.Create::class.java,
     )
 }
 

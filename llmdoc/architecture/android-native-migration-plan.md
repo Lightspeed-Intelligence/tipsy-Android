@@ -1039,6 +1039,12 @@ git -C tipsy-app diff --name-status <wave-source-sha>..<candidate-sha> -- \
 > 微根机器断言、桥桩回填）与 §2.37（§9.1 冒烟的逐项结果）。本文只定规则：
 > 路由已进生产白名单，但**这一行填满前不得标 production-ready**，
 > 且模拟器证据不算 —— 见进度文档 §2.5。
+>
+> **`CreateSurface` 同样已放开路由但未填表**（进度文档 §2.40，2026-08-18，
+> Tab3 的 ➕）。⚠️ 它比 ChatDetail 更欠一项：**微根依赖清单没有覆盖它**
+> （`SurfaceDependencyChecklist` 只断言了 ChatDetail），provider 树只做了
+> 人工比对。owner 需定是否补清单 —— 本条记录的正是 §8.3
+> 「未过矩阵的 Surface 不得接生产入口」这条纪律**当前有一处例外在跑**。
 
 ### 9.2 页面/横切能力对等（十类证据）
 

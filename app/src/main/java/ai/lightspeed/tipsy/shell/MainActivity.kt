@@ -132,6 +132,17 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
                     route is AppRoute.ChatDetail || route is AppRoute.MiniPhoneChat
                 }
             }
+            // Create 同理（W4）。⚠️ 这条**必须有**，而且它比 ChatDetail 更容易踩：
+            // `AppRoute.Create` 的参数是固定的 `tab_bar_plus`，每次点 ➕ 产出的
+            // 实例**完全相等**，所以 lastHandled 不解除的表现是「关掉创建页后
+            // 再点 ➕ 永远打不开」—— 真机实测确认过（ChatDetail 因为每次带不同
+            // characterId 而侥幸不暴露这个洞）。
+            //
+            // 用 data object 相等判定够用（无变参），但仍走谓词版保持与上面一致：
+            // 将来若加 draft_box 等入口来源，相等判定会立刻失效而谓词版不会。
+            if (supportFragmentManager.findFragmentByTag(TAG_CREATE_SURFACE) == null) {
+                router.onDestinationClosed { route -> route is AppRoute.Create }
+            }
         }
 
         router = AppRouter(
@@ -272,6 +283,9 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
                 // W3：原生设置列表（§2.33）。它的 7 个子屏是 SettingsSubScreen，
                 // 未过 §9.1 故不在白名单 —— Router 会先拦下
                 is AppRoute.Settings -> openSettings()
+                // W4：Tab3 伪 Tab 的目标。走 openSurface 的通用链 ——
+                // 幂等判定、平铺 props、popSurface 收口都与 ChatDetail 同一条
+                is AppRoute.Create -> openSurface(TAG_CREATE_SURFACE, route)
                 // 其余目标尚未启用，Router 的 enabledRoutes 会先拦下 ——
                 // 走到这里说明有人启用了路由却没加分支，属实现错误，必须可见。
                 else -> error("路由已启用但缺少导航实现：${route.javaClass.simpleName}")
@@ -431,6 +445,15 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
          * 退栈后靠它判「该 Surface 已关闭」从而解除 Router 去重。
          */
         const val TAG_CHAT_DETAIL_SURFACE = "ChatDetailSurface"
+
+        /**
+         * `CreateSurface` 容器的 tag（W4，Tab3）。同 [TAG_CHAT_DETAIL_SURFACE]：
+         * 值等于 componentName，退栈后靠它解除 Router 去重。
+         *
+         * ⚠️ 漏了这条解除的表现是「关掉创建页后再点 ➕ 永远打不开」——
+         * `AppRoute.Create` 参数固定，两次点击的实例完全相等，去重会一直命中。
+         */
+        const val TAG_CREATE_SURFACE = "CreateSurface"
 
         fun tagForUserProfile(userId: String) = "$TAG_USER_PROFILE_PREFIX$userId"
 

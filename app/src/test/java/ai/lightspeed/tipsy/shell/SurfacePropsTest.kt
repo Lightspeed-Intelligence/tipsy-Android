@@ -298,6 +298,47 @@ class SurfacePropsTest {
         assertTrue(SurfaceProps.forRoute(AppRoute.Settings).isEmpty())
     }
 
+    // ── Create（Tab3，W4）─────────────────────────────────────
+
+    /**
+     * `Create` → 平铺的 `createEnterSource`（`CreateSurface.tsx:25`）。
+     *
+     * 默认值必须是 `normalizeCharacterTriggerSource`
+     * （`characterCreateAnalytics.ts:106-122`）认识的值 —— 不认识的会归一成
+     * `null` 再被 Surface 的 `|| 'tab_bar_plus'` 兜底，表现是**归因静默串到
+     * Tab 入口**而不报错。
+     */
+    @Test
+    fun `Create 产出平铺 createEnterSource`() {
+        val props = SurfaceProps.forRoute(AppRoute.Create())
+        assertEquals(mapOf("createEnterSource" to "tab_bar_plus"), props)
+        assertNull("不该出现嵌套层", props["route"])
+    }
+
+    /**
+     * 壳**不传**目标屏与 triggerSource —— `CreateSurface` 自决
+     * （`CreateSurface.tsx:113-135` 的 `initialParams`）。
+     *
+     * 壳再传一份就是把分流复刻成两份（§2.30 纪律，ChatDetail 同理）。
+     * 这条断言防的是「照抄 RN `TabNavigator.tsx:425` 那四个参数」。
+     */
+    @Test
+    fun `Create 不传目标屏与 triggerSource`() {
+        val props = SurfaceProps.forRoute(AppRoute.Create())
+        for (key in listOf("screen", "from", "triggerSource", "operationType")) {
+            assertNull("$key 应由 CreateSurface 自决，壳不得传", props[key])
+        }
+    }
+
+    /** 取值来自 `CreateEnterSource` 常量，不硬编码字面量。 */
+    @Test
+    fun `Create 的 enterSource 可覆盖`() {
+        val props = SurfaceProps.forRoute(
+            AppRoute.Create(AppRoute.CreateEnterSource.DRAFT_BOX),
+        )
+        assertEquals("draft_box", props["createEnterSource"])
+    }
+
     @Test
     fun `纯业务 key 不触发守卫`() {
         // 不该误报：这些都是 RN 侧真实 props 名
