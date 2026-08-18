@@ -175,7 +175,12 @@ class ScreenPlayerPool(
     private fun createPlayer(): ExoPlayer =
         ExoPlayer.Builder(context)
             .setLoadControl(buildLoadControl())
-            // 50MB 磁盘缓存（对齐 RN `cacheSizeMB: 50`），见 [videoCache]
+            // 50MB 磁盘缓存（对齐 RN `cacheSizeMB: 50`），见 [dataSourceFactory]。
+            // ⚠️ 传的是**每次打开数据源时才解析 cache 的动态工厂**，不是在这里
+            // 就把 cache 定死 —— cache 是后台异步就绪的，静态解析会让
+            // 就绪之前创建的播放器**永久绕过缓存**（它们活在池里被反复复用，
+            // 于是"缓存已就绪"对它们永远不生效）。这类缺陷不报错，
+            // 只表现为流量与起播时间始终没改善
             .setMediaSourceFactory(
                 androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
                     dataSourceFactory(context),
@@ -417,18 +422,27 @@ class ScreenPlayerPool(
         @UnstableApi
         internal fun dataSourceFactory(
             context: Context,
-        ): androidx.media3.datasource.DataSource.Factory {
-            val upstream = androidx.media3.datasource.DefaultDataSource.Factory(context)
-            val cache = cacheOrNull(context) ?: return upstream
-            return androidx.media3.datasource.cache.CacheDataSource.Factory()
-                .setCache(cache)
-                .setUpstreamDataSourceFactory(upstream)
-                // 读写阶段出错（磁盘满等）继续走上游，不让播放整体失败
-                .setFlags(
-                    androidx.media3.datasource.cache.CacheDataSource
-                        .FLAG_IGNORE_CACHE_ON_ERROR,
-                )
-        }
+        ): androidx.media3.datasource.DataSource.Factory =
+            androidx.media3.datasource.DataSource.Factory {
+                // ⚠️ 每次 createDataSource() 才解析 cache —— **不能**在工厂创建时
+                // 就定死。cache 是后台异步就绪的：静态解析会让就绪前创建的播放器
+                // 永久无缓存，而池里的播放器会被反复复用，等于缓存对它们永不生效。
+                val upstream = androidx.media3.datasource.DefaultDataSource.Factory(context)
+                val cache = cacheOrNull(context)
+                if (cache == null) {
+                    upstream.createDataSource()
+                } else {
+                    androidx.media3.datasource.cache.CacheDataSource.Factory()
+                        .setCache(cache)
+                        .setUpstreamDataSourceFactory(upstream)
+                        // 读写阶段出错（磁盘满等）继续走上游，不让播放整体失败
+                        .setFlags(
+                            androidx.media3.datasource.cache.CacheDataSource
+                                .FLAG_IGNORE_CACHE_ON_ERROR,
+                        )
+                        .createDataSource()
+                }
+            }
 
         private fun assertMainThread() {
             check(Looper.myLooper() == Looper.getMainLooper()) {

@@ -77,16 +77,25 @@ fun ScreenVideoHost(
     if (url.isNullOrBlank()) return
 
     val context = LocalContext.current
-    // 借到的实例；null 表示池已满 —— 此时**什么都不渲染**，上层的封面图留在原位。
+    // 借到的实例；null 表示池满（正常降级）—— 此时不渲染视频层，封面留在原位。
     var player by remember(url) { mutableStateOf<ExoPlayer?>(null) }
 
-    // 借还与 url 绑定：url 变了就是另一条卡，必须换 item 而不是复用旧的。
+    // 借失败后的重试计数：只有**上次没借到**时才随 isCurrent 变化递增。
     //
-    // ⚠️ **`isCurrent` 也是 key**：翻页快时邻页可能借不到（池满，正常降级），
-    // 但它随后**成为当前页**时必须再试一次 —— 此时别的卡已经归还了播放器。
-    // 不重试的表现是「快速划到某张卡后它永远只显示封面」，
-    // 而且只在快划时出现、慢慢划测不出来。
-    DisposableEffect(url, pool, isCurrent) {
+    // ⚠️ 不能直接把 `isCurrent` 写进 DisposableEffect 的 key —— 那样**每次翻页
+    // 都会 recycle + 重新 borrow**，把一个正在用、缓冲已就绪的播放器扔掉重来
+    // （邻页 ↔ 当前页来回切时尤其明显：起播延迟、白白丢缓冲、还多几次
+    // 解码器创建）。而真正要修的只是「借不到之后没有第二次机会」这一种情况。
+    var retryTick by remember(url) { mutableStateOf(0) }
+    LaunchedEffect(url, isCurrent) {
+        // 成为当前页且当前手上没有播放器 → 触发一次重试。
+        // 此时别的卡多半已经归还了实例（池满是瞬时状态）
+        if (isCurrent && player == null) retryTick++
+    }
+
+    // 借还与 url 绑定：url 变了就是另一条卡，必须换实例而不是复用旧的。
+    // retryTick 只在"上次借失败且现在成为当前页"时才变，见上
+    DisposableEffect(url, pool, retryTick) {
         val borrowed = pool.borrow(url)
         player = borrowed
         onDispose {
