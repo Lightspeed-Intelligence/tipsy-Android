@@ -48,7 +48,8 @@ import java.io.File
  * | `config-persist-storage.chatPageType` | 本地偏好 | ✅ | ✅ `ChatPageTypeStore` | 同 gender 的信封缺失问题（继承，非新增） |
  * | `chat_draft_lru` | **RN ChatDetail** | ✅ 只读 | ❌ | 壳写会与 RN 的 LRU 淘汰打架 |
  * | `multi-cinema-conv-epoch:<id>` | 壳删除动作 | ❌ | ✅ `ChatListCache` | 壳删会话后**必须写**，不写会让重进影院假命中旧剧情 |
- * | `chat-persist-storage` / `chat-background-storage` | RN Surface | ❌ | ❌ | 方案 §4.1 明确归 RN |
+ * | `chat-persist-storage.videoSoundEnabled` | RN Surface | ✅ 只读（W4-P2 起） | ❌ | ⚠️ **所有权例外，待 owner**：原生 Screen 页播视频必须知道声音初值，否则默认静音/开声都是猜（RN 默认**开声**）。只读不会产生倒灌那一类缺陷（那两例都是**写**没 merge），故取三路里最保守的一条。见 [ai.lightspeed.tipsy.shell.pages.screen.ScreenSoundPreference] |
+ * | `chat-persist-storage` 其余字段 / `chat-background-storage` | RN Surface | ❌ | ❌ | 方案 §4.1 明确归 RN |
  *
  * ⚠️ **写 Zustand 信封（`{state, version}`）一律 merge，不得整体覆盖** ——
  * 覆盖会静默清掉同信封里其余二十多个字段。本类只提供 [getString] /

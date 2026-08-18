@@ -1,6 +1,7 @@
 package ai.lightspeed.tipsy.shell.pages.screen
 
 import ai.lightspeed.tipsy.shell.R
+import androidx.media3.common.util.UnstableApi
 import androidx.compose.foundation.Image
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.ui.geometry.Offset
@@ -28,9 +29,14 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -57,14 +63,24 @@ import coil3.compose.AsyncImage
  *
  * ## 竖向全屏翻页
  *
- * `VerticalPager`，一屏一条。⚠️ **`beyondViewportPageCount` 保持默认 0** ——
- * 那个参数会让相邻页提前组合，P2 接播放器时它直接决定同时存活的播放器数，
- * 也就是 OOM 的直接来源（方案 §8.1「有界池」）。P1 虽不播视频，
- * 但先把这个默认坐实，免得 P2 忘了。
+ * `VerticalPager`，一屏一条。⚠️ **`beyondViewportPageCount = 1`**（P2 起）——
+ * 它让相邻页提前组合，是 ±1 窗口能成立的前提（默认 0 时邻页不组合，
+ * `abs(page-current)<=1` 永远只对当前页成立）。同时它直接决定同时存活的
+ * 播放器数，也就是 OOM 的直接来源（方案 §8.1「有界池」），
+ * 与 [ScreenPlayerPool.capacity] 共同构成上界。**不要往上调**。
  */
 @Composable
+@UnstableApi  // 接收 ScreenPlayerPool（Media3 opt-in API）
 fun ScreenScreen(
     state: ScreenState,
+    /** 页面是否可见（Tab 切走 / App 进后台 → false）：决定视频是否播放。 */
+    isActive: Boolean,
+    /** 声音开关初值，见 [ScreenSoundPreference]。 */
+    soundEnabled: Boolean,
+    /** 声音开关点击 —— 只改内存不持久化，见 `ScreenFragment.soundEnabled`。 */
+    onSoundToggle: () -> Unit,
+    /** 有界播放器池；null 表示本次组合不播视频（预览/测试）。 */
+    playerPool: ScreenPlayerPool?,
     onPageChanged: (Int) -> Unit,
     onRefresh: () -> Unit,
     onRetry: () -> Unit,
@@ -98,6 +114,10 @@ fun ScreenScreen(
 
             else -> ScreenPager(
                 state = state,
+                isActive = isActive,
+                soundEnabled = soundEnabled,
+                onSoundToggle = onSoundToggle,
+                playerPool = playerPool,
                 onPageChanged = onPageChanged,
                 onStartChat = onStartChat,
                 onCardEvent = onCardEvent,
@@ -109,8 +129,13 @@ fun ScreenScreen(
 }
 
 @Composable
+@UnstableApi  // 透传 ScreenPlayerPool
 private fun ScreenPager(
     state: ScreenState,
+    isActive: Boolean,
+    soundEnabled: Boolean,
+    onSoundToggle: () -> Unit,
+    playerPool: ScreenPlayerPool?,
     onPageChanged: (Int) -> Unit,
     onStartChat: () -> Unit,
     onCardEvent: (ScreenCardEvent) -> Unit,
@@ -124,21 +149,78 @@ private fun ScreenPager(
         snapshotFlow { pagerState.settledPage }.collect { onPageChanged(it) }
     }
 
-    VerticalPager(
-        state = pagerState,
-        // ⚠️ 保持默认 0：这个值决定同时存活的相邻页数量，
-        // P2 接播放器后它就是 OOM 的直接来源，见文件头注释
-        modifier = Modifier.fillMaxSize().testTag("screen_pager"),
-        key = { state.items[it].characterId },
-    ) { page ->
-        ScreenCard(
-            item = state.items[page],
-            onStartChat = onStartChat,
-            onCardEvent = onCardEvent,
-            statusBarPadding = statusBarPadding,
-            bottomPadding = bottomPadding,
+    Box(Modifier.fillMaxSize()) {
+        VerticalPager(
+            state = pagerState,
+            // ⚠️ **必须显式设 1**（P1 时是默认 0）：`abs(page-current)<=1` 的
+            // ±1 窗口只在邻页**被组合**时才有意义 —— 默认 0 时邻页压根不组合，
+            // 那个判断永远只对当前页成立，"±1 预热"是空话。
+            //
+            // 这个值就是 OOM 的直接来源，与 [ScreenPlayerPool.capacity]
+            // 共同构成上界：1 表示同时最多 3 页被组合 → 最多 3 个播放器在用，
+            // 池容量 3~5 留出翻页重叠期。**不要往上调**。
+            beyondViewportPageCount = 1,
+            modifier = Modifier.fillMaxSize().testTag("screen_pager"),
+            key = { state.items[it].characterId },
+        ) { page ->
+            ScreenCard(
+                item = state.items[page],
+                // ±1 窗口（对齐 RN `FeedMediaItem.tsx:594` 与 iOS 池）：
+                // 窗口外只渲染封面图，不挂播放器。与池容量共同构成 OOM 上界。
+                isWithinVideoWindow = kotlin.math.abs(page - pagerState.currentPage) <= 1,
+                isCurrentPage = page == pagerState.currentPage,
+                isPageActive = isActive,
+                soundEnabled = soundEnabled,
+                playerPool = playerPool,
+                onStartChat = onStartChat,
+                onCardEvent = onCardEvent,
+                statusBarPadding = statusBarPadding,
+                bottomPadding = bottomPadding,
+            )
+        }
+
+        // 声音开关：右上角覆盖层，**在 Pager 之外**（对齐 RN 的
+        // `TipsyHeaderLayout` 也是 FlatList 的兄弟节点而非 item 内部）。
+        // 放进卡片里会让每张卡各有一个按钮，且翻页时跟着滑走
+        SoundToggleButton(
+            soundEnabled = soundEnabled,
+            onToggle = onSoundToggle,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = statusBarPadding)
+                .padding(end = SOUND_BUTTON_END_PADDING.dp, top = SOUND_BUTTON_TOP_PADDING.dp),
         )
     }
+}
+
+/**
+ * 右上角声音开关（对齐 RN `screen.tsx:1300-1318` 的 `screen.soundToggleButton`）。
+ *
+ * iOS 研究文档 §3.1 把它列在「常驻控件」里 —— 两端都有，是必做项。
+ *
+ * ⚠️ 点击**只改内存不持久化**（本刀刻意接受的临时偏差）：写回
+ * `chat-persist-storage` 属共享键写协议，另包解决。见
+ * [ScreenSoundPreference] 的所有权说明。
+ */
+@Composable
+private fun SoundToggleButton(
+    soundEnabled: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Image(
+        painter = painterResource(
+            if (soundEnabled) R.drawable.ic_screen_sound_on else R.drawable.ic_screen_sound_off,
+        ),
+        // 无障碍：读出当前状态而不是"按钮"，否则用户不知道点了会变成什么
+        contentDescription = rememberLocalizedString(
+            if (soundEnabled) "Sound on" else "Sound off",
+        ),
+        modifier = modifier
+            .size(SOUND_BUTTON_SIZE.dp)
+            .testTag("screen_sound_toggle")
+            .clickable(onClick = onToggle),
+    )
 }
 
 /**
@@ -148,8 +230,14 @@ private fun ScreenPager(
  * alpha 0.7 → 0 → 0 → 0.8）—— 顶部压暗给状态栏、底部压暗给文案。
  */
 @Composable
+@UnstableApi  // 透传 ScreenPlayerPool
 private fun ScreenCard(
     item: ScreenFeedItem,
+    isWithinVideoWindow: Boolean,
+    isCurrentPage: Boolean,
+    isPageActive: Boolean,
+    soundEnabled: Boolean,
+    playerPool: ScreenPlayerPool?,
     onStartChat: () -> Unit,
     onCardEvent: (ScreenCardEvent) -> Unit,
     statusBarPadding: Dp,
@@ -163,16 +251,65 @@ private fun ScreenCard(
             ScreenMediaSourceType.SHOWCASE -> item.thumbnailUrl
             else -> item.backgroundUrl ?: item.thumbnailUrl
         }
-        AsyncImage(
-            model = imageUrl?.let { HomeText.transformImageUrl(it) },
-            contentDescription = item.nickname,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxSize()
-                // 加载中用后端给的主色兜底（img_primary_color），
-                // 比灰底更接近成图，切页时不突兀
-                .background(parsePrimaryColor(item.primaryColor)),
-        )
+        // ⚠️ **层序：视频在下、封面在上**（P2 起改成这样）。
+        //
+        // 早前是「封面在下、视频在上 + 对视频加 alpha」——那在 API 24–33 上**不成立**：
+        // `PlayerView` 默认用 `SurfaceView`，它是独立的 native surface，
+        // View 层的 alpha/透明度对它不起作用（`SurfaceView` 直到 API 34
+        // 才对 alpha 有可靠支持）。表现是「视频 alpha=0 但仍然可见」，
+        // 也就是**封面根本没起到防黑帧的作用**，而这在高版本模拟器上测不出来。
+        //
+        // 现在改成：视频始终不透明地铺在最底层，封面作为**上层 overlay**，
+        // 靠「有没有渲染封面」而不是 alpha 来决定露哪个。
+        // 封面在需要时整块盖住视频，不需要时不组合。
+        val videoVisible = item.isVideo && isWithinVideoWindow && playerPool != null
+        // ⚠️ key 要含 `videoVisible`：离开 ±1 窗口时播放器被归还、视频层被卸载，
+        // 若 frame 状态还留着 true，下次进窗口的**第一帧到达前**封面不会显示
+        // —— 那一瞬间露出的是上一个播放器的残留画面或黑帧，
+        // 正是防黑帧那条时序要挡的东西。
+        // URL 也在 key 里：URL 变了就是另一条媒体，旧的 frame 状态不适用
+        var videoHasFrame by remember(item.characterId, item.backgroundUrl, videoVisible) {
+            mutableStateOf(false)
+        }
+
+        if (videoVisible) {
+            ScreenVideoHost(
+                url = item.backgroundUrl,
+                thumbnailUrl = item.thumbnailUrl,
+                isCurrent = isCurrentPage,
+                isActive = isPageActive,
+                soundEnabled = soundEnabled,
+                pool = playerPool,
+                onFirstFrame = { videoHasFrame = true },
+                // 播完 → 回首帧 + 重新露出封面（切 tagline 的判定属 P3 状态机）
+                onPlaybackEnded = { videoHasFrame = false },
+                // 出错也要把封面放回来（对齐 RN handleVideoError），
+                // 否则首帧后出错会停在黑帧/冻结帧上
+                onPlaybackError = { videoHasFrame = false },
+                // 划离当前页 → 复位封面（对齐 RN 切卡 setShowThumbnail(true)）。
+                // ⚠️ 失焦**不**走这条，那边只 pause 保进度
+                onResetToCover = { videoHasFrame = false },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .testTag("screen_video_${item.characterId}"),
+            )
+        }
+
+        // 封面 overlay：非视频卡恒显示；视频卡在首帧到达前 / 播完 / 出错后显示。
+        // ⚠️ 用「是否组合」而不是 alpha —— 见上面 SurfaceView 那段
+        if (!videoVisible || !videoHasFrame) {
+            AsyncImage(
+                model = imageUrl?.let { HomeText.transformImageUrl(it) },
+                contentDescription = item.nickname,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    // 加载中用后端给的主色兜底（img_primary_color），
+                    // 比灰底更接近成图，切页时不突兀
+                    .background(parsePrimaryColor(item.primaryColor))
+                    .testTag("screen_cover_${item.characterId}"),
+            )
+        }
 
         // 四段渐变遮罩
         Box(
@@ -411,6 +548,12 @@ private fun parsePrimaryColor(raw: String?): Color {
 // ── 视觉常量（对着 FeedMediaItem.tsx 取）──────────
 
 /** 渐变四段（`:672-683` 的 colors + locations）。 */
+// 声音开关（对齐 RN `screen.tsx` styles：soundButtonIcon 32×32、
+// soundHeader paddingRight 12 / height 44 —— 按钮在 44 高的头部里右对齐）
+private const val SOUND_BUTTON_SIZE = 32
+private const val SOUND_BUTTON_END_PADDING = 12
+private const val SOUND_BUTTON_TOP_PADDING = 6
+
 private const val GRADIENT_TOP_ALPHA = 0.7f
 private const val GRADIENT_BOTTOM_ALPHA = 0.8f
 private const val GRADIENT_STOP_UPPER = 0.15f

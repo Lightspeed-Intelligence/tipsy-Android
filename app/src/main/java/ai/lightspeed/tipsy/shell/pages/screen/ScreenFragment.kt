@@ -1,7 +1,11 @@
 package ai.lightspeed.tipsy.shell.pages.screen
 
 import ai.lightspeed.tipsy.shell.TipsyApplication
+import ai.lightspeed.tipsy.shell.R
+import androidx.fragment.app.FragmentManager
 import ai.lightspeed.tipsy.shell.auth.AuthStateHub
+import ai.lightspeed.tipsy.shell.auth.LegacyMmkvStore
+import androidx.media3.common.util.UnstableApi
 import ai.lightspeed.tipsy.shell.i18n.L10n
 import ai.lightspeed.tipsy.shell.pages.home.HomeFilterStore
 import ai.lightspeed.tipsy.shell.pages.home.MmkvHomeCacheStorage
@@ -24,6 +28,7 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.fragment.app.Fragment
@@ -90,6 +95,63 @@ class ScreenFragment : Fragment() {
     private var isFocused = false
 
     /**
+     * 是否被 Surface 盖住（R1）。
+     *
+     * ⚠️ `surface_container` 是 `native_root_container` 的 **sibling**
+     * （见 `activity_main.xml`），所以打开 ChatDetail / Create / Search /
+     * Settings / Login 时：Screen **不会** hidden、TabHost **不会** stop。
+     * 只看 `onStart`/`onHiddenChanged` 两条轴的表现是
+     * **盖了 Surface 视频仍在后台播**（还占着音频焦点）。
+     */
+    private var isCovered = false
+
+    /**
+     * Activity back stack 监听：Surface push/pop 后重算遮挡态。
+     * **必须在 onDestroyView 反注册** —— 它挂在 Activity 的 FragmentManager 上。
+     */
+    private val backStackListener = FragmentManager.OnBackStackChangedListener {
+        isCovered = hasVisibleSurface()
+        applyVisible(computeVisible())
+    }
+
+    /**
+     * 播放门（W4-P2）：两条轴都为真才播。
+     *
+     * ⚠️ 与 [isFocused] 分开存而不是复用它：[isFocused] 是普通字段，Compose
+     * 读不到它的变化。这个必须是 `MutableState` 才能让视频层在切 Tab /
+     * 进后台时**立刻**停播 —— 漏了的表现是「切走了还在后台播声音」。
+     */
+    private val playbackActive = mutableStateOf(false)
+
+    /**
+     * 有界播放器池（W4-P2）。**随 view 生命周期**：`onCreateView` 建、
+     * `onDestroyView` 释放。
+     *
+     * ⚠️ 不能挂到 Fragment 本身或 Application 上 —— 池持有 [ExoPlayer]，
+     * 而 ExoPlayer 持有 Surface 与解码器。跨 view 重建存活会泄漏解码器，
+     * 表现是「反复切 Tab 后视频不再播」（解码器耗尽），且不报错。
+     */
+    private var playerPool: ScreenPlayerPool? = null
+
+    /**
+     * 声音开关。只读 RN 的 `chat-persist-storage` 作**每次可见时的初值**，
+     * 页内点击只改内存、**不写回** —— 见 [ScreenSoundPreference] 的所有权说明。
+     *
+     * ⚠️ **必须每次 `onStart` 重读，不能 `by lazy`**：用户可能在 RN 的 Screen 页
+     * 或 Chat Settings 里改过这个开关（那边是唯一 writer）。只读一次的表现是
+     * 「在别处关了声音，回到原生大屏页又出声」—— 而这种不一致用户不会报成缺陷。
+     *
+     * 页内点击不持久化是**本刀刻意接受的临时偏差**：写回属共享键写协议，另包解决。
+     */
+    private val soundEnabled = mutableStateOf(ScreenSoundPreference.DEFAULT_SOUND_ENABLED)
+
+    /** Activity 生命周期轴。 */
+    private var isStarted = false
+
+    /** 上一次下发的可见性 —— [applyVisible] 的幂等闸。null = 尚未下发过。 */
+    private var lastAppliedVisible: Boolean? = null
+
+    /**
      * 前台轴观察者。**必须在 onDestroyView 反注册** ——
      * `ProcessLifecycleOwner` 是进程级的。
      */
@@ -117,6 +179,10 @@ class ScreenFragment : Fragment() {
         }
     }
 
+    // 组合 ScreenScreen → ScreenVideoHost（PlayerView 是 Media3 opt-in API）。
+    // ⚠️ 标在方法上而**不是类上**：标类会让构造 ScreenFragment 的
+    // TabHostFragment 也被要求 opt-in —— 一个内部实现细节不该外溢到 Tab 宿主
+    @UnstableApi
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
@@ -125,6 +191,12 @@ class ScreenFragment : Fragment() {
         val app = requireActivity().application as TipsyApplication
         app.authStateHub.addObserver(authObserver)
         ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundObserver)
+
+        playerPool = ScreenPlayerPool(requireContext().applicationContext)
+        // R1：Surface 遮挡轴。sibling 容器不会让本 Fragment hidden，只能靠 back stack
+        isCovered = hasVisibleSurface()
+        requireActivity().supportFragmentManager
+            .addOnBackStackChangedListener(backStackListener)
 
         val composeView = ComposeView(requireContext()).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
@@ -142,6 +214,11 @@ class ScreenFragment : Fragment() {
                 val state by viewModel.state.collectAsState()
                 ScreenScreen(
                     state = state,
+                    isActive = playbackActive.value,
+                    soundEnabled = soundEnabled.value,
+                    // 页内切换只改内存（刻意不写回 RN 的共享键，见 soundEnabled 注释）
+                    onSoundToggle = { soundEnabled.value = !soundEnabled.value },
+                    playerPool = playerPool,
                     onPageChanged = viewModel::onPageChanged,
                     onRefresh = viewModel::onRefresh,
                     onRetry = viewModel::onRetry,
@@ -171,14 +248,73 @@ class ScreenFragment : Fragment() {
 
     override fun onStart() {
         super.onStart()
-        isFocused = true
-        viewModel.onFocusChanged(focused = true)
+        // ⚠️ 切 Tab **不会**走 onStart —— TabHostFragment 用 show/hide 保状态
+        // （对齐 RN 的 `detachInactiveScreens={false}`），hide 不改生命周期状态。
+        // 这里只是三条轴里的「Activity 级别可见」那条
+        isStarted = true
+        isCovered = hasVisibleSurface()
+        applyVisible(computeVisible())
         viewModel.onAppear()
     }
 
+    /**
+     * Tab 切换轴（**show/hide 不触发 onStart/onStop，所以必须有这个**）。
+     *
+     * 漏了它的后果有两个，都不报错：
+     * 1. 切到别的 Tab 后**视频继续在后台播**（`playbackActive` 不复位）；
+     * 2. 从 RN 侧改过声音开关再切回来仍用旧值（不重读 MMKV）。
+     */
+    override fun onHiddenChanged(hidden: Boolean) {
+        super.onHiddenChanged(hidden)
+        applyVisible(computeVisible())
+    }
+
+    /**
+     * 三条轴的合成：`started && !isHidden && !isCovered`。
+     *
+     * 少任何一条都会留下「某条路径下视频继续后台播」的缺口，而三条的触发方式
+     * 各不相同（生命周期 / show-hide / sibling 容器 back stack）。
+     */
+    private fun computeVisible(): Boolean =
+        ScreenVisibility.isVisible(started = isStarted, hidden = isHidden, covered = isCovered)
+
+    /** `surface_container` 里是否有可见 Fragment（= 本页被盖住）。 */
+    private fun hasVisibleSurface(): Boolean {
+        val container = activity?.findViewById<android.view.View>(R.id.surface_container)
+            ?: return false
+        val fm = activity?.supportFragmentManager ?: return false
+        // 容器自身不可见（gone）时不算被盖；否则看里面有没有已添加且未 hidden 的 Fragment
+        if (container.visibility != android.view.View.VISIBLE) return false
+        return fm.fragments.any { it.isAdded && !it.isHidden && it.id == R.id.surface_container }
+    }
+
+    /**
+     * 可见性收口：三条轴（Activity 生命周期 / Tab show-hide / Surface 遮挡）
+     * 都汇到这里。
+     *
+     * **幂等**：同一状态重复下发直接返回 —— back stack listener 与
+     * onHiddenChanged 可能在同一次交互里都触发，重复下发会让 ViewModel 的
+     * session 埋点重复开合。
+     */
+    private fun applyVisible(visible: Boolean) {
+        if (visible == lastAppliedVisible) return
+        lastAppliedVisible = visible
+        isFocused = visible
+        playbackActive.value = visible
+        if (visible) {
+            // ⚠️ 每次真正可见都重读，**不是只在创建时读一次**：RN 侧（Screen 页 /
+            // Chat Settings）是这个开关的唯一 writer，用户在那边改过我们必须跟上。
+            // 漏了的表现是「在别处关了声音、回到原生大屏页又出声」，用户不会报
+            soundEnabled.value = ScreenSoundPreference.read(LegacyMmkvStore.open(requireContext()))
+        }
+        viewModel.onFocusChanged(focused = visible)
+    }
+
     override fun onStop() {
-        isFocused = false
-        viewModel.onFocusChanged(focused = false)
+        // 停播（对齐 RN 失焦立即 pause）。⚠️ **只停播不销毁池** ——
+        // iOS 研究文档 §4「聚焦/失焦」明写「不重置状态，保留缓冲快速恢复」
+        isStarted = false
+        applyVisible(false)
         super.onStop()
     }
 
@@ -186,6 +322,12 @@ class ScreenFragment : Fragment() {
         (requireActivity().application as TipsyApplication)
             .authStateHub.removeObserver(authObserver)
         ProcessLifecycleOwner.get().lifecycle.removeObserver(foregroundObserver)
+        requireActivity().supportFragmentManager
+            .removeOnBackStackChangedListener(backStackListener)
+        // 释放全部 ExoPlayer。漏了会泄漏解码器 —— 表现是「反复切 Tab 后
+        // 视频不再播」，且不报错，见 playerPool 的字段注释
+        playerPool?.release()
+        playerPool = null
         super.onDestroyView()
     }
 
