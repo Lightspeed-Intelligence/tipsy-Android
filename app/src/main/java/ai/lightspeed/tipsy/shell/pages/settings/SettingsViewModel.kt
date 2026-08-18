@@ -1,6 +1,8 @@
 package ai.lightspeed.tipsy.shell.pages.settings
 
 import ai.lightspeed.tipsy.shell.auth.Generations
+import ai.lightspeed.tipsy.shell.i18n.AccountLanguageMirrorLike
+import ai.lightspeed.tipsy.shell.i18n.AccountLanguageWriter
 import ai.lightspeed.tipsy.shell.i18n.L10n
 import android.util.Log
 import androidx.lifecycle.ViewModel
@@ -43,6 +45,14 @@ class SettingsViewModel(
     private val applyLanguage: (String) -> Unit = { L10n.setLanguage(it) },
     /** 当前账号语言（生产读 `L10n.current`）。 */
     private val currentLanguage: () -> String = { L10n.current },
+    /**
+     * 账号语言的共享信封镜像（进度文档 §2.37 的 FAIL 项）。
+     *
+     * ⚠️ **不写它会让语言静默回退英文** —— 壳自己会从 `user-storage` 读回
+     * 语言并覆盖（`TipsyApplication.refreshAccountLanguage()`），只写服务端
+     * 等于让旧值倒灌。详见 [AccountLanguageWriter] 类注释。
+     */
+    private val languageMirror: AccountLanguageMirrorLike,
     /** auth 轨闸门（§4.4）—— 只校验 auth 轨，同他人主页的推理。 */
     private val generations: Generations,
     /** 注入是为了测试；生产用 viewModelScope。 */
@@ -133,7 +143,20 @@ class SettingsViewModel(
         _state.value = s.copy(selectedLanguage = target)
         applyLanguage(target)
 
-        // 2) 后台保存
+        // 2) 立刻回写共享信封（§2.37 的 FAIL 项）。
+        //
+        // ⚠️ **跟着本地切，不跟着接口结果** —— 这是与 RN 的一处刻意差异。
+        // RN 的镜像是 `updateUserInfo()` 的副产物，所以接口失败就不镜像；
+        // 但 RN 的 i18next 活在同一个 runtime 内存里，陈旧信封要到下次冷启动
+        // 才有影响。壳不同：`refreshAccountLanguage()` 在**每次 Surface 容器
+        // 出栈**时读信封覆盖当前语言，所以「本地切了但没镜像」的窗口里，
+        // 用户开一次 Surface 语言就退回去了 —— 正是本次要修的缺陷。
+        //
+        // 既然本地语言**失败也不回滚**（见上），镜像就必须与它同步落地，
+        // 否则等于给这个 bug 留了个更窄的复现窗口。
+        languageMirror.writeLanguage(target)
+
+        // 3) 后台保存
         val snapshot = generations.snapshot()
         languageJob?.cancel()
         languageJob = coroutineScope.launch {

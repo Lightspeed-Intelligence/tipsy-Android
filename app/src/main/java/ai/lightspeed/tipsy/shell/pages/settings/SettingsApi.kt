@@ -97,7 +97,10 @@ class SettingsApi(private val apiClient: ApiClient) : SettingsSource {
         const val PATH_SET_LANGUAGE = "/user/set_language"
 
         /** `apis/user.ts:132` `updateUserNsfw`。 */
-        const val PATH_SET_NSFW = "/user/nsfw"
+        // ⚠️ 路径是 `/user/nsfw/update`，不是 `/user/nsfw`
+        // （`apis/user.ts:133` updateUserNsfw；少了 `/update` 会 404，
+        //  开关表现为「点了没反应」——失败自动回滚把 404 藏了起来）
+        const val PATH_SET_NSFW = "/user/nsfw/update"
 
         private const val FIELD_LANGUAGE_CODE = "language_code"
         private const val FIELD_NSFW = "nsfw"
