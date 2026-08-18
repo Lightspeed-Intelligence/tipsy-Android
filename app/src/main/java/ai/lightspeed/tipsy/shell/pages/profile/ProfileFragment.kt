@@ -31,6 +31,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 
 /**
  * Profile Tab 的宿主（W3 第一刀，替掉 `TabPlaceholderFragment`）。
@@ -80,7 +81,39 @@ class ProfileFragment : Fragment() {
         }
     }
 
+    /**
+     * EditProfileSurface 是 sibling 容器：它盖住 Profile 时，本 Fragment 可能一直
+     * 保持 STARTED，关闭也不会再走 [onStart]。协调器同时处理前台即时刷新、
+     * 非前台的 onStart 补消费，以及 `/user/info` 成功后才 ack dirty。
+     */
+    private lateinit var profileRefreshCoordinator: ProfileRefreshCoordinator
+
     private var hasReportedFirstExposure = false
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val app = requireActivity().application as TipsyApplication
+        profileRefreshCoordinator = ProfileRefreshCoordinator(
+            hub = app.profileRefreshHub,
+            currentUserIdProvider = { app.tokenStore.currentUserId() },
+            isStarted = { lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) },
+            refresh = { onUserInfoRefreshed, onUserInfoRefreshFailed ->
+                viewModel.onProfileChanged(
+                    onUserInfoRefreshed = onUserInfoRefreshed,
+                    onUserInfoRefreshFailed = onUserInfoRefreshFailed,
+                )
+            },
+            scheduleRetry = { retry ->
+                lifecycleScope.launch {
+                    // 失败 completion 发生在当前 userStatsJob 收尾；让出一次主线程后
+                    // 再发 retry，避免 refreshUserAndStats 从自己的 completion 里同步取消自己。
+                    yield()
+                    retry()
+                }
+            },
+        )
+        app.profileRefreshHub.addObserver(profileRefreshCoordinator)
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -146,7 +179,10 @@ class ProfileFragment : Fragment() {
 
     override fun onStart() {
         super.onStart()
-        viewModel.onAppear()
+        // dirty 轨已发起定向用户资料刷新时，onAppear 只保留「首屏列表
+        // 按需加载」，避免紧接着取消定向请求并重发第二轮 /user/info。
+        val startedTargetedRefresh = profileRefreshCoordinator.onStart()
+        viewModel.onAppear(refreshProfile = !startedTargetedRefresh)
         if (!hasReportedFirstExposure) {
             hasReportedFirstExposure = true
             viewModel.onFirstExposure()
@@ -155,6 +191,7 @@ class ProfileFragment : Fragment() {
 
     override fun onDestroy() {
         val app = requireActivity().application as TipsyApplication
+        app.profileRefreshHub.removeObserver(profileRefreshCoordinator)
         app.authStateHub.removeObserver(authObserver)
         super.onDestroy()
     }

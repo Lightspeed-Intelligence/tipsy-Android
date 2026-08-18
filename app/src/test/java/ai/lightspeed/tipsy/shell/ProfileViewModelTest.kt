@@ -250,6 +250,88 @@ class ProfileViewModelTest {
         assertEquals(2, api.statsCalls.size)
     }
 
+    @Test
+    fun `资料修改通知只刷新用户统计不重拉内容列表`() = runTest {
+        val api = FakeProfileApi(pages = listOf(page(items = listOf(item("a")), total = 10)))
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+
+        vm.onProfileChanged()
+        advanceUntilIdle()
+
+        assertEquals("用户资料链应再跑一次", 2, api.statsCalls.size)
+        assertEquals("创作列表不得因资料修改重拉", listOf(0), api.createdCalls.map { it.page })
+        assertEquals("现有内容必须原位保留", "a", vm.state.value.createdItems.single().itemId)
+    }
+
+    @Test
+    fun `已有旧用户缓存时 user info 失败仍不能回调 ack 且随后可重试`() = runTest {
+        val api = FakeProfileApi(pages = listOf(page(items = emptyList(), total = 0)))
+        var failUserInfo = false
+        val userSource = object : UserInfoSource {
+            override suspend fun fetchCurrentUser(): CurrentUser? {
+                if (failUserInfo) throw RuntimeException("/user/info failed")
+                return CurrentUser(TEST_USER_ID, "新昵称", null, null)
+            }
+        }
+        val vm = viewModel(api, userSource = userSource)
+        val acknowledgedUserIds = mutableListOf<String>()
+
+        // 先成功一次，让 CurrentUserStore 里有旧值；这是最容易把失败误判成功的情形。
+        vm.onAppear()
+        advanceUntilIdle()
+
+        failUserInfo = true
+        vm.onProfileChanged(onUserInfoRefreshed = { acknowledgedUserIds += it })
+        advanceUntilIdle()
+
+        assertTrue("旧缓存仍非空也不能把本次失败伪装成成功 ack", acknowledgedUserIds.isEmpty())
+        assertEquals(TEST_USER_ID, vm.state.value.user?.userId)
+
+        failUserInfo = false
+        vm.onProfileChanged(onUserInfoRefreshed = { acknowledgedUserIds += it })
+        advanceUntilIdle()
+
+        assertEquals(listOf(TEST_USER_ID), acknowledgedUserIds)
+        assertEquals("内容列表从始至终只拉首屏一次", listOf(0), api.createdCalls.map { it.page })
+    }
+
+    @Test
+    fun `空 user store 的 user info 失败也回调失败并可随后成功`() = runTest {
+        val api = FakeProfileApi(pages = listOf(page(items = emptyList(), total = 0)))
+        var failUserInfo = true
+        val userSource = object : UserInfoSource {
+            override suspend fun fetchCurrentUser(): CurrentUser? {
+                if (failUserInfo) throw RuntimeException("/user/info failed with empty store")
+                return CurrentUser(TEST_USER_ID, "重试成功", null, null)
+            }
+        }
+        val vm = viewModel(api, userSource = userSource)
+        val acknowledgedUserIds = mutableListOf<String>()
+        var failures = 0
+
+        vm.onProfileChanged(
+            onUserInfoRefreshed = { acknowledgedUserIds += it },
+            onUserInfoRefreshFailed = { failures++ },
+        )
+        advanceUntilIdle()
+
+        assertEquals(1, failures)
+        assertTrue(acknowledgedUserIds.isEmpty())
+        assertNull(vm.state.value.user)
+
+        failUserInfo = false
+        vm.onProfileChanged(
+            onUserInfoRefreshed = { acknowledgedUserIds += it },
+            onUserInfoRefreshFailed = { failures++ },
+        )
+        advanceUntilIdle()
+
+        assertEquals("成功重试不再报失败", 1, failures)
+        assertEquals(listOf(TEST_USER_ID), acknowledgedUserIds)
+    }
+
     // ── 下拉刷新 ────────────────────────────────────
 
     @Test
@@ -749,9 +831,10 @@ class ProfileViewModelTest {
         api: FakeProfileApi,
         language: () -> String = { "en" },
         failUserInfo: Boolean = false,
+        userSource: UserInfoSource? = null,
         walletApi: FakeWalletApi = FakeWalletApi(),
     ): ProfileViewModel {
-        val userSource = object : UserInfoSource {
+        val resolvedUserSource = userSource ?: object : UserInfoSource {
             override suspend fun fetchCurrentUser(): CurrentUser? {
                 if (failUserInfo) throw RuntimeException("boom")
                 return CurrentUser(TEST_USER_ID, "昵称", null, null)
@@ -760,7 +843,7 @@ class ProfileViewModelTest {
         return ProfileViewModel(
             api = api,
             walletApi = walletApi,
-            userStore = CurrentUserStore(userSource, logWarn = { _, _ -> }),
+            userStore = CurrentUserStore(resolvedUserSource, logWarn = { _, _ -> }),
             languageProvider = language,
             scope = this,
             logWarn = { _, _ -> },

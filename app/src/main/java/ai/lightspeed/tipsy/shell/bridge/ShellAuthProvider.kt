@@ -81,6 +81,11 @@ class ShellAuthProvider(
      * 默认 no-op 仅为测试便利；壳侧注入接 Router 的实现。
      */
     private val onNavigateGemsPurchase: (params: Map<String, String>) -> Unit = {},
+    /**
+     * EditProfileSurface 成功修改后，向原生 Profile 发账号归属明确的刷新信号。
+     * userId 由本 provider 从 [tokenStore] 解析，桥方法不接收 JS userId。
+     */
+    private val onProfileRefreshRequested: (ownerUserId: String) -> Unit = {},
     /** token 真值（W1-P1）。 */
     private val tokenStore: ShellTokenStore,
     /**
@@ -303,6 +308,23 @@ class ShellAuthProvider(
 
     override fun notifyOnboardingCompleted() =
         notImplemented("notifyOnboardingCompleted", wave = "W4")
+
+    // ── SurfaceProfileContract ──────────────────────────────────
+
+    /**
+     * EditProfileSurface 成功 mutation 后刷新原生 Profile 的资料与统计。
+     *
+     * 账号必须从 Native token 真值现取：`user-storage` 可能未 hydrate，也可能仍是
+     * 上一账号；若让 JS 传 userId，会把一个本应无参数的成功回执变成可伪造归属。
+     */
+    override fun notifyProfileChanged() {
+        val ownerUserId = tokenStore.currentUserId()
+        if (ownerUserId.isNullOrBlank()) {
+            logger.log(Logger.Level.WARN, "收到 profileChanged 但当前无有效 Native userId，已忽略")
+            return
+        }
+        onProfileRefreshRequested(ownerUserId)
+    }
 
     // ── 未实现项的统一出口 ────────────────────────────────────────
 

@@ -245,8 +245,8 @@ sealed interface AppRoute {
      * `setUserProfileOpen(true)`）。壳侧按 Surface 出口建模 —— §1.3 已定
      * 「EditProfile 是 RN Surface，iOS 迁移后回撤，直接继承」。
      *
-     * ⚠️ 该 Surface 在 W3 还是 W4 过 §9.1 矩阵，**方案自相矛盾**：
-     * §8.3 批次表列在 W3，§9.1 矩阵把「其余 10 个」标 W4。需 owner 定。
+     * 已按 owner 决策归 W3：本包先落宿主、账号安全门与 Profile 刷新接力；
+     * 专属 §9.1 设备矩阵完成前仍不进生产白名单。
      */
     data object EditProfile : AppRoute {
         override val requiresAuth = true

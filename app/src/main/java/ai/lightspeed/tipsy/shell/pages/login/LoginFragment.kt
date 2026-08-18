@@ -33,6 +33,7 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import expo.modules.tipsyauth.TipsyAuthRegistry
 
 /**
  * 原生登录页的 Fragment 宿主（方案 ADR-002：Fragment + [ComposeView]）。
@@ -94,10 +95,13 @@ class LoginFragment : Fragment() {
     /**
      * 登录成功的落地动作。
      *
-     * 两步，顺序不能反：
+     * 三步，顺序不能反：
      * 1. [ShellTokenStore.onLoggedIn] —— 它内部会先 `generations.bumpAuth()`
      *    再持久化。**不要自己再 bump**，重复递增会把在飞的合法响应也丢掉。
-     * 2. [AuthStateHub.notifyDidLogin] —— 通知壳内常驻页。userId 从 JWT 的
+     * 2. [TipsyAuthRegistry.notifyAuthStateChanged] —— 通知已挂载的 RN Surface。
+     *    iOS `AuthSession` 在同一登录落点同时广播 RN 与原生观察者；Android 只发
+     *    `loggedOut` 会让已进入 error gate 的 Surface 登录后仍停在那里。
+     * 3. [AuthStateHub.notifyDidLogin] —— 通知壳内常驻页。userId 从 JWT 的
      *    `sub` 取；这个调用点在 main 上此前**没有任何生产实现**（只有测试在调），
      *    正是登录链缺的那一环。
      *
@@ -114,7 +118,9 @@ class LoginFragment : Fragment() {
      */
     private fun onLoginSucceeded(app: TipsyApplication, result: EmailLoginApi.LoginResult) {
         app.tokenStore.onLoggedIn(result.token)
-        app.authStateHub.notifyDidLogin(Jwt.subject(result.token))
+        val userId = Jwt.subject(result.token)
+        TipsyAuthRegistry.notifyAuthStateChanged("loggedIn", userId)
+        app.authStateHub.notifyDidLogin(userId)
         Log.i(
             TAG,
             "邮箱登录成功（isNewUser=${result.isNewUser} " +
