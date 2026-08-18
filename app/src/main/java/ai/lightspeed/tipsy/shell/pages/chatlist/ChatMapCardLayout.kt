@@ -75,7 +75,7 @@ internal object ChatMapCardLayout {
         if (distance > baseX * 5.5f) return HIDDEN
 
         // i 恒为 1/3/5（楼层已裁剪）；disOut 空则退化成恒等，不崩
-        if (disOut.size != RATIO_STOPS) {
+        if (disOut.size != CARD_SLOTS) {
             return CardTransform(scale = 1f, translateX = 0f, zIndex = 1f, visible = true)
         }
 
@@ -121,10 +121,13 @@ internal object ChatMapCardLayout {
         cardWidth: Float,
         cardHeight: Float,
     ): FloatArray {
+        val n5Dis1 = (windowWidth - cardWidth * RATIO1) * 0.5f
         val n5Dis2 = 0.3f * windowWidth + (0.2f - 0.5f * RATIO2) * cardWidth
         val yRatio = if (cardHeight == 0f) 0f else offsetY / cardHeight
 
         return when (mode) {
+            // processOne（`TipsyCarousel.tsx:117-129`）：默认全 0（不展开）。
+            // 只有 yRatio≠0 **且** nextMode==3 时才向 3 卡展开
             1 -> {
                 if (yRatio != 0f && nextMode == 3) {
                     val d = ChatMapMath.interpolate(
@@ -134,22 +137,68 @@ internal object ChatMapCardLayout {
                     )
                     floatArrayOf(-d, -d, 0f, d, d)
                 } else {
-                    FloatArray(RATIO_STOPS)
+                    FloatArray(CARD_SLOTS)
                 }
             }
 
+            // processThree（`:131-149`）：⚠️ 默认是 **[-n5Dis2, -n5Dis2, 0, n5Dis2, n5Dis2]**
+            // 不是全 0。且有**两条**转场分支，按 nextMode 分流。
+            //
+            // ⚠️ 早前版本这里既忽略了 nextMode、又把默认写成"随 yRatio 从 n5Dis2 收拢到 0"
+            // —— 那等于让 3 卡模式在稳定态（yRatio=0 → 收拢到 0）把卡片全叠到中间。
+            // 而 RN 的稳定态恰恰是**展开**的（默认值就是展开量）。
             3 -> {
-                val d = ChatMapMath.interpolate(
-                    yRatio,
-                    floatArrayOf(0f, 1f),
-                    floatArrayOf(n5Dis2, 0f),
-                )
-                floatArrayOf(-d, -d, 0f, d, d)
+                var out = floatArrayOf(-n5Dis2, -n5Dis2, 0f, n5Dis2, n5Dis2)
+                if (yRatio != 0f) {
+                    when (nextMode) {
+                        // 3 → 5：外侧从 n5Dis2 张到 n5Dis1
+                        5 -> {
+                            val d1 = ChatMapMath.interpolate(
+                                yRatio,
+                                floatArrayOf(1f, 0f),
+                                floatArrayOf(n5Dis2, n5Dis2),
+                            )
+                            val d2 = ChatMapMath.interpolate(
+                                yRatio,
+                                floatArrayOf(1f, 0f),
+                                floatArrayOf(n5Dis2, n5Dis1),
+                            )
+                            out = floatArrayOf(-d2, -d1, 0f, d1, d2)
+                        }
+                        // 3 → 1：收拢到 0
+                        1 -> {
+                            val d = ChatMapMath.interpolate(
+                                1f - yRatio,
+                                floatArrayOf(0f, 1f),
+                                floatArrayOf(0f, n5Dis2),
+                            )
+                            out = floatArrayOf(-d, -d, 0f, d, d)
+                        }
+                        // 3 → 3：**保持默认展开**，不做任何收拢
+                        else -> Unit
+                    }
+                }
+                out
             }
 
+            // processFive（`:151-164`）：默认 [-n5Dis1, -n5Dis2, 0, n5Dis2, n5Dis1]，
+            // 只有 yRatio≠0 且 nextMode==3 时外侧收到 n5Dis2
             else -> {
-                val n5Dis1 = (windowWidth - cardWidth * RATIO1) * 0.5f
-                floatArrayOf(-n5Dis1, -n5Dis2, 0f, n5Dis2, n5Dis1)
+                var out = floatArrayOf(-n5Dis1, -n5Dis2, 0f, n5Dis2, n5Dis1)
+                if (yRatio != 0f && nextMode == 3) {
+                    val d1 = ChatMapMath.interpolate(
+                        yRatio,
+                        floatArrayOf(1f, 0f),
+                        floatArrayOf(n5Dis2, n5Dis2),
+                    )
+                    val d2 = ChatMapMath.interpolate(
+                        yRatio,
+                        floatArrayOf(1f, 0f),
+                        floatArrayOf(n5Dis2, n5Dis1),
+                    )
+                    out = floatArrayOf(-d2, -d1, 0f, d1, d2)
+                }
+                out
             }
         }
     }
@@ -188,5 +237,5 @@ internal object ChatMapCardLayout {
     private const val RATIO3 = 1f
 
     /** 一层最多 5 张，故 disOut 恒为 5 个。 */
-    private const val RATIO_STOPS = 5
+    private const val CARD_SLOTS = 5
 }
