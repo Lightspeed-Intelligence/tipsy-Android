@@ -23,7 +23,7 @@ class ChatMapFloorsTest {
 
     /** 造桶：bucketKey 用 d<day>，标题单独给。 */
     private fun bucket(day: Long, title: String, vararg items: String) =
-        ChatMapFloors.DateBucket(ChatMapFloors.bucketKeyOf(day), title, items.toList())
+        ChatMapFloors.DateBucket(day, title, items.toList())
 
     @Test
     fun `补齐目标是三组而不是小屏的两组`() {
@@ -39,8 +39,8 @@ class ChatMapFloorsTest {
         val floors = ChatMapFloors.build(listOf(bucket(3,"Today","a"), bucket(2,"Yesterday","b"), bucket(1,"Mon","c")))
         // 3 组真实（不触发补齐）+ 2 尾部 = 5
         assertEquals(5, floors.size)
-        assertEquals("empty1", floors[3].key)
-        assertEquals("empty2", floors[4].key)
+        assertEquals("runway:1", floors[3].key)
+        assertEquals("runway:2", floors[4].key)
         assertEquals(ChatMapFloors.FloorKind.RUNWAY, floors[3].kind)
         assertEquals(ChatMapFloors.FloorKind.RUNWAY, floors[4].kind)
         assertEquals(ChatMapFloors.TRAILING_EMPTY_FLOORS, 2)
@@ -107,7 +107,7 @@ class ChatMapFloorsTest {
         // ⚠️ RN 是 `if (len < 5)` **补位**（`:205`），不是上限。
         // 7 条同日会话要全部保留 —— UI 也不得 take(5)
         val seven = (1..7).map { "c$it" }
-        val floors = ChatMapFloors.build(listOf(ChatMapFloors.DateBucket("d1", "Today", seven)))
+        val floors = ChatMapFloors.build(listOf(ChatMapFloors.DateBucket(1L, "Today", seven)))
         assertEquals("真实会话全保留", 7, floors[0].items.size)
         assertEquals("槽位数 = 真实数，不截断到 5", 7, floors[0].slotCount)
         // 补位下限对 <5 才生效
@@ -122,9 +122,9 @@ class ChatMapFloorsTest {
         // ⚠️ 上游必须喂 threads（接口累计顺序），不是 sortedThreads。
         // RN 侧 Grid 与 Map 拿同一个 recentChatList（chatList/index.tsx:113 与 :126），
         // 草稿混排是 Grid 的**渲染规则**，不进数据源。
-        // 喂 sortedThreads 会让有草稿的会话跳到别的日期分组
+        // 喂 sortedThreads 会改变楼层与桶内顺序（不改日期归属）
         val ordered = listOf("t1", "t2", "t3", "t4")
-        val floors = ChatMapFloors.build(listOf(ChatMapFloors.DateBucket("d1", "Today", ordered)))
+        val floors = ChatMapFloors.build(listOf(ChatMapFloors.DateBucket(1L, "Today", ordered)))
         assertEquals("分组内必须保持传入顺序", ordered, floors[0].items)
     }
 
@@ -140,8 +140,8 @@ class ChatMapFloorsTest {
         // ⚠️ key 必须稳定：page1 时第 2 层是补齐层（key=pad2），
         // page2 时变成真实的 Aug 12（key=Aug 12）—— 用下标做 key 就会
         // 把补齐层的横滑状态复用给 Aug 12 那天
-        assertEquals("d3", f1[0].key)
-        assertEquals("d3", f2[0].key)
+        assertEquals("day:3", f1[0].key)
+        assertEquals("day:3", f2[0].key)
         assertTrue("补齐层 key 与真实层 key 不得相同", f1[2].key != f2[2].key)
     }
 
@@ -151,8 +151,8 @@ class ChatMapFloorsTest {
             listOf(bucket(3, "译(Today)", "a"), bucket(1, "译(Aug 12)", "b")),
         )
         // key 是 epoch-day 桶身份 —— 切语言 / 跨日都不变（标题变）
-        assertEquals("d3", floors[0].key)
-        assertEquals("d1", floors[1].key)
+        assertEquals("day:3", floors[0].key)
+        assertEquals("day:1", floors[1].key)
         assertEquals("译(Today)", floors[0].title)
         // ⚠️ 若 key 用了本地化后的标题，切语言会让所有 key 变化 → 卡叠状态全丢
         assertTrue("key 不得等于本地化标题", floors[0].key != floors[0].title)
@@ -174,7 +174,7 @@ class ChatMapFloorsTest {
         assertEquals(listOf("a", "b", "d"), b2[0].items.map { it.id })
 
         // 桶顺序 = 首次出现顺序（encounter order），与接口顺序一致
-        assertEquals(listOf("d100", "d99", "d98"), b2.map { it.bucketKey })
+        assertEquals(listOf("day:100", "day:99", "day:98"), b2.map { it.bucketKey })
 
         // key 唯一（含补齐层）
         val floors = ChatMapFloors.build(b2)
@@ -194,10 +194,10 @@ class ChatMapFloorsTest {
 
         // ⚠️ 订正：喂 sortedThreads **不会**改变日期归属（分组按时间戳），
         // 但会改变**楼层顺序** —— 下面正是那个差异
-        assertEquals(listOf("d100", "d99", "d98"), fromRaw.map { it.bucketKey })
+        assertEquals(listOf("day:100", "day:99", "day:98"), fromRaw.map { it.bucketKey })
         assertEquals(
             "喂 sorted 会让楼层顺序变（这就是必须喂 raw threads 的原因）",
-            listOf("d99", "d100", "d98"),
+            listOf("day:99", "day:100", "day:98"),
             fromSorted.map { it.bucketKey },
         )
         // 日期归属两者一致 —— 印证"跳到错误日期"那句说重了
@@ -223,7 +223,7 @@ class ChatMapFloorsTest {
         assertEquals(one[0].bucketKey, two[0].bucketKey)
         assertTrue("标题不同", one[0].displayTitle != two[0].displayTitle)
         // 跨日：同一条会话第二天标题会从 Today 变 Yesterday，但 epoch-day 不变
-        assertEquals("d100", one[0].bucketKey)
+        assertEquals("day:100", one[0].bucketKey)
     }
 
     @Test

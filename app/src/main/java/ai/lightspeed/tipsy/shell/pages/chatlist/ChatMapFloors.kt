@@ -49,14 +49,21 @@ internal object ChatMapFloors {
      * 所以 [bucketKey] 用 **epoch-day**（本地时区的天序号，与 locale/相对
      * 判定都无关），[displayTitle] 单独承担文案。
      *
-     * @property bucketKey 稳定身份，形如 `d20260818`
+     * ⚠️ [bucketKey] **由 [localDay] 内部生成，不可自定义** —— 否则任意 String
+     * 都能构造出与补齐层（`pad…`）或跑道层（`empty…`）重名的 key，
+     * "唯一 namespace"就只是调用约定而不是结构保证。
+     *
+     * @property localDay 本地日序号（由 `ChatMapSource` 在捕获的时区下算出）
      * @property displayTitle 已本地化的展示文案（`Today` / `18 August` 等）
      */
     data class DateBucket<T>(
-        val bucketKey: String,
+        val localDay: Long,
         val displayTitle: String,
         val items: List<T>,
-    )
+    ) {
+        /** 楼层 key —— `day:` 前缀与 `pad`/`empty` 命名空间天然不撞。 */
+        val bucketKey: String get() = "$DAY_KEY_PREFIX$localDay"
+    }
 
     /**
      * 楼层种类 —— ⚠️ **两种「空」不是一回事**，别再合成一个 `isEmpty`。
@@ -101,8 +108,6 @@ internal object ChatMapFloors {
     /**
      * 构建楼层列表。
      *
-     * @param grouped 已按日期分组的会话（保持插入序 —— 分组顺序即时间顺序，
-     *   用 `LinkedHashMap` 或有序 List，**不要**换成 HashMap）
      *
      * ⚠️ **上游必须喂 `ChatListState.threads`（接口累计顺序），不是 `sortedThreads`。**
      * RN 侧 Grid 与 Map 拿的是**同一个** `recentChatList`
@@ -112,34 +117,41 @@ internal object ChatMapFloors {
      * 它**不会**改变会话的日期归属（分组按 `latestTimeSeconds`，重排不改时间戳），
      * 但会改变**楼层顺序与桶内顺序** —— 有草稿的那条被顶到桶内最前，
      * 甚至把它所在的那一天顶到廊道最底层。表现是顺序莫名与 Grid 不一致。
-     * @param localize 把 `Today` / `Yesterday` 过 i18n（其余标题原样，
-     *   对齐 `:355` 的 `key === 'Today' || key === 'Yesterday' ? t(key) : key`）
+     * @param buckets 已按本地日分组的桶（**由 `ChatMapSource.floorsFor` 产出**；
+     *   标题已本地化，key 由 [DateBucket.localDay] 生成）
      */
     fun <T> build(buckets: List<DateBucket<T>>): List<Floor<T>> {
-        val entries = buckets.toMutableList()
+        val entries = buckets.map { RealEntry(it.bucketKey, it.displayTitle, it.items) }
+            .toMutableList<Entry<T>>()
 
         // 不足 3 组时补空组（RN `:337-339`：realSize < 3 才补，且补到 emptySize）
         val realSize = entries.size
         if (realSize < EMPTY_TARGET_GROUPS) {
             repeat(EMPTY_TARGET_GROUPS - realSize) { n ->
-                entries.add(DateBucket("pad${entries.size}", "", emptyList()))
+                // 补齐层没有真实日期 —— 用独立 namespace，不可能与 day: 撞
+                entries.add(PadBucket<T>(entries.size))
             }
         }
 
-        val floors = entries.map { bucket ->
+        val floors = entries.map { entry ->
             Floor(
-                // ⚠️ key 用 **epoch-day 桶身份**，不是标题、也不是 RN 的下标。
+                // ⚠️ key 来自 namespace 化的 entry，不是标题、也不是 RN 的下标。
                 // 标题随 locale 与"今天"两处变化，下标会在分页后错配 —— 见 [DateBucket]
-                key = bucket.bucketKey,
-                title = bucket.displayTitle,
-                items = bucket.items,
+                key = entry.key,
+                title = entry.title,
+                items = entry.items,
                 kind = FloorKind.CHAT,
             )
         }
 
         // 尾部固定拼 2 个空占位层（Android 恒 2，见类注释）
         val trailing = (1..TRAILING_EMPTY_FLOORS).map { n ->
-            Floor<T>(key = "empty$n", title = "", items = emptyList(), kind = FloorKind.RUNWAY)
+            Floor<T>(
+                key = "$RUNWAY_KEY_PREFIX$n",
+                title = "",
+                items = emptyList(),
+                kind = FloorKind.RUNWAY,
+            )
         }
         return floors + trailing
     }
@@ -201,8 +213,8 @@ internal object ChatMapFloors {
      * （encounter order），与接口顺序一致。
      *
      * @param threads 完整累计列表（接口顺序）
-     * @param epochDayOf 取该会话的本地 epoch-day（注入以便单测不依赖时区/时钟）
-     * @param titleOf 按 epoch-day 产出**已本地化**的展示文案
+     * @param epochDayOf 取该会话的**本地日序号**（注入以便单测不依赖时区/时钟）
+     * @param titleOf 按本地日序号产出**已本地化**的展示文案
      */
     fun <T> groupByDay(
         threads: List<T>,
@@ -214,17 +226,31 @@ internal object ChatMapFloors {
         val byDay = LinkedHashMap<Long, MutableList<T>>()
         threads.forEach { t -> byDay.getOrPut(epochDayOf(t)) { mutableListOf() }.add(t) }
         return byDay.map { (day, items) ->
-            DateBucket(
-                bucketKey = bucketKeyOf(day),
-                displayTitle = titleOf(day),
-                items = items,
-            )
+            DateBucket(localDay = day, displayTitle = titleOf(day), items = items)
         }
     }
 
-    /** 桶身份：`d<epochDay>` —— 与 locale、与"今天"都无关。 */
-    fun bucketKeyOf(epochDay: Long): String = "d$epochDay"
+    private interface Entry<T> {
+        val key: String
+        val title: String
+        val items: List<T>
+    }
 
-    private const val TODAY = "Today"
-    private const val YESTERDAY = "Yesterday"
+    private data class RealEntry<T>(
+        override val key: String,
+        override val title: String,
+        override val items: List<T>,
+    ) : Entry<T>
+
+    private class PadBucket<T>(index: Int) : Entry<T> {
+        override val key = "$PAD_KEY_PREFIX$index"
+        override val title = ""
+        override val items = emptyList<T>()
+    }
+
+    /** 楼层 key 的三个命名空间前缀 —— 互不重叠是结构保证，不是约定。 */
+    internal const val DAY_KEY_PREFIX = "day:"
+    private const val PAD_KEY_PREFIX = "pad:"
+    private const val RUNWAY_KEY_PREFIX = "runway:"
+
 }
