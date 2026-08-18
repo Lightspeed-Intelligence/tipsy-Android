@@ -16,22 +16,29 @@ import org.json.JSONObject
  *
  * 所以壳读 `user-storage.state.languageCode` 就拿到了账号语言。
  *
- * ## ⚠️ 为什么壳只读不写这个 key
+ * ## ⚠️ 本类只读，但这个 key 壳**是要写的** —— 写在 [AccountLanguageWriter]
  *
- * **语言设置页刻意不迁移**（方案 §8.1，与 iOS 同边界）—— 它留在
- * `SettingsSurface` 里，仍由 RN 发 `/user/set_language`。壳不需要写这条链。
+ * 原注释写着「壳只读不写这个 key」，理由是「语言设置页刻意不迁移，留在
+ * `SettingsSurface` 里由 RN 发 `/user/set_language`」。
+ * **那个前提在语言页原生化（§2.33）之后已不成立。**
  *
- * 而且 `user-storage` 是 Zustand persist 信封（`{state, version}`），
- * 方案 §4.6 要求「原生写入必须 merge，不得整体覆盖破坏信封」。
- * 本类**只读**，把写入的风险留给真正需要它的步骤（P2）。
+ * 现在壳是语言的唯一写入者，信封镜像也必须由壳维护 —— 只读会让本类读到
+ * 自己造成的陈旧值，把用户刚选的语言覆盖回英文（§2.37 的 FAIL 项）。
+ * 读写方向必须成对，详见 [AccountLanguageWriter] 类注释。
  *
- * ## 已知缺口（写下来避免当成 bug）
+ * 本类仍然只负责**读**（`user-storage` 是 Zustand persist 信封，方案 §4.6
+ * 要求写入必须 merge），写入收在 [AccountLanguageWriter] / [AccountLanguageMirror]。
  *
- * RN 设置页改完语言后，壳这边**不会自动收到通知** —— 桥契约里只有壳→JS 的
- * `onLanguageChanged`，没有反向的方法（已核实 `modules/tipsy-auth/src/index.ts`）。
- * 当前处理：壳在 Surface 容器关闭时重读本 key（见 `MainActivity`）。
- * 这不需要改 `tipsy-app`。若将来发现该时机不够（例如设置页不关就切 Tab），
- * 再考虑给桥加一个可选方法 —— 别为了「更干净」提前改跨仓契约。
+ * ## 关于「RN 侧改语言」这条反向路径
+ *
+ * 桥契约里只有壳→JS 的 `onLanguageChanged`，没有 JS→壳 的语言通知
+ * （已核实 `modules/tipsy-auth/src/index.ts`）。壳靠 `MainActivity` 在 Surface
+ * 容器出栈时重读本 key 兜住这条路。
+ *
+ * ⚠️ 语言页原生化后，RN 侧已经没有改语言的入口了（`KNOWN_SCREENS` 不含
+ * `Language`）—— 那个重读时机现在的主要作用是**兜 RN 侧其它写 user store
+ * 的路径**（如 `updateUserInfo`）。它不再是语言的必需链路，但仍是共享信封
+ * 的重读点，所以保留。
  */
 object AccountLanguageReader {
 

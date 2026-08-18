@@ -31,10 +31,33 @@ import java.io.File
  * 读写，**信封的 merge 语义由调用方负责**（如 `HomeFilterStore`）——
  * 这里不提供"改某个字段"之类的便利方法，免得有人绕过 merge 直接覆盖信封。
  *
- * ⚠️ 每个 key 的可写性各不相同（§4.6 owner 列）：`token-storage` 归
- * [MmkvTokenPersistence]，`chat-persist-storage` 归 RN Surface（壳不得写），
- * `config-persist-storage` 里 `gender` 可写而 `nsfw` 只读。
- * **加新写入点前先查那张表。**
+ * ## 共享键的读写方向表（**加新读写点前先查这张表**）
+ *
+ * 这张表是 §2.37 之后系统扫一遍的结果。扫的动因：**「壳读得对、但改动
+ * 没回写共享信封，于是被 RN 的旧值倒灌」已经出现两例**（性别筛选 §2.23.1、
+ * 账号语言 §2.37）。两例形状完全相同，共同症状是「改了、看起来生效了、
+ * 过一会儿又回去了」—— **用户不会报**，所以必须按方向逐个核，不能碰一个修一个。
+ *
+ * | key / 字段 | 真值在哪 | 壳读 | 壳写 | 不成对会怎样 |
+ * | --- | --- | --- | --- | --- |
+ * | `token-storage` | 壳（唯一刷新者） | ✅ | ✅ [MmkvTokenPersistence] | — |
+ * | `user-storage.languageCode` | 后端 | ✅ [AccountLanguageReader] | ✅ [ai.lightspeed.tipsy.shell.i18n.AccountLanguageWriter] | **已修**（§2.37）：只写服务端 → 被信封旧值倒灌回英文 |
+ * | `user-storage` 其余字段 | 后端 | 只读 `languageCode` | ❌ | 壳不消费，无风险；将来要写照 `AccountLanguageWriter` 的 merge |
+ * | `config-persist-storage.gender` | 本地偏好 | ✅ | ✅ `HomeFilterStore` | ⚠️ **待 owner**（§2.23.1）：信封缺失时刻意不写 → 全新安装永不持久化 |
+ * | `config-persist-storage.nsfw` | **后端** `user.nsfw` | ✅ | ❌ 刻意无 `writeNsfw` | 壳写会破坏 RN 的单向镜像流（关了自己开回来）。写方是 Settings 的 `POST /user/nsfw`，本地镜像由 RN 订阅补 |
+ * | `config-persist-storage.chatPageType` | 本地偏好 | ✅ | ✅ `ChatPageTypeStore` | 同 gender 的信封缺失问题（继承，非新增） |
+ * | `chat_draft_lru` | **RN ChatDetail** | ✅ 只读 | ❌ | 壳写会与 RN 的 LRU 淘汰打架 |
+ * | `multi-cinema-conv-epoch:<id>` | 壳删除动作 | ❌ | ✅ `ChatListCache` | 壳删会话后**必须写**，不写会让重进影院假命中旧剧情 |
+ * | `chat-persist-storage` / `chat-background-storage` | RN Surface | ❌ | ❌ | 方案 §4.1 明确归 RN |
+ *
+ * ⚠️ **写 Zustand 信封（`{state, version}`）一律 merge，不得整体覆盖** ——
+ * 覆盖会静默清掉同信封里其余二十多个字段。本类只提供 [getString] /
+ * [putString] 这对**原始**读写，**merge 语义由调用方负责**（见
+ * `mergeGenderIntoEnvelope` / `AccountLanguageWriter.merge`）——
+ * 这里不提供"改某个字段"之类的便利方法，免得有人绕过 merge 直接覆盖信封。
+ *
+ * ⚠️ **写完共享信封要发 `onUserStoreChanged`**：常驻 JS runtime 已 hydrate 过
+ * 对应 store，直接改 MMKV 它不会知道。见 [ai.lightspeed.tipsy.shell.i18n.AccountLanguageMirror]。
  */
 class LegacyMmkvStore private constructor(private val mmkv: MMKV?) {
 

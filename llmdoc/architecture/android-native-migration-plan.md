@@ -943,7 +943,7 @@ git -C tipsy-app diff --name-status <wave-source-sha>..<candidate-sha> -- \
 | Onboarding（starter-picks，2,364 行） | `src/login/starter-picks/`：`StarterPicksFlow` + `OrientationStep`/`TagSelectionStep`/`CharacterSelectionStep` | **留 `OnboardingSurface`**（RN 已有该 Surface）。壳按 `onboardingStatus` 拉起，完成后经桥回执 |
 | 停止条件 | 缺 Firebase / Google OAuth 的 **Android 签名指纹**（三个 applicationId 各一套）使真实登录无法验证 | 这是 W2 的硬前置，见 §12 |
 | Settings 列表 | `page.tsx` 430 行。列表行序与渠道 gating 由壳控制；子页全部经 `SettingsSurface` |
-| 语言页 | `language.tsx` 136 行。**要原生实现**（不是「不迁」—— 2026-08-14 订正措辞：原文「刻意不迁」指的是**不由 RN 承载**，被读反过）。已核实 `SettingsSurface.tsx:34-44` 的 `KNOWN_SCREENS` **刻意不含 `Language`**，注释写明「语言页原生：壳是语言唯一写入者」；iOS 对应物是原生 `LanguageViewController.swift`。所以 Settings 那一刀**必须连语言页一起做**，否则壳内没有任何入口能改语言。可选集合 = 服务端 `/supported_languages` ∩ 26 个客户端支持码（§4.8）；写入走 `POST /user/set_language` → 重拉 `/user/info`，不经 Zustand 信封 |
+| 语言页 | `language.tsx` 136 行。**要原生实现**（不是「不迁」—— 2026-08-14 订正措辞：原文「刻意不迁」指的是**不由 RN 承载**，被读反过）。已核实 `SettingsSurface.tsx:34-44` 的 `KNOWN_SCREENS` **刻意不含 `Language`**，注释写明「语言页原生：壳是语言唯一写入者」；iOS 对应物是原生 `LanguageViewController.swift`。所以 Settings 那一刀**必须连语言页一起做**，否则壳内没有任何入口能改语言。可选集合 = 服务端 `/supported_languages` ∩ 26 个客户端支持码（§4.8）；写入走 `POST /user/set_language` **并回写 `user-storage` 信封**。⚠️ 原文「不经 Zustand 信封」**是错的，且正是一个真实缺陷的根因**（2026-08-18 订正）：壳在每次 Surface 容器出栈时从该信封读回语言并覆盖当前值，只写服务端会让刚选的语言被旧值倒灌回英文。**壳是语言唯一 writer ⇒ 信封镜像也必须由壳维护**，读写方向必须成对。落地与证据见进度文档 §2.38 |
 
 ### 8.2 现成的对等 fixture 来源（省掉大量猜测）
 
