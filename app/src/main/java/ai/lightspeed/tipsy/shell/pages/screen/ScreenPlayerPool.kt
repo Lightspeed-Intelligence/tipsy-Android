@@ -65,7 +65,14 @@ class ScreenPlayerPool(
      */
     private val playerFactory: (() -> ExoPlayer)? = null,
 ) {
-    /** 池容量（对齐 iOS：≥6GB→5、≥4GB→4、否则 3）。 */
+    /**
+     * 池容量：按**本进程堆上限**分档 —— `largeMemoryClass ≥512MB→5`、
+     * `≥256MB→4`、否则 3（见 [capacityFor]）。
+     *
+     * ⚠️ 档位形状照 iOS 的 3~5，但**判据不是设备物理内存** ——
+     * iOS 按 `physicalMemory` 分档，Android 的真实上界是进程堆上限。
+     * 别把这里写回"≥6GB/≥4GB"，那是 iOS 的数。
+     */
     val capacity: Int = capacityOverride ?: capacityFor(context)
 
     /**

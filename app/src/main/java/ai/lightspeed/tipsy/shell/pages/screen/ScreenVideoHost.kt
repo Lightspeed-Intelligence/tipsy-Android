@@ -70,7 +70,16 @@ fun ScreenVideoHost(
      * **不在失焦时调用** —— 失焦只暂停、保住进度（见播放门那段注释）。
      */
     onResetToCover: () -> Unit,
-    /** 首帧已渲染 —— 上层据此隐藏封面并结算首屏埋点。 */
+    /**
+     * 首帧已渲染 —— 上层据此**移除封面 overlay**。
+     *
+     * ⚠️ 只做这一件事。**不结算首屏埋点** —— Screen 的 firstInteractive
+     * 接线在本仓尚不存在（iOS 有 `FirstScreenInteractiveTracker`，
+     * 研究文档 §4 也列了它，属未落地项）。别照这条注释以为埋点已经通了。
+     *
+     * ⚠️ 移除是**直接切换、没有淡入淡出** —— iOS 研究文档 §4 写的是
+     * 「ready 后单次淡出」，本刀未实现该过渡，记为已知偏差。
+     */
     onFirstFrame: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
