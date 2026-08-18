@@ -132,7 +132,8 @@ class ChatMapSourceTest {
     @Test
     fun `跨年时 1月1日 看 12月31日 仍是 Yesterday`() {
         // ⚠️ 早前用 `todayDay - 1` 判定，而序号是 `year*512 + dayOfYear`、
-        // **在年界不连续**（2027-01-01 与 2026-12-31 相差 660 不是 1），
+        // **在年界不连续**（2027-01-01 = 1037825 与 2026-12-31 = 1037677
+        // 相差 **148** 而不是 1；闰年前一年是 147，因为该年有 366 天），
         // 所以跨年会漏判成日期标题。
         // RN 是 `today.subtract(1,'day')`（func.ts:355）、iOS 是 isDateInYesterday
         // —— 两端跨年都显示 Yesterday，这不是可接受偏差
