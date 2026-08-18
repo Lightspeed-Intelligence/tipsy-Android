@@ -145,8 +145,15 @@ internal object ChatMapGeometry {
     /** 松手惯性衰减系数（`TipsyCarousel.tsx:365`）。 */
     const val DECELERATION = 0.998f
 
-    /** 一层最多同时铺的卡数。 */
-    const val MAX_CARDS_PER_FLOOR = 5
+    /**
+     * 卡叠的**可见弧段槽位数**（distance 环绕的窗口宽度）。
+     *
+     * ⚠️ **不是"一层最多几张卡"** —— 早前叫 `MAX_CARDS_PER_FLOOR` 是危险的错名：
+     * RN 是 `if (len < 5)` **补位**（`ChatMap.tsx:205`），同日超过 5 条会话
+     * **全部保留**，靠 distance 环绕显示。UI 不得 `take(5)`。
+     * 补位下限见 [ChatMapFloors.MIN_CAROUSEL_SLOTS]。
+     */
+    const val VISIBLE_ARC_SLOTS = 5
 
     /** 楼层模式数：`i ∈ {1, 3, 5}`（4/2 归 3，见 `getIndex`）。 */
     val FLOOR_MODES = intArrayOf(1, 3, 5)

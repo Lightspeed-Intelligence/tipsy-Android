@@ -34,6 +34,36 @@ package ai.lightspeed.tipsy.shell.pages.chatlist
  */
 internal object ChatMapCardLayout {
 
+    /**
+     * 每层可复用的**固定插值横轴**（`baseX` 不变时它们也不变）。
+     *
+     * ⚠️ 性能：`solve()` 在滚动时每帧对每张卡各调一次，早前每次都
+     * `floatArrayOf(...)` 新建两个 stop 数组 —— 一层 5 张、可见 5 层就是
+     * 每帧 50 个短命数组。低端机上表现为**滚动时 GC 抖动**（不是崩溃，
+     * 只是掉帧），而这类问题在高端模拟器上量不出来。
+     *
+     * UI 层应 `remember(baseX) { ChatMapCardLayout.stopsFor(baseX) }` 一次，
+     * 每帧复用。
+     */
+    class Stops internal constructor(internal val baseX: Float) {
+        /** scale 插值横轴：`baseX * [-0.5, 0.5, 1.5, 2.5, 3.5, 4.5, 5.5]`。 */
+        internal val scaleInput = floatArrayOf(
+            baseX * -0.5f, baseX * 0.5f, baseX * 1.5f, baseX * 2.5f,
+            baseX * 3.5f, baseX * 4.5f, baseX * 5.5f,
+        )
+
+        /** translateX 插值横轴：`baseX * [0.5, 1.5, 2.5, 3.5, 4.5]`。 */
+        internal val distanceArray = floatArrayOf(
+            baseX * 0.5f, baseX * 1.5f, baseX * 2.5f, baseX * 3.5f, baseX * 4.5f,
+        )
+
+        /** 可见弧段上界 `baseX * 5.5`。 */
+        internal val visibleLimit = baseX * 5.5f
+    }
+
+    /** 建一份可复用的固定横轴，见 [Stops]。 */
+    fun stopsFor(baseX: Float): Stops = Stops(baseX)
+
     /** 一张卡的解算结果。 */
     data class CardTransform(
         /** 缩放（0 表示该卡不可见，调用方应跳过绘制）。 */
@@ -60,9 +90,23 @@ internal object ChatMapCardLayout {
         itemCount: Int,
         baseX: Float,
         disOut: FloatArray,
+    ): CardTransform = solve(index, scrollX, itemCount, stopsFor(baseX), disOut)
+
+    /**
+     * 解算第 [index] 张卡（**热路径版**：横轴由调用方 [Stops] 复用）。
+     *
+     * UI 每帧走这个重载 —— 上面那个便利重载每次都会新建 [Stops]，只适合测试。
+     */
+    fun solve(
+        index: Int,
+        scrollX: Float,
+        itemCount: Int,
+        stops: Stops,
+        disOut: FloatArray,
     ): CardTransform {
         if (itemCount <= 0) return HIDDEN
 
+        val baseX = stops.baseX
         val dis = baseX * itemCount
         val baseDistance = baseX * (index + 2.5f)
         // ((x % dis) + dis) % dis —— 环绕到 [0, dis)。
@@ -72,15 +116,19 @@ internal object ChatMapCardLayout {
         distance = (distance + dis) % dis
 
         // 超出可见弧段：RN 返回 `transform: [{scale: 0}]`（`TipsyCarousel.tsx:178-182`）
-        if (distance > baseX * 5.5f) return HIDDEN
+        if (distance > stops.visibleLimit) return HIDDEN
 
         // i 恒为 1/3/5（楼层已裁剪）；disOut 空则退化成恒等，不崩
         if (disOut.size != CARD_SLOTS) {
             return CardTransform(scale = 1f, translateX = 0f, zIndex = 1f, visible = true)
         }
 
-        val scale = ChatMapMath.interpolate(distance, scaleInput(baseX), ChatMapGeometry.CARD_RATIO_ARRAY)
-        val translateX = ChatMapMath.interpolate(distance, distanceArray(baseX), disOut)
+        val scale = ChatMapMath.interpolate(
+            distance,
+            stops.scaleInput,
+            ChatMapGeometry.CARD_RATIO_ARRAY,
+        )
+        val translateX = ChatMapMath.interpolate(distance, stops.distanceArray, disOut)
         return CardTransform(
             scale = scale,
             translateX = translateX,
@@ -217,17 +265,6 @@ internal object ChatMapCardLayout {
         val m = minOf(itemCount, sel)
         return if (m == 4 || m == 2) 3 else m
     }
-
-    /** scale 插值横轴：`baseX * [-0.5, 0.5, 1.5, 2.5, 3.5, 4.5, 5.5]`。 */
-    private fun scaleInput(baseX: Float) = floatArrayOf(
-        baseX * -0.5f, baseX * 0.5f, baseX * 1.5f, baseX * 2.5f,
-        baseX * 3.5f, baseX * 4.5f, baseX * 5.5f,
-    )
-
-    /** translateX 插值横轴：`baseX * [0.5, 1.5, 2.5, 3.5, 4.5]`。 */
-    private fun distanceArray(baseX: Float) = floatArrayOf(
-        baseX * 0.5f, baseX * 1.5f, baseX * 2.5f, baseX * 3.5f, baseX * 4.5f,
-    )
 
     private val HIDDEN = CardTransform(scale = 0f, translateX = 0f, zIndex = 0f, visible = false)
 

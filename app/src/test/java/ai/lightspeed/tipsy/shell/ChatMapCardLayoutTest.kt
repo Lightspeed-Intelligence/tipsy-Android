@@ -38,20 +38,62 @@ class ChatMapCardLayoutTest {
     }
 
     @Test
-    fun `distance 环绕对负 scrollX 也正确`() {
-        // ⚠️ ((x % dis) + dis) % dis 的两次取余不能省 ——
-        // Kotlin 的 % 对负数返回负值（与 JS 一致），只取一次会让 scrollX 为负时
-        // distance 变负 → 插值落到端点，卡片全挤在一起
+    fun `双取余：dividend 真为负时也必须环绕正确`() {
+        // ⚠️ 早前这条测试是**假保护**：用 index=2/scrollX=-100 时
+        // dividend = scrollX + baseX*(index+2.5) = -100 + 1458 = **+1358**，
+        // 压根没走到负数分支 —— 删掉第二次 `%` 它照样绿。
+        //
+        // 要让 dividend 真为负，scrollX 必须 < -baseDistance。
+        val baseX = 324f
+        val itemCount = 5
+        val index = 2
+        val disOut = floatArrayOf(-100f, -50f, 0f, 50f, 100f)
+        val baseDistance = baseX * (index + 2.5f)
+        val negativeScrollX = -baseDistance - 200f // dividend = -200 < 0
+
+        val t = ChatMapCardLayout.solve(index, negativeScrollX, itemCount, baseX, disOut)
+        assertFalse("负 dividend 不得产生 NaN", t.scale.isNaN())
+        assertFalse("负 dividend 不得产生 NaN", t.translateX.isNaN())
+
+        // 关键断言：环绕是模 dis 的，所以 scrollX 与 scrollX + k*dis 必须**完全等价**。
+        // 只取一次余时负 dividend 会得到负 distance → 插值落到端点，
+        // 与 +k*dis 的结果不同 → 这条会挂
+        val dis = baseX * itemCount
+        for (k in 1..3) {
+            val shifted = ChatMapCardLayout.solve(
+                index,
+                negativeScrollX + k * dis,
+                itemCount,
+                baseX,
+                disOut,
+            )
+            assertEquals("scrollX 与 +${k}*dis 的 scale 必须相等", t.scale, shifted.scale, EPS)
+            assertEquals(
+                "scrollX 与 +${k}*dis 的 translateX 必须相等",
+                t.translateX,
+                shifted.translateX,
+                EPS,
+            )
+            assertEquals("zIndex 也必须相等", t.zIndex, shifted.zIndex, EPS)
+            assertEquals("visible 也必须一致", t.visible, shifted.visible)
+        }
+    }
+
+    @Test
+    fun `多个负 dividend 采样都落在有效弧段内`() {
+        // 扫一圈：任何 scrollX（含大负值）解出的 scale 都必须在 ratio 数组范围内。
+        // 只取一次余的实现会在负区间把 scale 压到端点 0，这里能抓到
         val baseX = 324f
         val disOut = floatArrayOf(-100f, -50f, 0f, 50f, 100f)
-        val positive = ChatMapCardLayout.solve(2, 100f, 5, baseX, disOut)
-        val negative = ChatMapCardLayout.solve(2, -100f, 5, baseX, disOut)
-        // 两个方向都必须解出可见且有限的结果
-        assertTrue(positive.visible)
-        assertTrue(negative.visible)
-        assertFalse("负 scrollX 不得产生 NaN", negative.scale.isNaN())
-        assertFalse("负 scrollX 不得产生 NaN", negative.translateX.isNaN())
-        assertTrue("scale 必须在 ratio 数组范围内", negative.scale in 0f..1f)
+        var visibleCount = 0
+        var x = -5000f
+        while (x <= 5000f) {
+            val t = ChatMapCardLayout.solve(1, x, 5, baseX, disOut)
+            assertTrue("scale 越界: $t @ scrollX=$x", t.scale in 0f..1f)
+            if (t.visible) visibleCount++
+            x += 137f // 非整数步长，避免只采到整齐位置
+        }
+        assertTrue("扫描中应有可见样本", visibleCount > 0)
     }
 
     @Test
@@ -193,6 +235,23 @@ class ChatMapCardLayoutTest {
             Math.abs(half[4]),
             0.5f,
         )
+    }
+
+    @Test
+    fun `Stops 复用后热路径结果与便利重载一致`() {
+        // 热路径版（UI 每帧走这个，横轴由 remember 复用）与便利版必须等价。
+        // ⚠️ 性能动机：便利版每次新建 2 个 stop 数组 —— 一层 5 张 × 可见 5 层
+        // = 每帧 50 个短命数组，低端机上表现为滚动 GC 抖动（掉帧，不崩）
+        val baseX = 324f
+        val disOut = floatArrayOf(-100f, -50f, 0f, 50f, 100f)
+        val stops = ChatMapCardLayout.stopsFor(baseX)
+        var x = -2000f
+        while (x <= 2000f) {
+            val convenient = ChatMapCardLayout.solve(1, x, 5, baseX, disOut)
+            val hot = ChatMapCardLayout.solve(1, x, 5, stops, disOut)
+            assertEquals(convenient, hot)
+            x += 211f
+        }
     }
 
     @Test
