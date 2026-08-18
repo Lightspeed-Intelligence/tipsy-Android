@@ -65,7 +65,7 @@
 - **Tab3 创建入口已接通**（§2.40，2026-08-18，219 行）：`AppRoute.Create` 进白名单，Tab3 的 ➕ 从「只打一行日志」变成挂 `CreateSurface` 直达创建表单 —— **五个 Tab 全部可用**。壳只传 `createEnterSource` 一个 prop，**刻意不复刻** RN tabPress 那四个参数（Surface 自决落地页，§2.30 纪律）。⚠️ 真机抓到**类别性**缺陷并已修：`AppRoute.Create()` 无参 ⇒ 实例恒相等 ⇒ 去重不解除就「只能用一次」，ChatDetail 因每次带不同 characterId 而侥幸未暴露；后续每个无参路由都要配解除。⚠️ **无微根机器断言**（清单只覆盖 ChatDetail，仅人工比对 provider 树），§9.1 那行全 `✎`，待 owner 定。
 - **Screen P1 已实现**（§2.35，10 文件 2,131 行）：**Screen Tab 从占位换成真实页面，五个 Tab 全部落地**。AB 端点分流（游客/未登录恒 distribution）、归因、首屏缓存、会话埋点双轴、静态图/GIF 两形态。⚠️ **不播视频**：Media3 与有界播放器池属 P2，故 OOM 风险为零。两份 RN fixture 在提交前抓到我两个设计缺陷（归因 position 用原始下标、首屏缓存要在发请求前读）。
 - **Search P2 筛选器已实现**（§2.34，4 文件 723 行）：性别/排序/分级抽屉 + 二级标签栏，Search 达成完整对等。`SearchTagOrderTest` **逐条对拍 RN 的 144 行现成单测**。⚠️ 分级筛选的门是「非 GooglePlay && nsfw 开」，与 Settings 的 Limitless（只有 directApk）**不同轴** —— RuStore 在这里算可选。
-- **不存在 / 未验**：ChatList 的 Map「時光長廊」视图仍是 P2；Screen 的视频播放已实现但**播放链路未验**（§2.41，游客 feed 全静态图）；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。生产路由白名单**六个**目标（三纯原生 + `ChatDetail`/`MiniPhoneChat` + **`Create`**），**`ChatDetailSurface` 的 §9.1 真机十项仍 NOT RUN**、**`CreateSurface` 那行全 `✎` 且无微根机器断言**（§2.40）；其余 10 个业务 Surface 全未过矩阵（含 Settings 的 7 个子屏与 Profile 的五个出口）。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
+- **不存在 / 未验**：ChatList 的 Map「時光長廊」视图仍是 P2；Screen 的视频播放已实现但**播放链路未验**（§2.42，游客 feed 全静态图）；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。生产路由白名单**六个**目标（三纯原生 + `ChatDetail`/`MiniPhoneChat` + **`Create`**），**`ChatDetailSurface` 的 §9.1 真机十项仍 NOT RUN**、**`CreateSurface` 那行全 `✎` 且无微根机器断言**（§2.40）；其余 10 个业务 Surface 全未过矩阵（含 Settings 的 7 个子屏与 Profile 的五个出口）。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
 
 ## 1. 波次状态
 
@@ -75,7 +75,7 @@
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟢 **完成**：契约层已收口且 CI 已验；**P9 已完成**（§2.36，白名单放开 + 桥桩回填）；§12 关闭链记为**已接受偏差**（owner 2026-08-17）。**冒烟部分兑现**（§2.37 + §2.39）：§9.1 **7 过 / 3 未跑**，业务分流项未验。语言那项的壳缺陷已修（§2.38）且**复跑 PASS（模拟器）**（§2.39） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17/#33 已并） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
 | W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1–P4、P6，§2.25–§2.29，真机验证）；ChatList P1 Grid 主链路已并（§2.30，模拟器冒烟 PASS）；**Search P1 主链路已实现**（§2.31，directApk 真机冒烟 PASS）；**他人主页已实现**（§2.32，第一条端到端可用路径）；**Settings 列表 + 语言页已实现**（§2.33）；**Search P2 筛选器已实现**（§2.34，Search 完整对等）；剩 Profile P5 ⋮ 菜单/P7 头像框、ChatList P2 Map | `a6b9fc56a88d97444fe5f1ce952068bb9222be82` | —（PR #21–#30 已并；Search P2 在 `feat/android-w3-search-p2`） |
-| W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | 🟡 **起步**：Screen **P1 已实现**（§2.35，数据层 + 翻页 + 埋点，**不含 Media3**）；**Tab3 创建入口已接 `CreateSurface`**（§2.40，白名单 + 模拟器已验，⚠️ 无微根机器断言）；**Screen P2 已实现**（§2.41，Media3 有界池 + ±1 窗口 + buffer 三件套，⚠️ **视频播放本身 NOT RUN** —— 游客 feed 无 showcase 数据可验）；剩 P3 二期项、11 个 Surface、系统能力、OTA | `a6b9fc56a88d97444fe5f1ce952068bb9222be82` | —（Screen P2 在 `feat/android-w4-screen-p2-media3`） |
+| W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | 🟡 **起步**：Screen **P1 已实现**（§2.35，数据层 + 翻页 + 埋点，**不含 Media3**）；**Tab3 创建入口已接 `CreateSurface`**（§2.40，白名单 + 模拟器已验，⚠️ 无微根机器断言）；**Screen P2 已实现**（§2.42，Media3 有界池 + ±1 窗口 + buffer 三件套，⚠️ **视频播放本身 NOT RUN** —— 游客 feed 无 showcase 数据可验）；剩 P3 二期项、11 个 Surface、系统能力、OTA | `a6b9fc56a88d97444fe5f1ce952068bb9222be82` | —（Screen P2 在 `feat/android-w4-screen-p2-media3`） |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
 
 **W0+W1 时间盒**：这两波不产出用户可见价值，目标是"够用就往下走"。若超过总工期 1/4,停下复审是否过度设计（方案 §8.5）。
@@ -2407,7 +2407,7 @@ ExoPlayerImplInternal.shouldContinueLoading`，多个 ExoPlayer 并存时
 | 播放窗口 | **`abs(index - currentIndex) <= 1`** —— 只挂当前 ±1 三个播放器 | `FeedMediaItem.tsx:594` |
 | buffer 上限 | min 2500 / max **5000** / forPlayback 500 / afterRebuffer 1500 / backBuffer 2000 / 磁盘缓存 **50MB** | `FeedMediaItem.tsx:600-609` |
 
-✅ **Media3 依赖已于 §2.41 加上**（原记「还没加」）—— 下文是 P1 当时的状态。
+✅ **Media3 依赖已于 §2.42 加上**（原记「还没加」）—— 下文是 P1 当时的状态。
 ⚠️ **`largeHeap` 已在但 Media3 依赖还没加** —— `app/build.gradle` 与
 `libs.versions.toml` 都搜不到 media3/exoplayer。加依赖时注意方案 §8.1 的
 「**三件套必须同时到位**」：largeHeap + 有界池 + 图片内存上限。
@@ -3033,7 +3033,7 @@ owner 需定：补一份 CreateSurface 依赖清单再合（与 ChatDetail 同�
 **白名单里因此多了一个未经机器断言的 Surface**，这条必须显式记着，
 且 §9.1 的 `CreateSurface` 行仍全 `✎`，**不得标 production-ready**。
 
-### 2.41 W4 Screen P2：Media3 有界播放器池（2026-08-18）
+### 2.42 W4 Screen P2：Media3 有界播放器池（2026-08-18）
 
 `showcase` 形态**第一次真的播视频** —— P1 只显示静态封面（§2.35）。
 新增 3 文件 + 2 测试文件，733 行：`ScreenPlayerPool`（有界池）、
