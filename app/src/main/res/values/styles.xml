@@ -15,6 +15,32 @@
 
     <style name="Widget.App.TextView" parent="Widget.AppCompat.TextView" />
 
+    <!--
+      widget 模块（tipsy-app/modules/widget，prebuild 模板残留）的 styles.xml 声明了
+      `Theme.App.SplashScreen`，parent 指向 `Theme.SplashScreen` —— 那个父主题由
+      expo-splash-screen 提供，而壳按 settings.gradle 的 exclude 不链接它。
+
+      全仓没有任何地方引用 `Theme.App.SplashScreen`（壳 manifest 用的是 AppTheme，
+      widget 自己的 manifest 只声明 widget receiver），它对壳是**死资源** ——
+      但资源合并不做可达性分析，parent 缺失就是硬性 aapt2 链接失败。
+
+      在壳侧同名覆盖成一个无 parent 的空 style：资源合并里 app 模块优先级高于库，
+      于是 widget 那份连同它对 `Theme.SplashScreen` 的引用一起被替换掉。
+      三个 windowSplashScreen* 属性也随之消失，不再需要 core-splashscreen 的 attr。
+
+      为什么不改 widget 模块本身：tipsy-app 是 iOS 壳与独立 App 共用的 submodule，
+      那份 styles.xml 受 git 跟踪；壳的构建约束不该外溢到共享仓。
+      （独立 App 走 CNG 生成的 android/，用 app.config.js 里的 expo-splash-screen
+      插件，与这份手写残留无关。）
+
+      W4 若把 expo-splash-screen 接回壳，删掉本 style 即可恢复 widget 那份。
+
+      ⚠️ `parent=""` 必须显式写：aapt2 对带点号的 style 名会**按名字推断隐式父级**，
+      省掉 parent 时它会去找 `Theme.App`（同样不存在），报
+      `resource style/Theme.App not found`。空串才是「无父级」。
+    -->
+    <style name="Theme.App.SplashScreen" parent="" />
+
     <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="android:textViewStyle">@style/Widget.App.TextView</item>
         <!--
