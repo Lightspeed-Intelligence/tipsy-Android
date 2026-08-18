@@ -264,6 +264,11 @@ dependencies {
     // 网络层必须显式引 coil-network-okhttp：不引则 http(s) URL 静默不加载。
     implementation libs.coil.compose
     implementation libs.coil.network.okhttp
+    // 动图解码：Map 卡片动态封面（W3-P2）实际消费。缺它动图只出第一帧且不报错
+    implementation libs.coil.gif
+    // SVG 解码：**Profile P7 头像框的跨轨前置，当前无业务消费**。
+    // 已由 react-native-screens 传递引入，此处显式化，见 catalog 注释
+    implementation libs.coil.svg
 
     // 视频播放（W4 Screen P2 的 showcase mp4）。**不是新增依赖** —— media3 1.8.0
     // 已由 react-native-video 引入依赖树（含 media3-session，实测 :app:dependencies

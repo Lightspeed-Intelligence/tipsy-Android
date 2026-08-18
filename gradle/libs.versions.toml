@@ -82,6 +82,23 @@ coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" 
 # 共享同一个 OkHttpClient 的理由见 ApiClient 注释。
 #noinspection NewerVersionAvailable
 coil-network-okhttp = { module = "io.coil-kt.coil3:coil-network-okhttp", version.ref = "coil" }
+# 动图解码（GIF / 动画 WebP）。**Map 卡片的动态封面依赖它** ——
+# decoder 由 coil3 经 `META-INF/services/coil3.util.DecoderServiceLoaderTarget`
+# **自动注册**，不需要手写 `.components { add(GifDecoder.Factory()) }`
+# （已核实 aar 内含该 service 条目）。R8 侧无需额外 keep ——
+# `ServiceLoaderComponentRegistry` 的 `ServiceLoader.load(...).iterator().asSequence()`
+# 写法是 Coil 刻意为之，源码注释原文「written intentionally so R8 can optimize it」。
+# ⚠️ 缺它时 Coil 只渲染**第一帧且不报错**，表现是"动图变静图"，没人会报。
+# ⚠️ 与 svg 不同，这个是**真新增**：react-native-screens 只引了 coil / network-okhttp
+# / svg 三个（已核实 android/build.gradle:249-253），**没有 gif**。
+#noinspection NewerVersionAvailable
+coil-gif = { module = "io.coil-kt.coil3:coil-gif", version.ref = "coil" }
+# SVG 解码。**这是 Profile P7（头像框）的跨轨前置，本刀不消费它**。
+# ⚠️ 它其实**已在依赖树里** —— react-native-screens 显式引了
+# `coil-svg:3.0.4`（android/build.gradle:253）。这里显式声明只是把
+# 隐式传递变成可见依赖，避免 RN 侧将来去掉它时壳静默失去 SVG 能力。
+#noinspection NewerVersionAvailable
+coil-svg = { module = "io.coil-kt.coil3:coil-svg", version.ref = "coil" }
 # Media3 ExoPlayer（Screen P2 的 showcase mp4 播放）。**不是新增依赖** ——
 # react-native-video 已引入整套 media3 1.8.0，见上方 [versions] 的说明。
 # 只声明 exoplayer + ui：
