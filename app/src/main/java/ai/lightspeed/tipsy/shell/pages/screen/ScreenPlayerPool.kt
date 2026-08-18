@@ -94,15 +94,32 @@ class ScreenPlayerPool(
     fun borrow(url: String?): ExoPlayer? {
         assertMainThread()
         if (url.isNullOrBlank()) return null
-        val player = ledger.borrow { playerFactory?.invoke() ?: createPlayer() }
+        // ⚠️ 整条借出链都要兜住异常：本方法跑在 Compose 的组合路径上，
+        // 抛出去就是整页崩。除了 cache（已在 dataSourceFactory 里降级），
+        // ExoPlayer 构造本身也可能失败（设备解码器耗尽、厂商 ROM 差异），
+        // 而播视频是**可选增强** —— 失败时降级封面图，不是让大屏页不可用
+        val player = runCatching {
+            ledger.borrow { playerFactory?.invoke() ?: createPlayer() }
+        }.getOrElse { error ->
+            Log.w(TAG, "创建播放器失败，降级封面图", error)
+            null
+        }
         if (player == null) {
-            // 不是异常路径：翻页快时会短暂命中，降级封面图即可
-            Log.d(TAG, "池满或已释放（capacity=$capacity），降级封面图")
+            // 池满不是异常路径：翻页快时会短暂命中，降级封面图即可
+            Log.d(TAG, "池满/已释放/创建失败（capacity=$capacity），降级封面图")
             return null
         }
-        player.setMediaItem(MediaItem.fromUri(url))
-        player.prepare()
-        return player
+        return runCatching {
+            player.setMediaItem(MediaItem.fromUri(url))
+            player.prepare()
+            player
+        }.getOrElse { error ->
+            // 装载失败要**把实例还回账本**，否则借出计数只增不减 →
+            // 几次之后池永远"满"，整页再也不播视频（且不报错）
+            Log.w(TAG, "装载媒体失败，归还播放器并降级封面图", error)
+            recycle(player)
+            null
+        }
     }
 
     /**
@@ -152,7 +169,7 @@ class ScreenPlayerPool(
             // 50MB 磁盘缓存（对齐 RN `cacheSizeMB: 50`），见 [videoCache]
             .setMediaSourceFactory(
                 androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
-                    cacheDataSourceFactory(context),
+                    dataSourceFactory(context),
                 ),
             )
             .build()
@@ -195,10 +212,14 @@ class ScreenPlayerPool(
          * | `backBufferDurationMs` | 2000 | `setBackBuffer` |
          * | `cacheSizeMB` | 50 | 磁盘缓存，**不在 LoadControl**（见下） |
          *
-         * ⚠️ `cacheSizeMB: 50` 是 **HTTP 磁盘缓存**，Media3 里对应 `SimpleCache` +
-         * `CacheDataSource.Factory`，不属 LoadControl。本刀**不实现它** ——
-         * 壳与 RN 共享同一个 OkHttpClient（见 `ApiClient` 注释），两边各配一份
-         * 磁盘缓存会在同一目录下打架。记为**已知偏差**，写进进度文档。
+         * ⚠️ `cacheSizeMB: 50` 是**磁盘缓存**，不属 LoadControl —— 它由
+         * [cacheDataSourceFactory] 实现（`SimpleCache` 单例 + `CacheDataSource`）。
+         *
+         * ⚠️ 早前这里写「本刀不实现它，因为壳与 RN 共享 OkHttpClient、
+         * 两边各配磁盘缓存会打架」—— **那个理由是错的，已推翻**：RN video 走
+         * 自己的 `RNVSimpleCache` + 自有 DataSource 链，**压根不经过壳的 OkHttp**。
+         * 真正要避开的是「两个 `SimpleCache` 实例指向同一目录」，
+         * 所以用独立目录而不是不做，见 [videoCache]。
          *
          * ⚠️ 标 `@UnstableApi`：[DefaultLoadControl] 在 Media3 里是 opt-in API。
          * **这不是能绕开的选择** —— 缓冲窗口只能经 LoadControl 配，
@@ -279,31 +300,69 @@ class ScreenPlayerPool(
         @UnstableApi
         private var videoCache: androidx.media3.datasource.cache.SimpleCache? = null
 
+        /**
+         * 取/建缓存。**构造失败返回 null 而不是抛** —— 见 [dataSourceFactory]。
+         *
+         * `cacheOpenFailed` 记住失败过，避免每次 borrow 都重试一次
+         * 目录锁/损坏索引（那会让每张卡都卡一下）。
+         */
         @UnstableApi
-        private fun cache(context: Context): androidx.media3.datasource.cache.SimpleCache =
-            videoCache ?: synchronized(this) {
-                videoCache ?: androidx.media3.datasource.cache.SimpleCache(
-                    java.io.File(context.cacheDir, "ScreenVideoCache"),
-                    androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor(CACHE_SIZE_BYTES),
-                    androidx.media3.database.StandaloneDatabaseProvider(context),
-                ).also { videoCache = it }
+        private fun cacheOrNull(context: Context): androidx.media3.datasource.cache.SimpleCache? {
+            videoCache?.let { return it }
+            if (cacheOpenFailed) return null
+            return synchronized(this) {
+                videoCache ?: run {
+                    if (cacheOpenFailed) return@run null
+                    runCatching {
+                        androidx.media3.datasource.cache.SimpleCache(
+                            java.io.File(context.cacheDir, "ScreenVideoCache"),
+                            androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor(
+                                CACHE_SIZE_BYTES,
+                            ),
+                            androidx.media3.database.StandaloneDatabaseProvider(context),
+                        )
+                    }.onFailure { error ->
+                        // 目录锁（同目录已有实例）、索引损坏、磁盘满、DB 初始化失败
+                        // 都会在**构造期**抛，且抛在 Compose 的 borrow 调用栈上
+                        cacheOpenFailed = true
+                        Log.w(TAG, "视频磁盘缓存打不开，降级为无缓存播放", error)
+                    }.getOrNull()?.also { videoCache = it }
+                }
             }
+        }
 
-        /** 读写缓存的 DataSource 工厂（上游用 media3 默认 HTTP 栈）。 */
+        /** 缓存构造失败过 —— 不再重试，见 [cacheOrNull]。 */
+        @Volatile
+        private var cacheOpenFailed = false
+
+        /**
+         * DataSource 工厂。
+         *
+         * ⚠️ **缓存是可选能力，不得击穿页面**：`SimpleCache` 与
+         * `StandaloneDatabaseProvider` 的**构造期**就可能抛（目录被另一个实例锁住、
+         * 索引损坏、磁盘满、DB 初始化失败），而这条调用栈来自 Compose 的
+         * borrow —— 抛出去就是整页崩。
+         *
+         * `FLAG_IGNORE_CACHE_ON_ERROR` **只覆盖 DataSource 的读写阶段，
+         * 不覆盖构造阶段**，所以必须在这里 `runCatching` 后降级成不带 cache 的
+         * [androidx.media3.datasource.DefaultDataSource.Factory]。
+         * 降级的代价只是「不省流量」，比崩页面好得多。
+         */
         @UnstableApi
-        internal fun cacheDataSourceFactory(
+        internal fun dataSourceFactory(
             context: Context,
-        ): androidx.media3.datasource.cache.CacheDataSource.Factory =
-            androidx.media3.datasource.cache.CacheDataSource.Factory()
-                .setCache(cache(context))
-                .setUpstreamDataSourceFactory(
-                    androidx.media3.datasource.DefaultDataSource.Factory(context),
-                )
-                // 缓存写失败（磁盘满等）不要让播放整体失败
+        ): androidx.media3.datasource.DataSource.Factory {
+            val upstream = androidx.media3.datasource.DefaultDataSource.Factory(context)
+            val cache = cacheOrNull(context) ?: return upstream
+            return androidx.media3.datasource.cache.CacheDataSource.Factory()
+                .setCache(cache)
+                .setUpstreamDataSourceFactory(upstream)
+                // 读写阶段出错（磁盘满等）继续走上游，不让播放整体失败
                 .setFlags(
                     androidx.media3.datasource.cache.CacheDataSource
                         .FLAG_IGNORE_CACHE_ON_ERROR,
                 )
+        }
 
         private fun assertMainThread() {
             check(Looper.myLooper() == Looper.getMainLooper()) {

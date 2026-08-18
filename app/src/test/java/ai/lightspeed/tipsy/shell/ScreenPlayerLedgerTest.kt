@@ -133,6 +133,21 @@ class ScreenPlayerLedgerTest {
     }
 
     @Test
+    fun `借出后立刻归还不留账 —— 装载失败那条路径靠它`() {
+        // `ScreenPlayerPool.borrow` 在 setMediaItem/prepare 抛异常时会把实例
+        // recycle 回来。若那条路径漏了归还，借出计数只增不减 →
+        // 几次之后池永远"满"，整页再也不播视频，**且不报错**
+        val l = ledger(2)
+        repeat(5) {
+            val p = l.borrow(::make)
+            assertNotNull("每轮都应借得到", p)
+            assertEquals(ScreenPlayerLedger.Recycle.ACCEPTED, l.recycle(p!!))
+            assertEquals("归还后不得留账", 0, l.borrowedCount)
+        }
+        assertEquals("应一直复用同一个实例", 1, created)
+    }
+
+    @Test
     fun `超出空闲容量的归还要求销毁而不是无限攒`() {
         val l = ledger(2)
         val a = l.borrow(::make)!!
