@@ -1035,12 +1035,10 @@ git -C tipsy-app diff --name-status <wave-source-sha>..<candidate-sha> -- \
 
 未填满的行**不得**标 production-ready。
 
-> **`ChatDetailSurface` 的当前状态**（进度文档 §2.36，2026-08-17）：
-> 「初始 route fixture」一列已完成 —— 微根 18 项与 5 个微栈目标由
-> `SurfaceDependencyChecklistTest` **对 RN 源码机器断言**（不是人工核对），
-> 判定素材的形状有 9 条单测且做过反向验证，桥依赖三个过期桩已回填。
-> **其余九列仍 `✎`**：那些只能真机验，按 owner 决定在 P9 冒烟那一次补齐。
-> 路由已进生产白名单，但**这一行填满前不得标 production-ready**。
+> **`ChatDetailSurface` 的填表进度不写在这里** —— 见进度文档 §2.36（实现、
+> 微根机器断言、桥桩回填）与 §2.37（§9.1 冒烟的逐项结果）。本文只定规则：
+> 路由已进生产白名单，但**这一行填满前不得标 production-ready**，
+> 且模拟器证据不算 —— 见进度文档 §2.5。
 
 ### 9.2 页面/横切能力对等（十类证据）
 

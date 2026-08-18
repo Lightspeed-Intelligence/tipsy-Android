@@ -1,6 +1,6 @@
 # Tipsy Android 原生化迁移：现状（唯一状态真值）
 
-> 更新：2026-08-13 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
+> 更新：2026-08-17 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
 > **G1 CI 已激活且在 main 上真绿**（§2.10 / §2.22）
 >
 > **W1 基本收尾**（细化方案见 [`../architecture/android-w1-plan.md`](../architecture/android-w1-plan.md)）：
@@ -10,7 +10,7 @@
 > ｜ **P6 network closeout 已实现且 CI 已验**（§2.14 / §2.22）
 > ｜ **§12 Fragment 机制已落地、真实实例关闭链待收口**（§2.15）
 > ｜ **P7 Qt / P8 Sentry 已决定推迟到业务迁移后**（2026-08-11，见 §2.17）
-> ｜ **P9 已完成**（§2.36，2026-08-17；真机十项待冒烟）
+> ｜ **P9 已完成**（§2.36）；**冒烟 6 过 / 1 FAIL / 3 未跑**（§2.37，语言那项 FAIL 是壳缺陷非 ChatDetail）
 > ｜ **原生登录页：邮箱验证码链路真机已验**（§2.20）—— Google/Apple 受 §12.8 签名指纹阻塞未接
 >
 > **W2 进行中**：五 Tab shell + Home 首屏（§2.23，主链路真机已验）+ 标签筛选抽屉
@@ -43,10 +43,11 @@
 
 - **波次进度**：W0 完成；**W1 完成**（契约层已在 CI 组合验证（§2.22）；**P9 已完成**（§2.36）；§12 关闭链记为已接受偏差）；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 已随 PR #25 并入 main（§2.30）；**Search P1 主链路已实现并完成 directApk 冒烟**（§2.31）；**P2 筛选器已实现**（§2.34，Search 完整对等）。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`、`pages/chatlist/`、`pages/search/`**。
-- **submodule**：pin **`a6b9fc56a88d97444fe5f1ce952068bb9222be82`**（§2.34 导出搜索筛选器 10 条词条；前一 pin `017e142ac` 是 §2.33 的 `Limitless` / `New Version`）
+- **submodule**：pin **`da4f65a04f50bc098c2df3bd9f8fbcc13018f7a5`**（§2.37 的 autolinking 补丁；前一 pin `a6b9fc56a` 是 §2.34 导出搜索筛选器 10 条词条）。⚠️ 该 pin 与 PR #34 的三处壳改动**必须同时存在**：指针回退则 exclude 仍失效，而 styles/lifecycle 两处已让构建变绿 —— 会得到「构建通过但图片仍坏」的假绿
 - **已验证**：main 上 PR #25 的 G1 Fast Gate 全绿。W3 Search P1 提交前快照的本机证据：`lintDirectApkDebug` 无新增（baseline 5 条）、`assembleGooglePlayDebug`/`assembleDirectApkDebug` 通过、**DirectApk app 单测 695 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿；directApk 真机主链路冒烟 PASS（§2.31）。提交前审查再新增 13 条、扩展 2 条回归测试并修正并发/auth/Router/点击归因/分页去重行为，最终源码预计 708 条；**最终 head 未在本机重跑 Gradle，交 G1 验证**。
 - **他人主页已实现**（§2.32，2026-08-14）：6 文件 1,469 行，`AppRoute.UserProfile` 进白名单 —— **搜索 → 创作者 → 他人主页是壳的第一条端到端可用路径**。审计推翻了「复用自己视角」的前提（七处偏差）：只有 **1 个 tab**（RN 注释说两个，代码是一个）、数据源另有四条、`size` **200 且不翻页**、`/user/get/public` 走 `axiosAuth` 会对游客弹登录页、`/plot/list/creator` **现网从未被调用**、关注按钮在 `ProfileHeader.tsx` 而非 `user-profile.tsx`。真机冒烟 **NOT RUN**。
 - **Settings 列表 + 语言页已实现**（§2.33，8 文件 1,501 行）：补上了真实功能缺失 —— 此前**壳内没有任何入口能改语言**。审计订正三处：语言页**要原生实现**（RN 与 iOS 双证据）、`supportedLanguages` 壳内**恒为空**必须自己拉、Limitless 开关是 `nsfw` 的**唯一写方**且仅 directApk 可见。渠道 gating 收在 `SettingsRow` 并对三渠道各有单测。7 个 Surface 子屏（`AppRoute.SettingsSubScreen`）仍被明确拒绝。真机冒烟 **NOT RUN**。
+- **P9 冒烟部分兑现**（§2.37，2026-08-17）：§9.1 十项里 **6 项 PASS**（未登录/登录切换/Back 栈底/首帧/Embedded/50 次泄漏 —— 无泄漏、容器实例恒为 1、PSS +3.7%）、**语言切换 FAIL**（壳缺陷倒灌，非 ChatDetail 问题，见 §5）、旋转恢复 NOT RUN。⚠️ 跑在**模拟器**上，§2.5 已定不作覆盖升级证据。同时查出 **autolinking exclude 从 W0 起一直静默失效**（PR #34）—— 此前所有构建都带着 dev-launcher 在跑。
 - **✅ 卡片点击已解锁**（§2.36，2026-08-17）：`ChatDetail` / `MiniPhoneChat` 进白名单，Home/ChatList/Search/Screen 四个页面的卡片点击**第一次有下一屏**。⚠️ 仍点不动的是 **Profile 的五个出口**（`EditProfileSurface` / `GemsSubscriptionSurface` / `UserCoinsSurface` / `RoleCardSurface` / Follow）与 Settings 的 7 个子屏 —— 那些 Surface 未过 §9.1。§12 实例关闭链**记为已接受偏差**（单层容器弹不错；根治要改 RN 侧 9 个调用点 + 双壳回归）。
 - **Screen P1 已实现**（§2.35，10 文件 2,131 行）：**Screen Tab 从占位换成真实页面，五个 Tab 全部落地**。AB 端点分流（游客/未登录恒 distribution）、归因、首屏缓存、会话埋点双轴、静态图/GIF 两形态。⚠️ **不播视频**：Media3 与有界播放器池属 P2，故 OOM 风险为零。两份 RN fixture 在提交前抓到我两个设计缺陷（归因 position 用原始下标、首屏缓存要在发请求前读）。
 - **Search P2 筛选器已实现**（§2.34，4 文件 723 行）：性别/排序/分级抽屉 + 二级标签栏，Search 达成完整对等。`SearchTagOrderTest` **逐条对拍 RN 的 144 行现成单测**。⚠️ 分级筛选的门是「非 GooglePlay && nsfw 开」，与 Settings 的 Limitless（只有 directApk）**不同轴** —— RuStore 在这里算可选。
@@ -57,7 +58,7 @@
 | 波次 | 内容 | 业务量 | 状态 | source_rn_sha | target_android_sha |
 | --- | --- | --- | --- | --- | --- |
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
-| W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟢 **完成**：契约层已收口且 CI 已验；**P9 已完成**（§2.36，白名单放开 + 桥桩回填）；§12 关闭链记为**已接受偏差**（owner 2026-08-17）。真机冒烟待跑 | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17 已并；P9 在 `feat/android-w4-screen-p1`） |
+| W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟢 **完成**：契约层已收口且 CI 已验；**P9 已完成**（§2.36，白名单放开 + 桥桩回填）；§12 关闭链记为**已接受偏差**（owner 2026-08-17）。**冒烟部分兑现**（§2.37）：§9.1 6 过 / 1 FAIL / 3 未跑，业务分流项未验 | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17/#33 已并） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
 | W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1–P4、P6，§2.25–§2.29，真机验证）；ChatList P1 Grid 主链路已并（§2.30，模拟器冒烟 PASS）；**Search P1 主链路已实现**（§2.31，directApk 真机冒烟 PASS）；**他人主页已实现**（§2.32，第一条端到端可用路径）；**Settings 列表 + 语言页已实现**（§2.33）；**Search P2 筛选器已实现**（§2.34，Search 完整对等）；剩 Profile P5 ⋮ 菜单/P7 头像框、ChatList P2 Map | `a6b9fc56a88d97444fe5f1ce952068bb9222be82` | —（PR #21–#30 已并；Search P2 在 `feat/android-w3-search-p2`） |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | 🟡 **起步**：Screen **P1 已实现**（§2.35，数据层 + 翻页 + 埋点，**不含 Media3**）；剩 Screen P2（Media3 + 有界播放器池 + buffer 三件套，**OOM 首要风险**）与 P3 二期项、12 个 Surface、系统能力、OTA | `a6b9fc56a88d97444fe5f1ce952068bb9222be82` | —（Screen P1 在 `feat/android-w4-screen-p1`） |
@@ -2633,14 +2634,112 @@ ChatList 点击的 `recommendTracking` 透传。
 - `:tipsy-auth:testDebugUnitTest` 15 条全绿
 - lint 无新增（baseline 仍 5 条）；googlePlay + directApk assemble 通过
 - **未动** manifest / RN 依赖 / flavor / submodule（pin 仍 `a6b9fc56a`）
-- **真机冒烟 NOT RUN** —— owner 2026-08-17 决定 P9 与 Media3 各插一次，
-  故本刀的冒烟**不并入累积清单**，待跑：①四个入口各进一次聊天
+- **真机冒烟已部分兑现，见 §2.37**（本节写的是 P9 实现当时的状态）。
+  §9.1 十项 6 过 / 1 FAIL / 3 未跑；下列 ①–⑥ 的业务分流项**仍未跑**
+  （本轮只走了 Home 入口，未验 html 富文本 / 多角色 / story / mini phone
+  / 点头像进他人主页）。原始待跑清单：①四个入口各进一次聊天
   （Home/ChatList/Search/Screen 卡片点击）②html 富文本角色落
   `ChatDetailHtml`、多角色落 `MultiCinema`（这两条正是 preload 嵌套那个
   缺陷的暴露点）③story 卡恒普通聊天页 ④mini phone 会话行落对初始屏
   ⑤聊天页点头像进他人主页（桥回填的验证点）⑥退出后再点同一角色能重开
   ⑦§9.1 十项：未登录 / 登录切换 / 语言切换 / Back 栈底 / 旋转进程恢复 /
   首帧 / 50 次开关泄漏（Runtime 数应恒 1）/ Embedded
+
+### 2.37 P9 冒烟：§9.1 部分兑现 + 抓到语言回退缺陷（2026-08-17）
+
+按 owner「P9 插一次冒烟」的决定跑了 §9.1。**十项里 6 项过、1 项 FAIL、
+3 项未跑**，并撞出一个与 ChatDetail 无关的壳缺陷（语言回退，见 §5）。
+故 §4 矩阵那一行**仍不得标 production-ready**。
+
+**跑在 commit `caf0cbe`**（即 PR #34 的内容，现已随 #34 并入 main —— 当时
+它还在 PR 分支上）。刻意不用当时的纯 main：#34 修掉了 autolinking exclude
+静默失效（见下），它改变 RN Surface 的运行环境（dev-launcher 不再链接），
+在旧环境上验出的结论对合并后的 main 不成立。
+Pixel_10 模拟器 / API 36 / directApk debug / Metro 8083。
+
+| §9.1 项 | 结果 | 证据 |
+| --- | --- | --- |
+| 未登录 | 🟢 PASS | Surface 挂载、零 crash、零 JS rejection、`requestLogin` **未**被误触（0 次） |
+| 登录切换 | 🟢 PASS | 登录态（UID `178...003`）下聊天页内容 + 输入框在场，props 完整 |
+| Back / 栈底 | 🟢 PASS | 容器移除、进程存活（PID 不变） |
+| 首帧 | 🟢 PASS | 挂载即渲染，无白屏 |
+| Embedded（单层容器） | 🟢 PASS | `RNSurfaceFragment` 唯一实例，HomeFragment 在其下未销毁 |
+| 50 次泄漏 | 🟢 PASS | 见下表 |
+| **语言切换** | 🔴 **FAIL** | **壳缺陷，非 ChatDetail 问题** —— 见 §5 |
+| 旋转 / 进程恢复 | ⬜ NOT RUN | 模拟器中途退出 |
+| OTA N/N-1 | — | 属 W4 |
+
+50 次开关（原生 Home ⇄ ChatDetailSurface）：
+
+| 指标 | 前 | 后 | 判定 |
+| --- | --- | --- | --- |
+| TOTAL PSS | 948 MB | 984 MB | +3.7%，可接受 |
+| Java Heap | 48.3 MB | 47.8 MB | 持平 |
+| Views | 1397 | 1018 | 下降（无累积） |
+| 容器唯一实例 | 1 | 1 | **恒为 1** |
+| 进程 PID | 16320 | 16320 | 未重启 |
+| OOM / FATAL | — | 0 / 0 | — |
+
+无泄漏迹象。**去重谓词版工作正常** —— 退出后能重开同一角色，§2.36 要防的
+「永远打不开」未复现。props 逐字段核对无误：`characterId` 在场、
+`chatEnterSource: "home"`、嵌套 `preload` 里 `contentType` / `characterType`
+是**数字**（正是 §2.36 强调不能塞字符串的两个，`putRouteParams` 类型分派生效）。
+
+顺带兑现两项本不在清单里的：**后台恢复**（回桌面再进，PID 未变）、
+**登录态持久化**（`force-stop` 后重启 UID 仍在，MMKV 互操作生效）。
+
+#### 抓到一个 50 次压力下的竞态（RN 侧，双壳共有）
+
+50 轮里出现 1 次 Render Error：
+
+```
+Call to function 'VideoPlayer.constructor' has been rejected.
+→ Caused by: The current activity is no longer available
+  GeneralMediaViewer.tsx:68  useVideoPlayer(activeMediaUrl || '', ...)
+  ← RelationshipRewardModalHost ← AllChatModal
+```
+
+时序对得上：错误落在挂载与下次挂载之间，即**按 Back 拆容器那一刻**。
+根因是 `GeneralMediaViewer.tsx:68` 的 `useVideoPlayer` **无条件调用**
+（`visible` 之前无早退），组件一挂载就构造播放器，容器拆除后 activity
+失效被 reject。
+
+⚠️ **不是** §4.2 已接受的那条取舍 —— 那条讲 `VideoPlayerPoolInitializer`
+刻意不挂载、有 `fallbackPlayer` 兜底；这里是组件直接调 Hook，不同的东西。
+也**不是壳引入的**：`index.surfaces.js` 双壳共用，iOS 同样会挂这条链，
+只是 iOS 用户少在媒体查看器构造的瞬间退出。1/50 频率，正常节奏碰不到。
+**待 owner 定**：记为可接受偏差，还是在 RN 侧加 `visible` 早退（修法很小，
+但按纪律要双壳回归）。
+
+#### 前置：autolinking exclude 一直静默失效（PR #34）
+
+冒烟前发现本地 icon 渲染不出来，根因不在图片：`settings.gradle` 那份
+exclude（`expo-updates` / `expo-splash-screen` / `expo-dev-client` 系）
+**从 W0 起就没生效过**。`expo-modules-autolinking` 的 gradle 插件把多值
+选项 `joinToString(" ")` 压成单个 argv，而 CLI 按精确包名匹配 `Set`，
+Set 里只有 `"expo-updates expo-splash-screen …"` 一个永不匹配的条目。
+
+后果链：dev-client 照样链接 → `USE_DEV_CLIENT=true` → 装
+`UpdatesDevLauncherController` → 它硬编码 `isEnabled=true` →
+expo-asset 的 `IS_ENV_WITH_LOCAL_ASSETS=true` → `Asset.fx` 抢注 transformer
+顶掉 RN 原生资源解析 → 壳既无 OTA 的 `fileUris` 也无 Expo Go 的
+`debuggerHost` → `selectAssetSource()` 落到末尾 `return { uri: '', hash }`。
+
+iOS 无此问题：CocoaPods 侧 `autolinking_manager.rb` 用
+`args.concat(['--exclude'], exclude)` 分开传，本来就是对的。修复是
+patch-package 补丁（tipsy-app `da4f65a`），让 Android 与之对齐。
+⚠️ 补丁绑定 `expo-modules-autolinking@3.0.23`，升级该包时需重做。
+⚠️ 意味着**此前所有构建都带着 dev-launcher 在跑**，W0 写下的隔离意图从未落地。
+
+#### 两条给后续冒烟的操作教训
+
+- **`Log.i` 取不到**。debug 包的 logcat 级别把 `Log.i` 过滤了，Router 的
+  `logger = { Log.i(TAG, it) }` 一条都拿不到。判据改用 **Fragment 栈变化**
+  （`dumpsys activity | grep tag=`），别依赖日志。
+- **坐标必须每次实时 dump**。Profile 顶栏 Settings 图标的 y 随滚动位置
+  在 58 / 197 之间变，写死坐标会点空且**看起来像功能坏了**。本轮在这上面
+  反复试了七八次才发现。另：app 被系统标 cached 时（`caps=---------`、
+  `curProcState=19`）UI 仍渲染但输入不被处理，`force-stop` 重启即恢复。
 
 ## 3. 横切能力
 
@@ -2668,9 +2767,15 @@ ChatList 点击的 `recommendTracking` 透传。
 
 **`ChatDetailSurface` 是第一个进生产白名单的业务 Surface**（§2.36，P9）：
 微根 18 项与 5 个微栈目标已由 `SurfaceDependencyChecklistTest` 对 RN 源码
-机器断言，桥依赖已回填。⚠️ **§9.1 那十项的真机部分（未登录/登录切换/
-语言切换/Back 栈底/旋转恢复/首帧/50 次泄漏/Embedded）仍 NOT RUN** ——
-按 owner 决定 P9 插一次冒烟时补齐。**在那之前这一行不得标 production-ready。**
+机器断言，桥依赖已回填。
+
+**§9.1 冒烟已部分兑现**（§2.37，2026-08-17）：未登录 / 登录切换 / Back 栈底 /
+首帧 / Embedded / 50 次泄漏 **6 项 PASS**（无泄漏，容器实例恒为 1）；
+**语言切换 FAIL** —— 但那是壳缺陷（`refreshAccountLanguage` 倒灌，§5）
+**不是 ChatDetail 的问题**；旋转/进程恢复 NOT RUN（模拟器中途退出）。
+⚠️ **这一行仍不得标 production-ready**：语言那列要等壳缺陷修完复跑，
+旋转那列要补，且本轮跑在**模拟器**上 —— §2.5 已定模拟器不作覆盖升级证据，
+50 次泄漏与首帧值得真机复跑。
 
 其余 11 个生产 Surface 均未验收：
 
@@ -2704,6 +2809,33 @@ ChatList 点击的 `recommendTracking` 透传。
   不需要产品决策 —— `home.tsx:505-511` 的 filter 已给出答案，**Android 显示 World、
   Multi-character 两端都隐藏**。World 点进去是 SimulatorGame WebView，方案 §8.1 已定不迁。
 - **§12.9 Apple 登录按钮在 Android 是否展示**、**§12.10 `/login/password` 是否对外**
+
+P9 冒烟新增的两项（2026-08-17，§2.37）：
+
+- 🔴 **原生语言页的选择会被静默覆盖回英文** —— 在语言页选繁中并确认，壳 UI
+  正确切换；但**只要开一次 RN Surface 再返回，语言就回退英文**，Surface 收到的
+  `context.languageCode` 也一直是 `en`。链路在代码里是确定的（不是推测）：
+  `MainActivity.kt:100-102` 挂 back stack listener，栈空时调
+  `app.refreshAccountLanguage()` → `TipsyApplication.kt:259-262` 从 MMKV 的
+  `user-storage` 读账号语言并 `L10n.setLanguage()` 覆盖 → 而原生语言页只把语言
+  存到服务端（`SettingsViewModel:140` 的 `api.setLanguage`），**从不回写
+  `user-storage`**（全仓只有读该 key 的代码，没有写的）。
+  那个 listener 的注释写着它是为「RN 设置页改完语言后壳需重读」服务的 ——
+  **该前提在 §2.33 语言页原生化之后已不成立**，覆盖逻辑留着就变成倒灌。
+  **需 owner 在三条路里定**：(1) 语言页确认时一并回写 `user-storage` 信封
+  （须先核实 RN 的 `version` / `merge` 配置，与下面性别筛选同一顾虑）；
+  (2) `refreshAccountLanguage` 只在冷启动跑、摘掉 back stack listener ——
+  最小，但会失掉「RN 侧改语言后壳重读」的能力，而 Settings 的 7 个子屏仍在
+  RN Surface 里，那条路径是否还需要要一并判断；(3) 判为已知偏差先记录。
+- **`GeneralMediaViewer` 的 `useVideoPlayer` 在容器拆除瞬间构造失败**（RN 侧，
+  双壳共有，1/50 频率）—— 详见 §2.37。**需 owner 定**：可接受偏差，还是加
+  `visible` 早退（要双壳回归）。
+
+> ⚠️ **共享 MMKV 信封「壳只读不写」已是第二例**（前有下面的性别筛选）。
+> 两处都是同一形状：壳与 RN 共用信封，壳读得对、但改动只落到自己或服务端，
+> 没回写信封，于是被 RN 的旧值倒灌。**建议系统扫一遍所有共享键的读写方向**，
+> 而不是逐个碰到再修 —— 这类缺陷的共同表现是「改了、看起来生效了、
+> 过一会儿又回去了」，用户不会报。
 
 W2 真机验证新增的一项（2026-08-12，§2.23.1）：
 
