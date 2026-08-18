@@ -212,17 +212,30 @@ sealed interface AppRoute {
     /**
      * `SettingsSurface` 的某个子屏（W3 定义、**未启用**）。
      *
-     * 7 个可达屏由 RN 的 `KNOWN_SCREENS` 定义（`SettingsSurface.tsx:36-44`）：
-     * Security / Blacklist / Feedback / About / ContactUs / Delete / Widget。
-     *
-     * ⚠️ [screen] 传白名单外的值时 RN 会**静默兜底到 `Feedback`**
-     * （`normalizeScreen`），表现为「点安全设置进了反馈页」。所以壳侧
-     * 只允许传那 7 个值之一（`SettingsRow` 里已按行写死）。
+     * iOS 壳把同一契约收成 `SettingsSurfaceViewController.InitialScreen`；Android
+     * 同样在路由边界使用 [Screen]，不让任意字符串流进 RN。否则白名单外的值会被
+     * `normalizeScreen` **静默兜底到 `Feedback`**，表现为「点安全设置进了反馈页」。
      *
      * @param screen 子屏名，进 Surface 的平铺 prop `initialScreen`
      */
-    data class SettingsSubScreen(val screen: String) : AppRoute {
+    data class SettingsSubScreen(val screen: Screen) : AppRoute {
         override val requiresAuth = true
+
+        /**
+         * 可由原生设置列表直达的 7 个 RN 屏。
+         *
+         * [rnName] 必须逐字对齐 `SettingsSurface.tsx` 的 `KNOWN_SCREENS`。
+         * `Settings`（列表本体）与 `Language` 都刻意不在这里：两者由原生承载。
+         */
+        enum class Screen(val rnName: String) {
+            SECURITY("Security"),
+            BLACKLIST("Blacklist"),
+            FEEDBACK("Feedback"),
+            ABOUT("About"),
+            CONTACT_US("ContactUs"),
+            DELETE("Delete"),
+            WIDGET("Widget"),
+        }
     }
 
     /**

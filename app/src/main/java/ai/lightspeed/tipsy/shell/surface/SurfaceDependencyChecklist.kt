@@ -1,5 +1,7 @@
 package ai.lightspeed.tipsy.shell.surface
 
+import ai.lightspeed.tipsy.shell.router.AppRoute
+
 /**
  * Surface 微根依赖清单（W1-P9，方案 §4.3 / W1 计划 §11.2）。
  *
@@ -76,6 +78,87 @@ object SurfaceDependencyChecklist {
         "CreateStack",
         "SimulatorGameDetail",
         "SimulatorGameProfile",
+    )
+
+    /**
+     * `CreateSurface` 的微根（Android 固定 RN pin `da4f65a`）。
+     *
+     * 顺序与 Settings 相同，但缺失后果不同：Create 的标签抽屉、编辑预填和深层
+     * 创建流都在这个微容器里。iOS 用专属 `CreateSurfaceViewController` 承载；
+     * Android 用通用容器 + [CreateSurfaceContract] 显式保留 Surface 身份。
+     */
+    val CREATE: List<Requirement> = listOf(
+        Requirement("SafeAreaProvider", "创建表单顶到状态栏/挖孔下"),
+        Requirement("KeyboardProvider", "名称与设定输入框被键盘盖住"),
+        Requirement("SWRConfig", "创建流程缓存与 revalidate 语义漂移"),
+        Requirement("GestureHandlerRootView", "头像裁剪、抽屉与返回手势失效"),
+        Requirement("PortalProvider", "标签抽屉与创建弹层没有 portal 宿主"),
+        Requirement("NavigationContainer", "CreateStack 无法挂载"),
+        Requirement("Stack.Navigator", "10 个创建微栈目标都不可达"),
+        Requirement("SurfaceToastHost", "保存/上传结果只写 toast store，界面无提示"),
+    )
+
+    /**
+     * Android 当前 RN pin 实际注册的创建微栈目标。
+     *
+     * RN 注释仍写“9 页”，但 JSX 已有 10 个；`type.ts` 里遗留的 `Upscale`
+     * 没有实际注册且无 navigate 调用，不能把类型声明误当运行期真值。
+     */
+    val CREATE_STACK_TARGETS: List<String> = listOf(
+        "Create",
+        "CreateAvatar",
+        "EditVoice",
+        "Generate",
+        "DraftBox",
+        "ProfileDetail",
+        "Preview",
+        "CreateStory",
+        "CreateStoryCharacter",
+        "CreateStoryUser",
+    )
+
+    /**
+     * `SettingsSurface` 的微根（实测 `src/surfaces/SettingsSurface.tsx`）。
+     *
+     * iOS 的 `SettingsSurfaceViewController` 只负责创建一个 Surface 容器并传
+     * `initialScreen`；Android 复用通用 `RNSurfaceFragment`，但 RN 微根依赖必须
+     * 完整保留。这里按真实 JSX 嵌套顺序记录，避免把 `App.tsx` 的全局 provider
+     * 错当成 Surface 环境里天然存在。
+     */
+    val SETTINGS: List<Requirement> = listOf(
+        Requirement("SafeAreaProvider", "安全区失效（内容顶到状态栏/挖孔下）"),
+        Requirement("KeyboardProvider", "键盘避让失效 —— 反馈输入框被键盘盖住"),
+        Requirement("SWRConfig", "缓存与 revalidate 语义和现网不一致"),
+        Requirement("GestureHandlerRootView", "手势返回与页内拖拽失效"),
+        Requirement("PortalProvider", "toast 与设置页弹层没有 portal 宿主"),
+        Requirement("NavigationContainer", "SettingStack 无法挂载"),
+        Requirement("Stack.Navigator", "12 个设置微栈目标都不可达"),
+        Requirement("SurfaceToastHost", "提交反馈等结果只写 toast store，界面无提示"),
+    )
+
+    /** 原生列表可直达的入口；真值来自强类型路由，测试再与 RN 白名单双向比对。 */
+    val SETTINGS_DIRECT_SCREENS: List<String> =
+        AppRoute.SettingsSubScreen.Screen.entries.map { it.rnName }
+
+    /**
+     * `SettingStackNavigator` 内注册的全量目标。
+     *
+     * 直达入口只有上面的 7 个，但这些子页还能继续导航；只核直达白名单会漏掉
+     * `BlacklistSearch` / `Reset` / `FollowUs` 等深一层流程。
+     */
+    val SETTINGS_STACK_TARGETS: List<String> = listOf(
+        "Settings",
+        "About",
+        "Delete",
+        "Reset",
+        "Feedback",
+        "ContactUs",
+        "FollowUs",
+        "Language",
+        "Security",
+        "Blacklist",
+        "BlacklistSearch",
+        "Widget",
     )
 
     /**

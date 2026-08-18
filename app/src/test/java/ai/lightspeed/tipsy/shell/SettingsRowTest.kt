@@ -145,7 +145,7 @@ class SettingsRowTest {
         val targets = SettingsRow.ALL
             .map { it.action }
             .filterIsInstance<SettingsAction.SurfaceScreen>()
-            .map { it.screen }
+            .map { it.screen.rnName }
         assertTrue("至少要有几个子屏出口", targets.isNotEmpty())
         targets.forEach {
             assertTrue("『$it』不在 SettingsSurface 的 KNOWN_SCREENS 里", it in known)
@@ -167,7 +167,7 @@ class SettingsRowTest {
         assertEquals("Blocked", SettingsRow.BLOCKED.titleKey)
         assertEquals(
             "Blacklist",
-            (SettingsRow.BLOCKED.action as SettingsAction.SurfaceScreen).screen,
+            (SettingsRow.BLOCKED.action as SettingsAction.SurfaceScreen).screen.rnName,
         )
     }
 
