@@ -265,6 +265,12 @@ dependencies {
     implementation libs.coil.compose
     implementation libs.coil.network.okhttp
 
+    // 视频播放（W4 Screen P2 的 showcase mp4）。**不是新增依赖** —— media3 1.8.0
+    // 已由 react-native-video 引入依赖树（实测 :app:dependencies 可见）；版本是与
+    // RN 侧的耦合约束，见 catalog 注释。刻意不引 media3-session，理由同处。
+    implementation libs.media3.exoplayer
+    implementation libs.media3.ui
+
     // android.jar 的 org.json 是 stub（调用即抛 "not mocked"），JVM 单测需真实实现。
     testImplementation libs.json
     // auth 的 single-flight 刷新与 generation 闸门要测并发时序（runTest）

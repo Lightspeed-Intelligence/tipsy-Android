@@ -1,6 +1,7 @@
 package ai.lightspeed.tipsy.shell.pages.screen
 
 import ai.lightspeed.tipsy.shell.R
+import androidx.media3.common.util.UnstableApi
 import androidx.compose.foundation.Image
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.ui.geometry.Offset
@@ -28,9 +29,14 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -63,8 +69,15 @@ import coil3.compose.AsyncImage
  * 但先把这个默认坐实，免得 P2 忘了。
  */
 @Composable
+@UnstableApi  // 接收 ScreenPlayerPool（Media3 opt-in API）
 fun ScreenScreen(
     state: ScreenState,
+    /** 页面是否可见（Tab 切走 / App 进后台 → false）：决定视频是否播放。 */
+    isActive: Boolean,
+    /** 声音开关初值，见 [ScreenSoundPreference]。 */
+    soundEnabled: Boolean,
+    /** 有界播放器池；null 表示本次组合不播视频（预览/测试）。 */
+    playerPool: ScreenPlayerPool?,
     onPageChanged: (Int) -> Unit,
     onRefresh: () -> Unit,
     onRetry: () -> Unit,
@@ -98,6 +111,9 @@ fun ScreenScreen(
 
             else -> ScreenPager(
                 state = state,
+                isActive = isActive,
+                soundEnabled = soundEnabled,
+                playerPool = playerPool,
                 onPageChanged = onPageChanged,
                 onStartChat = onStartChat,
                 onCardEvent = onCardEvent,
@@ -109,8 +125,12 @@ fun ScreenScreen(
 }
 
 @Composable
+@UnstableApi  // 透传 ScreenPlayerPool
 private fun ScreenPager(
     state: ScreenState,
+    isActive: Boolean,
+    soundEnabled: Boolean,
+    playerPool: ScreenPlayerPool?,
     onPageChanged: (Int) -> Unit,
     onStartChat: () -> Unit,
     onCardEvent: (ScreenCardEvent) -> Unit,
@@ -133,6 +153,13 @@ private fun ScreenPager(
     ) { page ->
         ScreenCard(
             item = state.items[page],
+            // ±1 窗口（对齐 RN `FeedMediaItem.tsx:594` 与 iOS 池）：
+            // 窗口外只渲染封面图，不挂播放器。与池容量共同构成 OOM 上界。
+            isWithinVideoWindow = kotlin.math.abs(page - pagerState.currentPage) <= 1,
+            isCurrentPage = page == pagerState.currentPage,
+            isPageActive = isActive,
+            soundEnabled = soundEnabled,
+            playerPool = playerPool,
             onStartChat = onStartChat,
             onCardEvent = onCardEvent,
             statusBarPadding = statusBarPadding,
@@ -148,8 +175,14 @@ private fun ScreenPager(
  * alpha 0.7 → 0 → 0 → 0.8）—— 顶部压暗给状态栏、底部压暗给文案。
  */
 @Composable
+@UnstableApi  // 透传 ScreenPlayerPool
 private fun ScreenCard(
     item: ScreenFeedItem,
+    isWithinVideoWindow: Boolean,
+    isCurrentPage: Boolean,
+    isPageActive: Boolean,
+    soundEnabled: Boolean,
+    playerPool: ScreenPlayerPool?,
     onStartChat: () -> Unit,
     onCardEvent: (ScreenCardEvent) -> Unit,
     statusBarPadding: Dp,
@@ -173,6 +206,30 @@ private fun ScreenCard(
                 // 比灰底更接近成图，切页时不突兀
                 .background(parsePrimaryColor(item.primaryColor)),
         )
+
+        // 视频层（P2）：盖在封面之上、渐变之下。
+        // ⚠️ 封面图**不卸载** —— 首帧渲染前它就是防黑帧的那一层
+        // （对齐 RN 等 currentTime>0 才 setShowThumbnail(false)）。
+        // 首帧到达后由 videoHasFrame 把封面盖住，而不是把它移除：
+        // 播完回首帧时要立刻再露出来（RN handleVideoEnd 也是 setShowThumbnail(true)）。
+        if (item.isVideo && isWithinVideoWindow && playerPool != null) {
+            var videoHasFrame by remember(item.characterId) { mutableStateOf(false) }
+            ScreenVideoHost(
+                url = item.backgroundUrl,
+                thumbnailUrl = item.thumbnailUrl,
+                isCurrent = isCurrentPage,
+                isActive = isPageActive,
+                soundEnabled = soundEnabled,
+                pool = playerPool,
+                onFirstFrame = { videoHasFrame = true },
+                // 播完 → 回首帧 + 重新露出封面（切 tagline 的判定属 P3 状态机）
+                onPlaybackEnded = { videoHasFrame = false },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(if (videoHasFrame) 1f else 0f)
+                    .testTag("screen_video_${item.characterId}"),
+            )
+        }
 
         // 四段渐变遮罩
         Box(

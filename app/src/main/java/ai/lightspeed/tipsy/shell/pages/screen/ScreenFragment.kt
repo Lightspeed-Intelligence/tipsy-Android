@@ -2,6 +2,8 @@ package ai.lightspeed.tipsy.shell.pages.screen
 
 import ai.lightspeed.tipsy.shell.TipsyApplication
 import ai.lightspeed.tipsy.shell.auth.AuthStateHub
+import ai.lightspeed.tipsy.shell.auth.LegacyMmkvStore
+import androidx.media3.common.util.UnstableApi
 import ai.lightspeed.tipsy.shell.i18n.L10n
 import ai.lightspeed.tipsy.shell.pages.home.HomeFilterStore
 import ai.lightspeed.tipsy.shell.pages.home.MmkvHomeCacheStorage
@@ -24,6 +26,7 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.fragment.app.Fragment
@@ -90,6 +93,33 @@ class ScreenFragment : Fragment() {
     private var isFocused = false
 
     /**
+     * 播放门（W4-P2）：两条轴都为真才播。
+     *
+     * ⚠️ 与 [isFocused] 分开存而不是复用它：[isFocused] 是普通字段，Compose
+     * 读不到它的变化。这个必须是 `MutableState` 才能让视频层在切 Tab /
+     * 进后台时**立刻**停播 —— 漏了的表现是「切走了还在后台播声音」。
+     */
+    private val playbackActive = mutableStateOf(false)
+
+    /**
+     * 有界播放器池（W4-P2）。**随 view 生命周期**：`onCreateView` 建、
+     * `onDestroyView` 释放。
+     *
+     * ⚠️ 不能挂到 Fragment 本身或 Application 上 —— 池持有 [ExoPlayer]，
+     * 而 ExoPlayer 持有 Surface 与解码器。跨 view 重建存活会泄漏解码器，
+     * 表现是「反复切 Tab 后视频不再播」（解码器耗尽），且不报错。
+     */
+    private var playerPool: ScreenPlayerPool? = null
+
+    /**
+     * 声音开关初值。只读 RN 的 `chat-persist-storage`，见 [ScreenSoundPreference]
+     * —— ⚠️ 那里记着一处**待 owner 定**的所有权例外。
+     */
+    private val soundEnabled by lazy {
+        ScreenSoundPreference.read(LegacyMmkvStore.open(requireContext()))
+    }
+
+    /**
      * 前台轴观察者。**必须在 onDestroyView 反注册** ——
      * `ProcessLifecycleOwner` 是进程级的。
      */
@@ -117,6 +147,10 @@ class ScreenFragment : Fragment() {
         }
     }
 
+    // 组合 ScreenScreen → ScreenVideoHost（PlayerView 是 Media3 opt-in API）。
+    // ⚠️ 标在方法上而**不是类上**：标类会让构造 ScreenFragment 的
+    // TabHostFragment 也被要求 opt-in —— 一个内部实现细节不该外溢到 Tab 宿主
+    @UnstableApi
     override fun onCreateView(
         inflater: LayoutInflater,
         container: ViewGroup?,
@@ -125,6 +159,8 @@ class ScreenFragment : Fragment() {
         val app = requireActivity().application as TipsyApplication
         app.authStateHub.addObserver(authObserver)
         ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundObserver)
+
+        playerPool = ScreenPlayerPool(requireContext().applicationContext)
 
         val composeView = ComposeView(requireContext()).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
@@ -142,6 +178,9 @@ class ScreenFragment : Fragment() {
                 val state by viewModel.state.collectAsState()
                 ScreenScreen(
                     state = state,
+                    isActive = playbackActive.value,
+                    soundEnabled = soundEnabled,
+                    playerPool = playerPool,
                     onPageChanged = viewModel::onPageChanged,
                     onRefresh = viewModel::onRefresh,
                     onRetry = viewModel::onRetry,
@@ -172,12 +211,16 @@ class ScreenFragment : Fragment() {
     override fun onStart() {
         super.onStart()
         isFocused = true
+        playbackActive.value = true
         viewModel.onFocusChanged(focused = true)
         viewModel.onAppear()
     }
 
     override fun onStop() {
         isFocused = false
+        // 停播（对齐 RN 失焦立即 pause）。⚠️ **只停播不销毁池** ——
+        // iOS 研究文档 §4「聚焦/失焦」明写「不重置状态，保留缓冲快速恢复」。
+        playbackActive.value = false
         viewModel.onFocusChanged(focused = false)
         super.onStop()
     }
@@ -186,6 +229,10 @@ class ScreenFragment : Fragment() {
         (requireActivity().application as TipsyApplication)
             .authStateHub.removeObserver(authObserver)
         ProcessLifecycleOwner.get().lifecycle.removeObserver(foregroundObserver)
+        // 释放全部 ExoPlayer。漏了会泄漏解码器 —— 表现是「反复切 Tab 后
+        // 视频不再播」，且不报错，见 playerPool 的字段注释
+        playerPool?.release()
+        playerPool = null
         super.onDestroyView()
     }
 
