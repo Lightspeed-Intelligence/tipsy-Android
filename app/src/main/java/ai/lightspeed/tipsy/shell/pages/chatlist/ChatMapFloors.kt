@@ -30,6 +30,35 @@ internal object ChatMapFloors {
     const val TRAILING_EMPTY_FLOORS = 2
 
     /**
+     * 一个日期桶 —— **稳定身份与展示文案分离**。
+     *
+     * ## ⚠️ 为什么不能用标题当 key
+     *
+     * RN 的 `formatChatMapTime`（`utils/func.ts:347-362`）产出的是**展示文案**，
+     * 它有**两处**不稳定：
+     * 1. **随 locale 变**：`dayjs.locale(...)` 后 `format('D MMMM')`
+     *    在中/英下是不同字符串；
+     * 2. **随"今天"变**：`Today` / `Yesterday` 是相对判定 ——
+     *    同一条会话过一天后标题从 `Today` 变 `Yesterday`，
+     *    而**跨日后新的会话又会占用 `Today`**。
+     *
+     * 拿它当 Compose 的 `remember` / `LazyColumn` key，两种都会出事：
+     * 切语言让所有 key 变化（状态全丢）；跨日让**昨天那层的横滑状态
+     * 被复用给今天**（key 字面相同，实际是不同的一天）。
+     *
+     * 所以 [bucketKey] 用 **epoch-day**（本地时区的天序号，与 locale/相对
+     * 判定都无关），[displayTitle] 单独承担文案。
+     *
+     * @property bucketKey 稳定身份，形如 `d20260818`
+     * @property displayTitle 已本地化的展示文案（`Today` / `18 August` 等）
+     */
+    data class DateBucket<T>(
+        val bucketKey: String,
+        val displayTitle: String,
+        val items: List<T>,
+    )
+
+    /**
      * 楼层种类 —— ⚠️ **两种「空」不是一回事**，别再合成一个 `isEmpty`。
      *
      * RN `ChatMap.tsx:195-214` 的 `dataList`：
@@ -79,41 +108,31 @@ internal object ChatMapFloors {
      * RN 侧 Grid 与 Map 拿的是**同一个** `recentChatList`
      * （`chatList/index.tsx:113` 与 `:126` 都传 `recentChatList = list`）——
      * 草稿混排在 RN 里是 **Grid 的渲染规则**，不进数据源。
-     * 壳的 `sortedThreads` 会因草稿重排，喂给 Map 会让**有草稿的会话跳到
-     * 别的日期分组**（分组按 `latest_time` 算，而重排改的是列表位置不是时间）
-     * —— 表现是"某个会话出现在错误的那一天"，用户大概只觉得奇怪而不会报。
+     * ⚠️ 壳的 `sortedThreads` 会因草稿重排。**订正早前说重了的一句**：
+     * 它**不会**改变会话的日期归属（分组按 `latestTimeSeconds`，重排不改时间戳），
+     * 但会改变**楼层顺序与桶内顺序** —— 有草稿的那条被顶到桶内最前，
+     * 甚至把它所在的那一天顶到廊道最底层。表现是顺序莫名与 Grid 不一致。
      * @param localize 把 `Today` / `Yesterday` 过 i18n（其余标题原样，
      *   对齐 `:355` 的 `key === 'Today' || key === 'Yesterday' ? t(key) : key`）
      */
-    fun <T> build(
-        grouped: List<Pair<String, List<T>>>,
-        localize: (String) -> String,
-    ): List<Floor<T>> {
-        val entries = grouped.toMutableList()
+    fun <T> build(buckets: List<DateBucket<T>>): List<Floor<T>> {
+        val entries = buckets.toMutableList()
 
         // 不足 3 组时补空组（RN `:337-339`：realSize < 3 才补，且补到 emptySize）
         val realSize = entries.size
         if (realSize < EMPTY_TARGET_GROUPS) {
-            repeat(EMPTY_TARGET_GROUPS - realSize) { entries.add("" to emptyList()) }
+            repeat(EMPTY_TARGET_GROUPS - realSize) { n ->
+                entries.add(DateBucket("pad${entries.size}", "", emptyList()))
+            }
         }
 
-        val floors = entries.mapIndexed { index, (title, items) ->
+        val floors = entries.map { bucket ->
             Floor(
-                // ⚠️ key 用**未本地化的 date bucket**，不是 RN 那个 `index.toString()`。
-                //
-                // RN 用下标是安全的（FlatList 每次整树重算，没有 per-item 记忆状态），
-                // 但 Compose 的 `remember(key)` / `LazyColumn(key)` 会按 key 复用状态 ——
-                // 用下标会把「昨天那层已横滑到第 3 张」的卡叠状态复用给
-                // 分页追加后落到同一下标的**另一天**。表现是滚动位置莫名跳。
-                //
-                // 用 bucket 原文（非本地化）而不是标题：标题过 i18n 后
-                // 切换语言会让 key 全变，同样丢状态。空 bucket 回落下标。
-                key = title.ifEmpty { "pad$index" },
-                // ⚠️ 只有 Today/Yesterday 过 i18n；其余是后端/格式化好的日期串，
-                // 全都过 localize 会把日期当词条 key 查不到而回落原文（看起来没事，
-                // 但会在词条表里留下一堆假 key）
-                title = if (title == TODAY || title == YESTERDAY) localize(title) else title,
-                items = items,
+                // ⚠️ key 用 **epoch-day 桶身份**，不是标题、也不是 RN 的下标。
+                // 标题随 locale 与"今天"两处变化，下标会在分页后错配 —— 见 [DateBucket]
+                key = bucket.bucketKey,
+                title = bucket.displayTitle,
+                items = bucket.items,
                 kind = FloorKind.CHAT,
             )
         }
@@ -157,6 +176,54 @@ internal object ChatMapFloors {
 
     /** 卡叠补位下限（**不是上限**，见 [carouselSlots]）。 */
     const val MIN_CAROUSEL_SLOTS = 5
+
+    /**
+     * 按 canonical day 分组 —— **Map 的唯一入口**，直接吃完整累计列表。
+     *
+     * ## ⚠️ 必须传 `ChatListState.threads`，**不是 `sortedThreads`**
+     *
+     * 这个签名就是契约：接**完整累计的 [ChatThread] 列表**（接口顺序），
+     * 而不是预分组的 Pair —— 后者无法阻止调用方先 `sortedThreads` 再分组。
+     *
+     * RN 侧 Grid 与 Map 拿的是**同一个** `recentChatList`
+     * （`chatList/index.tsx:113` 与 `:126` 都传 `list`）——
+     * 草稿混排是 **Grid 的渲染规则**，不进数据源。
+     *
+     * ⚠️ **订正早前一处说重了的注释**：喂 `sortedThreads` **不会**改变会话的
+     * 日期归属（分组按 `latestTimeSeconds`，重排不改时间戳），
+     * 但会改变**楼层顺序与桶内顺序** —— 即"有草稿的那条被顶到桶内最前、
+     * 甚至把它所在的那一天顶到廊道最底层"。表现是顺序莫名与 Grid 不一致。
+     *
+     * ## 分页
+     *
+     * 传入的是**累计**列表，所以 page 2 里同一天的会话会**自然合回同一个桶**
+     * （相同 `bucketKey`），不会新起一层。桶的出现顺序 = 该天**首次出现**的位置
+     * （encounter order），与接口顺序一致。
+     *
+     * @param threads 完整累计列表（接口顺序）
+     * @param epochDayOf 取该会话的本地 epoch-day（注入以便单测不依赖时区/时钟）
+     * @param titleOf 按 epoch-day 产出**已本地化**的展示文案
+     */
+    fun <T> groupByDay(
+        threads: List<T>,
+        epochDayOf: (T) -> Long,
+        titleOf: (Long) -> String,
+    ): List<DateBucket<T>> {
+        if (threads.isEmpty()) return emptyList()
+        // LinkedHashMap 保 encounter order —— ⚠️ 换成 HashMap 会让楼层顺序随机
+        val byDay = LinkedHashMap<Long, MutableList<T>>()
+        threads.forEach { t -> byDay.getOrPut(epochDayOf(t)) { mutableListOf() }.add(t) }
+        return byDay.map { (day, items) ->
+            DateBucket(
+                bucketKey = bucketKeyOf(day),
+                displayTitle = titleOf(day),
+                items = items,
+            )
+        }
+    }
+
+    /** 桶身份：`d<epochDay>` —— 与 locale、与"今天"都无关。 */
+    fun bucketKeyOf(epochDay: Long): String = "d$epochDay"
 
     private const val TODAY = "Today"
     private const val YESTERDAY = "Yesterday"

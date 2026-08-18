@@ -81,8 +81,9 @@ class ChatMapCardLayoutTest {
 
     @Test
     fun `多个负 dividend 采样都落在有效弧段内`() {
-        // 扫一圈：任何 scrollX（含大负值）解出的 scale 都必须在 ratio 数组范围内。
-        // 只取一次余的实现会在负区间把 scale 压到端点 0，这里能抓到
+        // ⚠️ 这条是**范围健全性**检查，**不是**负余数的护栏 ——
+        // 真正拦负余数的是上一条的周期不变量（scrollX 与 +k*dis 必须等价）。
+        // 保留它是为了抓"scale 越界/NaN"这类更宽的问题
         val baseX = 324f
         val disOut = floatArrayOf(-100f, -50f, 0f, 50f, 100f)
         var visibleCount = 0

@@ -44,6 +44,11 @@ internal object ChatMapCardLayout {
      *
      * UI 层应 `remember(baseX) { ChatMapCardLayout.stopsFor(baseX) }` 一次，
      * 每帧复用。
+     *
+     * ⚠️ **这只消掉 stop-array 那部分分配，不是"热路径零分配"**：
+     * 每次 `solve()` 仍会新建一个 [CardTransform]，`floorOffsets()` 也仍会
+     * 新建转场数组。要真正压到零需要把结果写进调用方持有的可变缓冲 ——
+     * 那属 UI 性能收口，不在本纯函数包内。
      */
     class Stops internal constructor(internal val baseX: Float) {
         /** scale 插值横轴：`baseX * [-0.5, 0.5, 1.5, 2.5, 3.5, 4.5, 5.5]`。 */
