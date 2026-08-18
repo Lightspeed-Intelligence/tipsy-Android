@@ -251,24 +251,23 @@ private fun ScreenCard(
             ScreenMediaSourceType.SHOWCASE -> item.thumbnailUrl
             else -> item.backgroundUrl ?: item.thumbnailUrl
         }
-        AsyncImage(
-            model = imageUrl?.let { HomeText.transformImageUrl(it) },
-            contentDescription = item.nickname,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxSize()
-                // 加载中用后端给的主色兜底（img_primary_color），
-                // 比灰底更接近成图，切页时不突兀
-                .background(parsePrimaryColor(item.primaryColor)),
-        )
+        // ⚠️ **层序：视频在下、封面在上**（P2 起改成这样）。
+        //
+        // 早前是「封面在下、视频在上 + 对视频加 alpha」——那在 API 24–33 上**不成立**：
+        // `PlayerView` 默认用 `SurfaceView`，它是独立的 native surface，
+        // View 层的 alpha/透明度对它不起作用（`SurfaceView` 直到 API 34
+        // 才对 alpha 有可靠支持）。表现是「视频 alpha=0 但仍然可见」，
+        // 也就是**封面根本没起到防黑帧的作用**，而这在高版本模拟器上测不出来。
+        //
+        // 现在改成：视频始终不透明地铺在最底层，封面作为**上层 overlay**，
+        // 靠「有没有渲染封面」而不是 alpha 来决定露哪个。
+        // 封面在需要时整块盖住视频，不需要时不组合。
+        val videoVisible = item.isVideo && isWithinVideoWindow && playerPool != null
+        var videoHasFrame by remember(item.characterId, item.backgroundUrl) {
+            mutableStateOf(false)
+        }
 
-        // 视频层（P2）：盖在封面之上、渐变之下。
-        // ⚠️ 封面图**不卸载** —— 首帧渲染前它就是防黑帧的那一层
-        // （对齐 RN 等 currentTime>0 才 setShowThumbnail(false)）。
-        // 首帧到达后由 videoHasFrame 把封面盖住，而不是把它移除：
-        // 播完回首帧时要立刻再露出来（RN handleVideoEnd 也是 setShowThumbnail(true)）。
-        if (item.isVideo && isWithinVideoWindow && playerPool != null) {
-            var videoHasFrame by remember(item.characterId) { mutableStateOf(false) }
+        if (videoVisible) {
             ScreenVideoHost(
                 url = item.backgroundUrl,
                 thumbnailUrl = item.thumbnailUrl,
@@ -282,10 +281,28 @@ private fun ScreenCard(
                 // 出错也要把封面放回来（对齐 RN handleVideoError），
                 // 否则首帧后出错会停在黑帧/冻结帧上
                 onPlaybackError = { videoHasFrame = false },
+                // 划离当前页 → 复位封面（对齐 RN 切卡 setShowThumbnail(true)）。
+                // ⚠️ 失焦**不**走这条，那边只 pause 保进度
+                onResetToCover = { videoHasFrame = false },
                 modifier = Modifier
                     .fillMaxSize()
-                    .alpha(if (videoHasFrame) 1f else 0f)
                     .testTag("screen_video_${item.characterId}"),
+            )
+        }
+
+        // 封面 overlay：非视频卡恒显示；视频卡在首帧到达前 / 播完 / 出错后显示。
+        // ⚠️ 用「是否组合」而不是 alpha —— 见上面 SurfaceView 那段
+        if (!videoVisible || !videoHasFrame) {
+            AsyncImage(
+                model = imageUrl?.let { HomeText.transformImageUrl(it) },
+                contentDescription = item.nickname,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    // 加载中用后端给的主色兜底（img_primary_color），
+                    // 比灰底更接近成图，切页时不突兀
+                    .background(parsePrimaryColor(item.primaryColor))
+                    .testTag("screen_cover_${item.characterId}"),
             )
         }
 

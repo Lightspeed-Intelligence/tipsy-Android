@@ -2,6 +2,7 @@ package ai.lightspeed.tipsy.shell
 
 import ai.lightspeed.tipsy.shell.pages.screen.ScreenPlayerLedger
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -125,8 +126,10 @@ class ScreenPlayerLedgerTest {
         assertNull("释放后不得再借", l.borrow(::make))
         // Fragment 销毁后 Compose 的 onDispose 可能迟到 —— 那些实例要销毁，
         // 不能塞回一个已死的池
+        // ⚠️ 必须是 ALREADY_SHUT_DOWN 而不是"让调用方 release" ——
+        // release() 已经把 a 交出去销毁过一次了，再 release 就是 double release
         assertEquals(
-            ScreenPlayerLedger.Recycle.RELEASE_AFTER_SHUTDOWN,
+            ScreenPlayerLedger.Recycle.ALREADY_SHUT_DOWN,
             l.recycle(a),
         )
         assertTrue(l.isReleased)
@@ -145,6 +148,43 @@ class ScreenPlayerLedgerTest {
             assertEquals("归还后不得留账", 0, l.borrowedCount)
         }
         assertEquals("应一直复用同一个实例", 1, created)
+    }
+
+    @Test
+    fun `discard 退役坏实例 —— 不放回空闲池`() {
+        val l = ledger(2)
+        val bad = l.borrow(::make)!!
+        assertTrue("本账本借出的应可退役", l.discard(bad))
+        assertEquals("账上要销掉", 0, l.borrowedCount)
+        // ⚠️ 关键：**不能**回 idle。回了就会被下一张卡借走 ——
+        // 「一次装载失败」变成「之后每张卡都可能拿到坏播放器」
+        assertEquals("坏实例不得放回空闲池", 0, l.idleCount)
+        assertEquals(0, l.aliveCount)
+
+        // 下一次 borrow 必须是新建的，不是那个坏的
+        val fresh = l.borrow(::make)!!
+        assertTrue("必须是新实例", fresh !== bad)
+    }
+
+    @Test
+    fun `discard 拒绝外来实例与重复退役`() {
+        val l = ledger(2)
+        val a = l.borrow(::make)!!
+        assertTrue(l.discard(a))
+        // 重复退役：返回 false，调用方不得再 release（否则 double release）
+        assertFalse("重复退役必须被拒", l.discard(a))
+        assertFalse("外来实例不得退役", l.discard(FakePlayer(999)))
+    }
+
+    @Test
+    fun `release 后 discard 返回 false 防 double release`() {
+        val l = ledger(2)
+        val a = l.borrow(::make)!!
+        val destroyed = l.release()
+        assertTrue("release 应交出 a", destroyed.any { it === a })
+        // release 已经销毁过 a 了 —— 迟到的 discard 必须返回 false，
+        // 否则调用方会再 release 一次
+        assertFalse("释放后 discard 必须返回 false", l.discard(a))
     }
 
     @Test

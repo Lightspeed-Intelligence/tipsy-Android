@@ -58,10 +58,15 @@ internal class ScreenPlayerLedger<T : Any>(val capacity: Int) {
      * @return [Recycle.ACCEPTED] 回到空闲池；[Recycle.RELEASE_OVERFLOW] 超容量，
      *   调用方要真正销毁它；[Recycle.REJECTED_UNKNOWN] 不是本账本借出的或已归还过
      *   —— 调用方**什么都别做**（销毁别人的实例同样是缺陷）；
-     *   [Recycle.RELEASE_AFTER_SHUTDOWN] 账本已释放，调用方销毁它。
+     *   [Recycle.ALREADY_SHUT_DOWN] 账本已释放且已在 [release] 里销毁过它，
+     *   调用方**也什么都别做**（再 release 就是 double release）。
      */
     fun recycle(item: T): Recycle {
-        if (released) return Recycle.RELEASE_AFTER_SHUTDOWN
+        // ⚠️ 已释放：**不能**让调用方再 release 一次 —— [release] 已经把
+        // 当时所有借出的实例都交出去销毁过了。Compose 的 onDispose 会在
+        // Fragment 销毁后迟到触发，那时再 release 同一实例就是 double release
+        // （Media3 对二次 release 的行为未定义，且会掩盖真正的泄漏）
+        if (released) return Recycle.ALREADY_SHUT_DOWN
         if (!borrowed.remove(item)) return Recycle.REJECTED_UNKNOWN
         if (idle.size >= capacity) return Recycle.RELEASE_OVERFLOW
         idle.addLast(item)
@@ -84,5 +89,21 @@ internal class ScreenPlayerLedger<T : Any>(val capacity: Int) {
         return all
     }
 
-    enum class Recycle { ACCEPTED, RELEASE_OVERFLOW, REJECTED_UNKNOWN, RELEASE_AFTER_SHUTDOWN }
+    /**
+     * 退役一个**坏掉的**载荷：从账上销掉，但**不放回空闲池**。
+     *
+     * 用于装载/播放失败 —— 那个实例状态已不可信，放回 idle 会被下一张卡借走，
+     * 于是「一次装载失败」变成「之后每张卡都可能拿到坏播放器」。
+     *
+     * @return true 表示调用方应销毁它；false 表示不是本账本借出的 /
+     *   已归还过（**调用方什么都别做**，销毁别人持有的实例同样是缺陷）。
+     */
+    fun discard(item: T): Boolean {
+        // 已释放时：release() 已经把它交出去销毁过一次了，这里必须返回 false，
+        // 否则同一实例被 release 两次
+        if (released) return false
+        return borrowed.remove(item)
+    }
+
+    enum class Recycle { ACCEPTED, RELEASE_OVERFLOW, REJECTED_UNKNOWN, ALREADY_SHUT_DOWN }
 }

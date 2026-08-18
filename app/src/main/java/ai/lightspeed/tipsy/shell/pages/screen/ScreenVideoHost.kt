@@ -63,6 +63,13 @@ fun ScreenVideoHost(
     onPlaybackEnded: () -> Unit,
     /** 播放出错 —— 上层据此把封面重新显示出来（对齐 RN `setShowThumbnail(true)`）。 */
     onPlaybackError: () -> Unit,
+    /**
+     * 卡片划离时复位封面（对齐 RN 切卡时的 `setShowThumbnail(true)`）。
+     *
+     * ⚠️ 与 [onPlaybackError] 分开是为了**语义可读**；但更重要的是它
+     * **不在失焦时调用** —— 失焦只暂停、保住进度（见播放门那段注释）。
+     */
+    onResetToCover: () -> Unit,
     /** 首帧已渲染 —— 上层据此隐藏封面并结算首屏埋点。 */
     onFirstFrame: () -> Unit,
     modifier: Modifier = Modifier,
@@ -118,13 +125,39 @@ fun ScreenVideoHost(
         onDispose { current.removeListener(listener) }
     }
 
-    // 播放门：当前页 + 页面可见。邻页 prepare 好但不播（预热效果，对齐 iOS 预取）
-    LaunchedEffect(current, isCurrent, isActive) {
-        if (isCurrent && isActive) {
-            // 轻微延后起播：翻页动画未落定就起播会争解码器，且用户可能只是划过
+    // ## 播放门：两种「不播」语义不同，别合并
+    //
+    // RN 把这两条分得很清（`FeedMediaItem.tsx:326-334`，注释原文
+    // 「页面失去焦点时只暂停，不重置状态（保持缓冲，快速恢复）」）：
+    //
+    // | 情形 | RN 行为 | 这里 |
+    // | --- | --- | --- |
+    // | **卡片划离/划回**（不再是当前页） | `setShowThumbnail(true)` + `seek(0)` + 重置 | 复位封面 + seekTo(0) |
+    // | **Tab/Surface/App 失焦** | 只 `setIsPlaying(false)`，**不重置** | 只 pause，保住进度与缓冲 |
+    //
+    // 合并成一条的后果：切个 Tab 回来视频从头开始（该保进度的没保住），
+    // 或者划走再划回接着上次播（该重置的没重置）。两个方向都不对等。
+
+    // 轴一：是否当前页 —— 变化时重置（对齐 RN 的 seek(0) + 显示封面）
+    LaunchedEffect(current, isCurrent) {
+        if (isCurrent) {
+            current.seekTo(0)
+            delay(PLAY_START_DELAY_MS)
+            if (isActive) current.playWhenReady = true
+        } else {
+            // 划离：暂停 + 回首帧 + 让上层重新显示封面
+            current.playWhenReady = false
+            current.seekTo(0)
+            onResetToCover()
+        }
+    }
+
+    // 轴二：页面是否可见 —— 只控制播放/暂停，**不 seek、不复位封面**
+    LaunchedEffect(current, isActive) {
+        if (isActive && isCurrent) {
             delay(PLAY_START_DELAY_MS)
             current.playWhenReady = true
-        } else {
+        } else if (!isActive) {
             current.playWhenReady = false
         }
     }

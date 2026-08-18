@@ -114,10 +114,12 @@ class ScreenPlayerPool(
             player.prepare()
             player
         }.getOrElse { error ->
-            // 装载失败要**把实例还回账本**，否则借出计数只增不减 →
-            // 几次之后池永远"满"，整页再也不播视频（且不报错）
-            Log.w(TAG, "装载媒体失败，归还播放器并降级封面图", error)
-            recycle(player)
+            // ⚠️ 坏掉的实例要 **discard 而不是 recycle** —— 它的状态已不可信，
+            // 放回 idle 会被下一张卡借走，于是「一次装载失败」变成
+            // 「之后每张卡都可能拿到坏播放器」。discard 从账上销掉 + release 一次，
+            // 这样借出计数也不会只增不减（否则几次后池永远"满"、整页不播且不报错）
+            Log.w(TAG, "装载媒体失败，退役该播放器并降级封面图", error)
+            if (ledger.discard(player)) player.release()
             null
         }
     }
@@ -138,9 +140,13 @@ class ScreenPlayerPool(
                 player.clearMediaItems()
             }
 
-            ScreenPlayerLedger.Recycle.RELEASE_OVERFLOW,
-            ScreenPlayerLedger.Recycle.RELEASE_AFTER_SHUTDOWN,
-            -> player.release()
+            ScreenPlayerLedger.Recycle.RELEASE_OVERFLOW -> player.release()
+
+            ScreenPlayerLedger.Recycle.ALREADY_SHUT_DOWN ->
+                // ⚠️ 池已释放：release() 已经销毁过它了，这里**不能再 release**
+                // （double release 行为未定义，且会掩盖真正的泄漏）。
+                // Compose 的 onDispose 在 Fragment 销毁后迟到触发，走的就是这条
+                Log.d(TAG, "池已释放，忽略迟到的归还（已在 release 里销毁）")
 
             ScreenPlayerLedger.Recycle.REJECTED_UNKNOWN ->
                 // 外来实例或重复归还：**什么都不做**。销毁别人持有的实例
@@ -282,6 +288,9 @@ class ScreenPlayerPool(
         /** 50MB，对齐 RN `bufferConfig.cacheSizeMB`（`FeedMediaItem.tsx:608`）。 */
         private const val CACHE_SIZE_BYTES = 50L * 1024 * 1024
 
+        /** ⚠️ 独立目录，**不复用** RN 的 `RNVCache` —— 见 [videoCache]。 */
+        private const val CACHE_DIR_NAME = "ScreenVideoCache"
+
         /**
          * 进程级 [SimpleCache] 单例。
          *
@@ -301,32 +310,56 @@ class ScreenPlayerPool(
         private var videoCache: androidx.media3.datasource.cache.SimpleCache? = null
 
         /**
-         * 取/建缓存。**构造失败返回 null 而不是抛** —— 见 [dataSourceFactory]。
+         * 取缓存 —— **已就绪才返回，否则返回 null**（降级 upstream）。
          *
-         * `cacheOpenFailed` 记住失败过，避免每次 borrow 都重试一次
-         * 目录锁/损坏索引（那会让每张卡都卡一下）。
+         * ## 为什么不能只 `runCatching { SimpleCache(...) }`
+         *
+         * `SimpleCache` 的构造只对**一种**失败抛异常：目录已被另一实例锁住
+         * （`SimpleCache.java:215` `lockFolder` → `IllegalStateException`）。
+         *
+         * 真正常见的那些失败 —— 索引损坏、DB 初始化失败、建目录失败、
+         * `listFiles()` 返回 null —— 都发生在构造器**启动的后台线程**里
+         * （`SimpleCache.java:228-240`，线程名 `ExoPlayer:SimpleCacheInit`），
+         * 而 `initialize()` 把它们**存进 `initializationException` 而不是抛**
+         * （`:519-560`）。它们只在 `checkInitialization()` 或后续读写时才浮出来
+         * —— 那时已经在播放链路上了。
+         *
+         * 所以流程必须是：**建 candidate → `checkInitialization()` 通过 → 才发布**。
+         * 失败要 `release()`（否则文件夹锁不释放，下次连重试都会被
+         * `lockFolder` 挡住），然后 memoize 失败、永久走 upstream。
+         *
+         * ⚠️ **catch `Exception` 而不是用 `runCatching`**：后者连
+         * `OutOfMemoryError` / `StackOverflowError` 一起吞，那类错误吞下去
+         * 只会让后面在更奇怪的地方崩。
          */
         @UnstableApi
         private fun cacheOrNull(context: Context): androidx.media3.datasource.cache.SimpleCache? {
             videoCache?.let { return it }
             if (cacheOpenFailed) return null
             return synchronized(this) {
-                videoCache ?: run {
-                    if (cacheOpenFailed) return@run null
-                    runCatching {
-                        androidx.media3.datasource.cache.SimpleCache(
-                            java.io.File(context.cacheDir, "ScreenVideoCache"),
-                            androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor(
-                                CACHE_SIZE_BYTES,
-                            ),
-                            androidx.media3.database.StandaloneDatabaseProvider(context),
-                        )
-                    }.onFailure { error ->
-                        // 目录锁（同目录已有实例）、索引损坏、磁盘满、DB 初始化失败
-                        // 都会在**构造期**抛，且抛在 Compose 的 borrow 调用栈上
-                        cacheOpenFailed = true
-                        Log.w(TAG, "视频磁盘缓存打不开，降级为无缓存播放", error)
-                    }.getOrNull()?.also { videoCache = it }
+                videoCache?.let { return@synchronized it }
+                if (cacheOpenFailed) return@synchronized null
+
+                var candidate: androidx.media3.datasource.cache.SimpleCache? = null
+                try {
+                    candidate = androidx.media3.datasource.cache.SimpleCache(
+                        java.io.File(context.cacheDir, CACHE_DIR_NAME),
+                        androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor(
+                            CACHE_SIZE_BYTES,
+                        ),
+                        androidx.media3.database.StandaloneDatabaseProvider(context),
+                    )
+                    // ⚠️ 关键一步：后台 initialize() 的失败只在这里浮出来
+                    candidate.checkInitialization()
+                    videoCache = candidate
+                    candidate
+                } catch (error: Exception) {
+                    // 释放文件夹锁 —— 不 release 的话锁一直留着，
+                    // 连"下次重试"都会被 lockFolder 直接挡掉
+                    candidate?.let { c -> try { c.release() } catch (ignored: Exception) { } }
+                    cacheOpenFailed = true
+                    Log.w(TAG, "视频磁盘缓存不可用，降级为无缓存播放", error)
+                    null
                 }
             }
         }
