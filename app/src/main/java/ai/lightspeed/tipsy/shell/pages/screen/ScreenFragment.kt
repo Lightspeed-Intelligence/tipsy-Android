@@ -1,6 +1,8 @@
 package ai.lightspeed.tipsy.shell.pages.screen
 
 import ai.lightspeed.tipsy.shell.TipsyApplication
+import ai.lightspeed.tipsy.shell.R
+import androidx.fragment.app.FragmentManager
 import ai.lightspeed.tipsy.shell.auth.AuthStateHub
 import ai.lightspeed.tipsy.shell.auth.LegacyMmkvStore
 import androidx.media3.common.util.UnstableApi
@@ -93,6 +95,26 @@ class ScreenFragment : Fragment() {
     private var isFocused = false
 
     /**
+     * 是否被 Surface 盖住（R1）。
+     *
+     * ⚠️ `surface_container` 是 `native_root_container` 的 **sibling**
+     * （见 `activity_main.xml`），所以打开 ChatDetail / Create / Search /
+     * Settings / Login 时：Screen **不会** hidden、TabHost **不会** stop。
+     * 只看 `onStart`/`onHiddenChanged` 两条轴的表现是
+     * **盖了 Surface 视频仍在后台播**（还占着音频焦点）。
+     */
+    private var isCovered = false
+
+    /**
+     * Activity back stack 监听：Surface push/pop 后重算遮挡态。
+     * **必须在 onDestroyView 反注册** —— 它挂在 Activity 的 FragmentManager 上。
+     */
+    private val backStackListener = FragmentManager.OnBackStackChangedListener {
+        isCovered = hasVisibleSurface()
+        applyVisible(computeVisible())
+    }
+
+    /**
      * 播放门（W4-P2）：两条轴都为真才播。
      *
      * ⚠️ 与 [isFocused] 分开存而不是复用它：[isFocused] 是普通字段，Compose
@@ -122,6 +144,12 @@ class ScreenFragment : Fragment() {
      * 页内点击不持久化是**本刀刻意接受的临时偏差**：写回属共享键写协议，另包解决。
      */
     private val soundEnabled = mutableStateOf(ScreenSoundPreference.DEFAULT_SOUND_ENABLED)
+
+    /** Activity 生命周期轴。 */
+    private var isStarted = false
+
+    /** 上一次下发的可见性 —— [applyVisible] 的幂等闸。null = 尚未下发过。 */
+    private var lastAppliedVisible: Boolean? = null
 
     /**
      * 前台轴观察者。**必须在 onDestroyView 反注册** ——
@@ -165,6 +193,10 @@ class ScreenFragment : Fragment() {
         ProcessLifecycleOwner.get().lifecycle.addObserver(foregroundObserver)
 
         playerPool = ScreenPlayerPool(requireContext().applicationContext)
+        // R1：Surface 遮挡轴。sibling 容器不会让本 Fragment hidden，只能靠 back stack
+        isCovered = hasVisibleSurface()
+        requireActivity().supportFragmentManager
+            .addOnBackStackChangedListener(backStackListener)
 
         val composeView = ComposeView(requireContext()).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
@@ -218,9 +250,10 @@ class ScreenFragment : Fragment() {
         super.onStart()
         // ⚠️ 切 Tab **不会**走 onStart —— TabHostFragment 用 show/hide 保状态
         // （对齐 RN 的 `detachInactiveScreens={false}`），hide 不改生命周期状态。
-        // 所以真正的「Tab 可见性」轴在 onHiddenChanged，不在这里。
-        // 这里只覆盖「Activity 级别可见」（冷启/回前台/进程恢复）
-        if (!isHidden) applyVisible(true)
+        // 这里只是三条轴里的「Activity 级别可见」那条
+        isStarted = true
+        isCovered = hasVisibleSurface()
+        applyVisible(computeVisible())
         viewModel.onAppear()
     }
 
@@ -233,11 +266,39 @@ class ScreenFragment : Fragment() {
      */
     override fun onHiddenChanged(hidden: Boolean) {
         super.onHiddenChanged(hidden)
-        applyVisible(!hidden)
+        applyVisible(computeVisible())
     }
 
-    /** 可见性收口：两条轴（Activity 生命周期 + Tab show/hide）都汇到这里。 */
+    /**
+     * 三条轴的合成：`started && !isHidden && !isCovered`。
+     *
+     * 少任何一条都会留下「某条路径下视频继续后台播」的缺口，而三条的触发方式
+     * 各不相同（生命周期 / show-hide / sibling 容器 back stack）。
+     */
+    private fun computeVisible(): Boolean =
+        ScreenVisibility.isVisible(started = isStarted, hidden = isHidden, covered = isCovered)
+
+    /** `surface_container` 里是否有可见 Fragment（= 本页被盖住）。 */
+    private fun hasVisibleSurface(): Boolean {
+        val container = activity?.findViewById<android.view.View>(R.id.surface_container)
+            ?: return false
+        val fm = activity?.supportFragmentManager ?: return false
+        // 容器自身不可见（gone）时不算被盖；否则看里面有没有已添加且未 hidden 的 Fragment
+        if (container.visibility != android.view.View.VISIBLE) return false
+        return fm.fragments.any { it.isAdded && !it.isHidden && it.id == R.id.surface_container }
+    }
+
+    /**
+     * 可见性收口：三条轴（Activity 生命周期 / Tab show-hide / Surface 遮挡）
+     * 都汇到这里。
+     *
+     * **幂等**：同一状态重复下发直接返回 —— back stack listener 与
+     * onHiddenChanged 可能在同一次交互里都触发，重复下发会让 ViewModel 的
+     * session 埋点重复开合。
+     */
     private fun applyVisible(visible: Boolean) {
+        if (visible == lastAppliedVisible) return
+        lastAppliedVisible = visible
         isFocused = visible
         playbackActive.value = visible
         if (visible) {
@@ -252,6 +313,7 @@ class ScreenFragment : Fragment() {
     override fun onStop() {
         // 停播（对齐 RN 失焦立即 pause）。⚠️ **只停播不销毁池** ——
         // iOS 研究文档 §4「聚焦/失焦」明写「不重置状态，保留缓冲快速恢复」
+        isStarted = false
         applyVisible(false)
         super.onStop()
     }
@@ -260,6 +322,8 @@ class ScreenFragment : Fragment() {
         (requireActivity().application as TipsyApplication)
             .authStateHub.removeObserver(authObserver)
         ProcessLifecycleOwner.get().lifecycle.removeObserver(foregroundObserver)
+        requireActivity().supportFragmentManager
+            .removeOnBackStackChangedListener(backStackListener)
         // 释放全部 ExoPlayer。漏了会泄漏解码器 —— 表现是「反复切 Tab 后
         // 视频不再播」，且不报错，见 playerPool 的字段注释
         playerPool?.release()

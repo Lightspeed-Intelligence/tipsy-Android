@@ -25,7 +25,7 @@ import android.util.Log
  * | 容量按 `physicalMemory` 分档 3~5 | 同档位，读 [ActivityManager.getMemoryClass] | 见 [capacityFor] |
  * | `borrow(urlString:)` / `recycle(_:)` | [borrow] / [recycle] | 显式借还，不做自动回收 |
  * | `actionAtItemEnd = .pause` | `repeatMode = REPEAT_MODE_OFF` | **播完不循环**，见下 |
- * | 不接管 AudioSession | `setAudioAttributes(handleAudioFocus = false)` | 见下 |
+ * | 不接管 AudioSession（iOS-only prop） | `setAudioAttributes(handleAudioFocus = **true**)` | ⚠️ **这一行不是等价映射**：iOS 的 `disableAudioSessionManagement` 无 Android 对等物，RN Android 默认请求 `AUDIOFOCUS_GAIN`。详见 [createPlayer] |
  *
  * ⚠️ **`assetCache` 那层 iOS 有、Android 刻意没有**：iOS 缓存 `AVURLAsset` 是因为
  * `AVURLAsset` 自己持有加载状态；Media3 的对等物是 `MediaSource`，而它一旦被
@@ -56,21 +56,31 @@ class ScreenPlayerPool(
     private val context: Context,
     /** 注入点仅供测试覆盖容量分档；生产恒走 [capacityFor]。 */
     capacityOverride: Int? = null,
+    /**
+     * 播放器工厂 seam —— 仅供测试注入假实例。
+     *
+     * 生产恒为 null（走 [createPlayer]）。有这个 seam 才能在 JVM 上验
+     * 容量上界 / 溢出降级 / 归还 / 释放这四条**账面不变量**；
+     * 没有它就只能靠真机，而真机验不了「借第 capacity+1 个返回 null」这种边界。
+     */
+    private val playerFactory: (() -> ExoPlayer)? = null,
 ) {
     /** 池容量（对齐 iOS：≥6GB→5、≥4GB→4、否则 3）。 */
     val capacity: Int = capacityOverride ?: capacityFor(context)
 
-    /** 空闲实例（可复用）。 */
-    private val idle = ArrayDeque<ExoPlayer>()
+    /**
+     * 借还账本 —— 四条不变量（池满降级 / 外来归还 / 重复归还 / release 覆盖借出）
+     * 都在 [ScreenPlayerLedger] 里，那里能在 JVM 上单测。
+     * 本类只负责把账本的结论翻译成 Media3 调用。
+     */
+    private val ledger = ScreenPlayerLedger<ExoPlayer>(capacity)
 
-    /** 已借出的实例数 —— 与 [idle] 一起构成「已存活总数」的账。 */
-    private var borrowed = 0
-
-    /** 池是否已释放；释放后所有操作变成 no-op（Fragment 销毁后的迟到回调）。 */
-    private var released = false
 
     /** 当前存活的播放器总数（借出 + 空闲）。测试与真机内存断言用。 */
-    val aliveCount: Int get() = borrowed + idle.size
+    val aliveCount: Int get() = ledger.aliveCount
+
+    /** 当前借出数。有界保证的直接观测点。 */
+    val borrowedCount: Int get() = ledger.borrowedCount
 
     /**
      * 借一个播放器并装载 [url]。
@@ -83,14 +93,13 @@ class ScreenPlayerPool(
     @UnstableApi
     fun borrow(url: String?): ExoPlayer? {
         assertMainThread()
-        if (released || url.isNullOrBlank()) return null
-        if (borrowed >= capacity) {
+        if (url.isNullOrBlank()) return null
+        val player = ledger.borrow { playerFactory?.invoke() ?: createPlayer() }
+        if (player == null) {
             // 不是异常路径：翻页快时会短暂命中，降级封面图即可
-            Log.d(TAG, "池已满（capacity=$capacity），降级封面图")
+            Log.d(TAG, "池满或已释放（capacity=$capacity），降级封面图")
             return null
         }
-        val player = idle.removeLastOrNull() ?: createPlayer()
-        borrowed++
         player.setMediaItem(MediaItem.fromUri(url))
         player.prepare()
         return player
@@ -104,27 +113,35 @@ class ScreenPlayerPool(
      */
     fun recycle(player: ExoPlayer) {
         assertMainThread()
-        if (released) {
-            player.release()
-            return
-        }
-        borrowed = (borrowed - 1).coerceAtLeast(0)
-        player.pause()
-        player.clearMediaItems()
-        if (idle.size < capacity) {
-            idle.addLast(player)
-        } else {
-            player.release()
+        when (ledger.recycle(player)) {
+            ScreenPlayerLedger.Recycle.ACCEPTED -> {
+                // ⚠️ 必须 clearMediaItems 而不只是 pause —— 只 pause 的话解码器与
+                // 缓冲区仍挂在旧 item 上，池里攒几个就等于没有上界
+                player.pause()
+                player.clearMediaItems()
+            }
+
+            ScreenPlayerLedger.Recycle.RELEASE_OVERFLOW,
+            ScreenPlayerLedger.Recycle.RELEASE_AFTER_SHUTDOWN,
+            -> player.release()
+
+            ScreenPlayerLedger.Recycle.REJECTED_UNKNOWN ->
+                // 外来实例或重复归还：**什么都不做**。销毁别人持有的实例
+                // 同样是缺陷，所以连 release 都不能调
+                Log.w(TAG, "拒绝归还：不是本池借出的实例，或已归还过（重复 recycle）")
         }
     }
 
-    /** 释放全部实例（Fragment `onDestroyView`）。之后本池不可再用。 */
+    /**
+     * 释放全部实例（Fragment `onDestroyView`）。之后本池不可再用。
+     *
+     * ⚠️ **借出的也要 release**：早前只 release idle 再把计数清零 ——
+     * 漏 dispose 或迟到 dispose 的 borrowed player 会**继续活着而账面为 0**，
+     * 表现是「反复进出大屏页后视频不再播」（解码器被泄漏的实例占满），且不报错。
+     */
     fun release() {
         assertMainThread()
-        released = true
-        idle.forEach { it.release() }
-        idle.clear()
-        borrowed = 0
+        ledger.release().forEach { it.release() }
     }
 
     // `setLoadControl` 本身也是 opt-in API，理由与 buildLoadControl 同处
@@ -132,14 +149,29 @@ class ScreenPlayerPool(
     private fun createPlayer(): ExoPlayer =
         ExoPlayer.Builder(context)
             .setLoadControl(buildLoadControl())
+            // 50MB 磁盘缓存（对齐 RN `cacheSizeMB: 50`），见 [videoCache]
+            .setMediaSourceFactory(
+                androidx.media3.exoplayer.source.DefaultMediaSourceFactory(
+                    cacheDataSourceFactory(context),
+                ),
+            )
             .build()
             .apply {
                 // 播完不循环 —— 对齐 RN 的 repeat={false}（FeedMediaItem.tsx:614）。
                 // 播完由上层切 tagline，不是无缝 loop。iOS 用 actionAtItemEnd = .pause。
                 repeatMode = Player.REPEAT_MODE_OFF
-                // 静音 feed：不申请音频焦点，避免每划一张卡就打断用户的后台音乐。
-                // 对齐 RN 的 disableAudioSessionManagement={true}（同文件 :630）。
-                setAudioAttributes(audioAttributes, /* handleAudioFocus = */ false)
+                // ⚠️ **必须 handleAudioFocus = true**（对齐 RN Android 的实际行为）。
+                //
+                // 早前写 false 并引用 RN 的 `disableAudioSessionManagement={true}` 作依据
+                // —— **那个 prop 是 iOS-only**（`react-native-video/src/types/video.ts:387`
+                // 明注 `// iOS`）。RN Android 侧的对应开关是 `disableFocus`，而
+                // `FeedMediaItem.tsx` **没有传它**，所以 Android 走默认分支：
+                // `requestAudioFocus()` 在起播前请求 `AUDIOFOCUS_GAIN`
+                // （`ReactExoplayerView.java:1316-1324` + `setPlayWhenReady:1326-1338`）。
+                //
+                // 写 false 等于**未经批准的 Android 行为变更**：来电/其他 App 播音时
+                // 本页不会让出焦点，两路声音会叠着放。
+                setAudioAttributes(audioAttributes, /* handleAudioFocus = */ true)
                 // 视频铺满，音量由上层按 videoSoundEnabled 设（见 ScreenVideoHost）
                 volume = 0f
             }
@@ -190,6 +222,11 @@ class ScreenPlayerPool(
                     /* bufferForPlaybackAfterRebufferMs = */ 1_500,
                 )
                 .setBackBuffer(/* backBufferDurationMs = */ 2_000, /* retainBackBufferFromKeyframe = */ false)
+                // ⚠️ 必须为 true：默认 false 时 Media3 会在总分配量触及内部
+                // 阈值后**忽略上面的时长窗口**，按字节数决定加载 ——
+                // 那样 minBufferMs=2500 就只是"建议"，弱网下起播会被拖长。
+                // RN Android 侧靠 `bufferConfig` 全套生效，此处对齐它的语义
+                .setPrioritizeTimeOverSizeThresholds(true)
                 .build()
 
         private val audioAttributes = androidx.media3.common.AudioAttributes.Builder()
@@ -220,6 +257,53 @@ class ScreenPlayerPool(
         }
 
         private const val MIN_CAPACITY = 3
+
+        /** 50MB，对齐 RN `bufferConfig.cacheSizeMB`（`FeedMediaItem.tsx:608`）。 */
+        private const val CACHE_SIZE_BYTES = 50L * 1024 * 1024
+
+        /**
+         * 进程级 [SimpleCache] 单例。
+         *
+         * ⚠️ **必须是单例**：`SimpleCache` 对同一目录同时存在两个实例会互相
+         * 覆盖索引（RN 侧那份的注释自己都写着 "TODO: when to release?"）。
+         *
+         * ⚠️ **必须用独立目录 `ScreenVideoCache`，不复用 RN 的 `RNVCache`**：
+         * RN 的 `RNVSimpleCache` 是它自己的 object 单例、持有自己的
+         * `SimpleCache` 实例。两边指向同一目录就是上面那个「两个实例一个目录」
+         * 的情况。**这与 OkHttpClient 共享不是一回事** —— 早前把这一条写成
+         * 「壳与 RN 共享 OkHttp，所以磁盘缓存会打架」是错的：RN video 走的是
+         * 自己的 DataSource 链，压根不经过壳的 OkHttp。
+         */
+        // SimpleCache 类型本身就是 opt-in，字段声明也要标（理由同 buildLoadControl）
+        @Volatile
+        @UnstableApi
+        private var videoCache: androidx.media3.datasource.cache.SimpleCache? = null
+
+        @UnstableApi
+        private fun cache(context: Context): androidx.media3.datasource.cache.SimpleCache =
+            videoCache ?: synchronized(this) {
+                videoCache ?: androidx.media3.datasource.cache.SimpleCache(
+                    java.io.File(context.cacheDir, "ScreenVideoCache"),
+                    androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor(CACHE_SIZE_BYTES),
+                    androidx.media3.database.StandaloneDatabaseProvider(context),
+                ).also { videoCache = it }
+            }
+
+        /** 读写缓存的 DataSource 工厂（上游用 media3 默认 HTTP 栈）。 */
+        @UnstableApi
+        internal fun cacheDataSourceFactory(
+            context: Context,
+        ): androidx.media3.datasource.cache.CacheDataSource.Factory =
+            androidx.media3.datasource.cache.CacheDataSource.Factory()
+                .setCache(cache(context))
+                .setUpstreamDataSourceFactory(
+                    androidx.media3.datasource.DefaultDataSource.Factory(context),
+                )
+                // 缓存写失败（磁盘满等）不要让播放整体失败
+                .setFlags(
+                    androidx.media3.datasource.cache.CacheDataSource
+                        .FLAG_IGNORE_CACHE_ON_ERROR,
+                )
 
         private fun assertMainThread() {
             check(Looper.myLooper() == Looper.getMainLooper()) {

@@ -270,6 +270,11 @@ dependencies {
     // RN 侧的耦合约束，见 catalog 注释。刻意不引 media3-session，理由同处。
     implementation libs.media3.exoplayer
     implementation libs.media3.ui
+    // 50MB 磁盘缓存（对齐 RN 的 cacheSizeMB）。⚠️ 用**独立目录** ScreenVideoCache，
+    // 不与 RN 的 RNVCache 共用 —— 两个 SimpleCache 实例指向同一目录会互相
+    // 覆盖索引（RN 侧注释自己都写着 "when to release?"）
+    implementation libs.media3.datasource
+    implementation libs.media3.database
 
     // android.jar 的 org.json 是 stub（调用即抛 "not mocked"），JVM 单测需真实实现。
     testImplementation libs.json

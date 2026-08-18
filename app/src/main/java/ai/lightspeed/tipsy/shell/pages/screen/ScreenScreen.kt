@@ -63,10 +63,11 @@ import coil3.compose.AsyncImage
  *
  * ## 竖向全屏翻页
  *
- * `VerticalPager`，一屏一条。⚠️ **`beyondViewportPageCount` 保持默认 0** ——
- * 那个参数会让相邻页提前组合，P2 接播放器时它直接决定同时存活的播放器数，
- * 也就是 OOM 的直接来源（方案 §8.1「有界池」）。P1 虽不播视频，
- * 但先把这个默认坐实，免得 P2 忘了。
+ * `VerticalPager`，一屏一条。⚠️ **`beyondViewportPageCount = 1`**（P2 起）——
+ * 它让相邻页提前组合，是 ±1 窗口能成立的前提（默认 0 时邻页不组合，
+ * `abs(page-current)<=1` 永远只对当前页成立）。同时它直接决定同时存活的
+ * 播放器数，也就是 OOM 的直接来源（方案 §8.1「有界池」），
+ * 与 [ScreenPlayerPool.capacity] 共同构成上界。**不要往上调**。
  */
 @Composable
 @UnstableApi  // 接收 ScreenPlayerPool（Media3 opt-in API）
@@ -151,8 +152,14 @@ private fun ScreenPager(
     Box(Modifier.fillMaxSize()) {
         VerticalPager(
             state = pagerState,
-            // ⚠️ 保持默认 0：这个值决定同时存活的相邻页数量，
-            // P2 接播放器后它就是 OOM 的直接来源，见文件头注释
+            // ⚠️ **必须显式设 1**（P1 时是默认 0）：`abs(page-current)<=1` 的
+            // ±1 窗口只在邻页**被组合**时才有意义 —— 默认 0 时邻页压根不组合，
+            // 那个判断永远只对当前页成立，"±1 预热"是空话。
+            //
+            // 这个值就是 OOM 的直接来源，与 [ScreenPlayerPool.capacity]
+            // 共同构成上界：1 表示同时最多 3 页被组合 → 最多 3 个播放器在用，
+            // 池容量 3~5 留出翻页重叠期。**不要往上调**。
+            beyondViewportPageCount = 1,
             modifier = Modifier.fillMaxSize().testTag("screen_pager"),
             key = { state.items[it].characterId },
         ) { page ->
