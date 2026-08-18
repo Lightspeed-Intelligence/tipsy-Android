@@ -45,7 +45,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
 /**
- * 大屏页（Tab1）的宿主（W4-P1，进度文档 §2.35）。
+ * 大屏页（Tab1）的宿主（W4-P1/P2，进度文档 §2.35 / §2.42）。
  *
  * ## ⚠️ 会话埋点是**焦点 × 前台**两条轴
  *
@@ -115,7 +115,7 @@ class ScreenFragment : Fragment() {
     }
 
     /**
-     * 播放门（W4-P2）：两条轴都为真才播。
+     * 播放门（W4-P2）：Activity 已 started、Tab 未 hidden、且未被 Surface 覆盖才播。
      *
      * ⚠️ 与 [isFocused] 分开存而不是复用它：[isFocused] 是普通字段，Compose
      * 读不到它的变化。这个必须是 `MutableState` 才能让视频层在切 Tab /
@@ -137,8 +137,9 @@ class ScreenFragment : Fragment() {
      * 声音开关。只读 RN 的 `chat-persist-storage` 作**每次可见时的初值**，
      * 页内点击只改内存、**不写回** —— 见 [ScreenSoundPreference] 的所有权说明。
      *
-     * ⚠️ **必须每次 `onStart` 重读，不能 `by lazy`**：用户可能在 RN 的 Screen 页
-     * 或 Chat Settings 里改过这个开关（那边是唯一 writer）。只读一次的表现是
+     * ⚠️ **必须每次真正可见时重读，不能只放在 `onStart` 或 `by lazy`**：
+     * TabHost 的 show/hide 不会重走 `onStart`；用户又可能在 RN 的 Screen 页或
+     * Chat Settings 里改过这个开关（那边是唯一 writer）。只读一次的表现是
      * 「在别处关了声音，回到原生大屏页又出声」—— 而这种不一致用户不会报成缺陷。
      *
      * 页内点击不持久化是**本刀刻意接受的临时偏差**：写回属共享键写协议，另包解决。

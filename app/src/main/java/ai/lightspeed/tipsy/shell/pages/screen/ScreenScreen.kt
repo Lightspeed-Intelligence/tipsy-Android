@@ -51,15 +51,15 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 
 /**
- * 大屏页（Tab1，W4-P1，进度文档 §2.35）。
+ * 大屏页（Tab1，W4-P1/P2，进度文档 §2.35 / §2.42）。
  *
- * ## P1 不播视频
+ * ## showcase 视频（P2）
  *
- * 三形态里 `showcase` 先显示 [ScreenFeedItem.thumbnailUrl] 静态封面
- * （Media3 属 P2）。`animated_image` 交给 Coil ——
+ * `showcase` 在当前页 ±1 窗口内经 [ScreenPlayerPool] 播放；
+ * [ScreenFeedItem.thumbnailUrl] 作为覆盖层保留到首帧，并在播放器不可用、
+ * 离开窗口、播完或出错时重新显示。`animated_image` 仍交给 Coil ——
  * ⚠️ Coil 3 默认能解 GIF/WebP 动图，但**需要 `coil-gif` artifact**；
- * 缺它时动图只显示第一帧（不报错）。P1 先不引，动图与静图视觉一致，
- * 差异记在验收里。
+ * 当前未引该 artifact，缺它时动图只显示第一帧（不报错），差异记在验收里。
  *
  * ## 竖向全屏翻页
  *
@@ -244,7 +244,7 @@ private fun ScreenCard(
     bottomPadding: Dp,
 ) {
     Box(Modifier.fillMaxSize()) {
-        // 背景：P1 三形态都走图片（showcase 用封面，见文件头注释）
+        // 背景图：静图/动图直接显示；showcase 把封面作为视频首帧前的 overlay
         val imageUrl = when (item.mediaSourceType) {
             // ⚠️ showcase 的 backgroundUrl 是视频 URL，不能喂给 Coil ——
             // 用 thumbnailUrl（cover_url 回落 image_url）

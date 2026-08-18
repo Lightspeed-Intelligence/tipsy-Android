@@ -36,11 +36,12 @@ import kotlinx.coroutines.yield
 /**
  * Profile Tab 的宿主（W3 第一刀，替掉 `TabPlaceholderFragment`）。
  *
- * ## 出口全部经 Router，且现在**都会被明确拒绝**
+ * ## 出口全部经 Router，启用状态集中在 policy
  *
- * `ProductionRoutePolicy.enabledRouteTypes` 目前是 `emptySet()`（P9 / §9.1 前
- * 没有业务路由可进生产），所以设置 / 编辑资料 / Follow 列表点下去会走
- * `navigator.rejectNotEnabled` 给出明确错误。
+ * `ProductionRoutePolicy.enabledRouteTypes` 已放行原生 Settings，但 EditProfile、
+ * Follow、Gems 与 UserCoins 仍会走 `navigator.rejectNotEnabled`给出明确错误。
+ * EditProfile 的 Surface/auth/refresh 预接线已落地，只是 §9.1 未跑，因此生产
+ * policy 刻意保持关闭。
  *
  * 这是 §8.3 要求的形态：「路由到未启用的 Surface 必须给出明确错误或安全 fallback，
  * **不做 silent no-op**」。不是漏实现 —— 留 TODO 让点击无反应才是违反纪律的那种

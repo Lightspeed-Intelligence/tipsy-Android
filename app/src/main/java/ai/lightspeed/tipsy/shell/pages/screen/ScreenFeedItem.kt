@@ -22,11 +22,11 @@ import org.json.JSONObject
  * `animated_image`→`gif`、`static_image`→`single_character`、
  * **其余（含 showcase）→`showcase`**。见 [ScreenCardType]。
  *
- * ## P1 不播视频
+ * ## showcase：P1 解析，P2 播放
  *
- * `showcase` 形态本刀先显示 [thumbnailUrl] 静态封面（Media3 属 P2，§2.35）。
- * [backgroundUrl] 仍然解析出来 —— P2 接播放器时直接可用，
- * 且它决定了 [mediaType]。
+ * P1 已把 `showcase` 的视频 URL 解析到 [backgroundUrl]，封面解析到 [thumbnailUrl]；
+ * P2 现在会在当前页 ±1 窗口内把前者交给 Media3 播放。后者仍是必要的覆盖层：
+ * 首帧前、播放器不可用、离开窗口、播完或出错时都显示封面，而不是露黑帧。
  *
  * @property characterId 也是列表 stable key（`toFeedMediaItem` 的 `id`）
  * @property thumbnailUrl `greeting_video.cover_url` 优先，回落 `character.image_url`
@@ -37,7 +37,7 @@ data class ScreenFeedItem(
     val mediaSourceType: ScreenMediaSourceType,
     /** 背景媒体 URL（视频 / 动图 / 静图，按三形态回落）。 */
     val backgroundUrl: String?,
-    /** 封面图 —— P1 的 showcase 形态显示它。 */
+    /** 封面图 —— showcase 首帧前、播放器不可用、播完或出错时显示。 */
     val thumbnailUrl: String?,
     /** `character.introduction`，空串而非 null（对齐 `tagline: ... || ''`）。 */
     val tagline: String,

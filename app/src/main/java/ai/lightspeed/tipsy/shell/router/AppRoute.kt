@@ -189,9 +189,11 @@ sealed interface AppRoute {
 
     // ── Profile 的出口（方案 §8.1 记的 5 个，W3 起陆续启用）──────────
     //
-    // ⚠️ 这些类型**现在都不在** `ProductionRoutePolicy.enabledRouteTypes` 里，
-    // 点击会走 `navigator.rejectNotEnabled` 给出明确错误 —— 这是 §8.3 要求的
-    // 「路由到未启用的 Surface 必须给出明确错误或安全 fallback，不做 silent no-op」。
+    // ⚠️ 这些类型的**启用状态不同**：Settings 等已通过验收的目标在
+    // `ProductionRoutePolicy.enabledRouteTypes` 里，EditProfile / Follow / Gems 等
+    // 未放行目标仍会走 `navigator.rejectNotEnabled` 给出明确错误。这是 §8.3
+    // 要求的「路由到未启用的 Surface 必须给出明确错误或安全 fallback，
+    // 不做 silent no-op」。
     //
     // 定义它们而不是在 UI 里留 TODO：出口一旦有了类型，启用时只改
     // `ProductionRoutePolicy` 一处并更新矩阵测试，不必回头找散落的调用点。

@@ -566,7 +566,7 @@ W1 从 RN 源码生成 registry，至少覆盖：
 | `auth-storage` | pushToken / isNewUser / pushEnabled（`partialize` 实测） | 审计 schema 后 dual-read |
 | `rating-storage` | content rating | 保留，按渠道策略解释 |
 | `config-persist-storage` | tags / nsfw 镜像 / 性别筛选 | 只迁真正跨壳需要的字段 |
-| `chat-persist-storage` | 聊天状态 | **RN Surface owner，Native 不写** |
+| `chat-persist-storage` | 聊天状态 | **RN Surface owner，Native 不写**；Screen P2 仅只读 `videoSoundEnabled` 初值（进度 §2.42），每次真正可见重读，页内切换只存内存；这是待 owner 收口的窄例外，不扩成整信封读写权 |
 | `guide-status-storage` | guide flags | 覆盖升级保留 |
 | `subscribe-storage` | 订阅 UI 缓存 | **非支付真值**，谨慎保留 |
 | `chat-background-storage` | 聊天背景 | RN Surface owner |
@@ -1003,7 +1003,7 @@ git -C tipsy-app diff --name-status <wave-source-sha>..<candidate-sha> -- \
 | **W1** 契约 | `tipsy-auth` Android 桥 + token 迁移（含三 flavor 真机覆盖升级）+ auth/mutation 双 generation + network 三鉴权模式 + i18n + Router + root side-effect 清单 + Sentry + **`ChatDetailSurface` gate**。**RN 侧只需补桥实现**——其余 55 个文件的壳适配已存在（§7.2） | 基建为主，但 `ChatDetailSurface` 是真实业务 gate |
 | **W2** 垂直切片 | Bootstrap 状态机 + 五 Tab shell + **Login** + **Home 完整对等** | 业务为主 |
 | **W3** 页面主体 | **Profile**（12.6k，最大）+ **ChatList** + **Search** + Settings 列表/语言页。feature 可并行，集成串行 | **纯业务，工作量最大的一波** |
-| **W4** Screen + 系统 | **Screen/Media3** + 其余 12 个 Surface 逐个过矩阵 + Push/deep link/Widget/voice/营销 SDK + OTA 三重隔离 | 业务 + 系统能力 |
+| **W4** Screen + 系统 | **Screen/Media3** + 全量 12 个业务 Surface 逐个过矩阵（EditProfile 在 W3 预接，但生产验收仍在本波）+ Push/deep link/Widget/voice/营销 SDK + OTA 三重隔离 | 业务 + 系统能力 |
 | **W5** 切换 | 全量对等/性能/无障碍/nightly + 三渠道覆盖升级 + staged rollout + 向前恢复演练 + last-known-good 归档 | 发布 |
 
 > **W1 的执行级细化见 [`android-w1-plan.md`](android-w1-plan.md)** —— 任务依赖链、
@@ -1031,7 +1031,8 @@ git -C tipsy-app diff --name-status <wave-source-sha>..<candidate-sha> -- \
 | DebugSurface | W0 | N/A | N/A | — | ✎ | ✎ | ✎ | ✎ | ✎ | W4 |
 | ChatDetailSurface | ✅ W1 | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | W4 |
 | CreateSurface | W2 | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | W4 |
-| 其余 10 个 | W4 | — | — | — | — | — | — | — | — | — |
+| EditProfileSurface | W3（仅预接，生产关闭） | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | W4 |
+| 其余 9 个 | W4 | — | — | — | — | — | — | — | — | — |
 
 未填满的行**不得**标 production-ready。
 
@@ -1044,6 +1045,11 @@ git -C tipsy-app diff --name-status <wave-source-sha>..<candidate-sha> -- \
 > Tab3 的 ➕）。§2.41 已补微根、root stack、10 个实际微栈目标、注册名与
 > `hydrateTags` 前置的机器断言，关闭此前“只有人工比对”的静态 gate 欠账。
 > ⚠️ 这仍不等于 §9.1：设备生命周期矩阵未填满前不得标 production-ready。
+>
+> **`EditProfileSurface` 已按 W3 预接静态契约/测试源码、账号隔离与 Profile 刷新接力**
+> （进度文档 §2.43），但相关测试并未执行、生产 policy 仍关闭，
+> 该行 8 个设备/生命周期验收格仍全 `✎`。这解决“W3 还是 W4”
+> 的批次歧义，不改变“未填满矩阵不得启用”的门槛。
 
 ### 9.2 页面/横切能力对等（十类证据）
 

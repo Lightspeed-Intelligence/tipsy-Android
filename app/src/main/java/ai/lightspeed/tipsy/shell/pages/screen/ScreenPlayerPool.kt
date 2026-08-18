@@ -22,7 +22,7 @@ import android.util.Log
  *
  * | iOS | Android | 说明 |
  * | --- | --- | --- |
- * | 容量按 `physicalMemory` 分档 3~5 | 同档位，读 [ActivityManager.getMemoryClass] | 见 [capacityFor] |
+ * | 容量按 `physicalMemory` 分档 3~5 | 保留 3~5 范围，改按 `largeMemoryClass` 分档 | Android 受进程堆上限约束，见 [capacityFor] |
  * | `borrow(urlString:)` / `recycle(_:)` | [borrow] / [recycle] | 显式借还，不做自动回收 |
  * | `actionAtItemEnd = .pause` | `repeatMode = REPEAT_MODE_OFF` | **播完不循环**，见下 |
  * | 不接管 AudioSession（iOS-only prop） | `setAudioAttributes(handleAudioFocus = **true**)` | ⚠️ **这一行不是等价映射**：iOS 的 `disableAudioSessionManagement` 无 Android 对等物，RN Android 默认请求 `AUDIOFOCUS_GAIN`。详见 [createPlayer] |
@@ -71,7 +71,7 @@ class ScreenPlayerPool(
      *
      * ⚠️ 档位形状照 iOS 的 3~5，但**判据不是设备物理内存** ——
      * iOS 按 `physicalMemory` 分档，Android 的真实上界是进程堆上限。
-     * 别把这里写回"≥6GB/≥4GB"，那是 iOS 的数。
+     * 别把这里写回 iOS 的物理内存阈值。
      */
     val capacity: Int = capacityOverride ?: capacityFor(context)
 
@@ -92,8 +92,9 @@ class ScreenPlayerPool(
     /**
      * 借一个播放器并装载 [url]。
      *
-     * @return null 表示**该拒绝播放**：url 空、池已满、或池已释放。
-     *   调用方必须降级为封面图，**不要重试或自建 player** —— 那就绕过了有界。
+     * @return null 表示本次借出失败：url 空、池已满、池已释放，或播放器创建失败。
+     *   调用方必须先降级为封面图；可在「邻页成为当前页」这类明确状态事件后，
+     *   **仍经本池**做一次有界重试，但不得忙轮询，也不得自建 player 绕过容量上限。
      */
     // 经 createPlayer 触达 DefaultLoadControl（opt-in），故标在这里。
     // 标方法而非整个类：这样持有/传递 ScreenPlayerPool 的代码不必 opt-in
@@ -101,8 +102,8 @@ class ScreenPlayerPool(
     fun borrow(url: String?): ExoPlayer? {
         assertMainThread()
         if (url.isNullOrBlank()) return null
-        // ⚠️ 整条借出链都要兜住异常：本方法跑在 Compose 的组合路径上，
-        // 抛出去就是整页崩。除了 cache（已在 dataSourceFactory 里降级），
+        // ⚠️ 整条借出链都要兜住可恢复异常：视频层直接调用本方法，
+        // 抛出去会让整页失效。cache 初始化失败已由后台状态机降级，
         // ExoPlayer 构造本身也可能失败（设备解码器耗尽、厂商 ROM 差异），
         // 而播视频是**可选增强** —— 失败时降级封面图，不是让大屏页不可用
         // ⚠️ `catch (Exception)` 而**不是** `runCatching` —— 后者会连
@@ -234,7 +235,7 @@ class ScreenPlayerPool(
          * | `cacheSizeMB` | 50 | 磁盘缓存，**不在 LoadControl**（见下） |
          *
          * ⚠️ `cacheSizeMB: 50` 是**磁盘缓存**，不属 LoadControl —— 它由
-         * [cacheDataSourceFactory] 实现（`SimpleCache` 单例 + `CacheDataSource`）。
+         * [dataSourceFactory] 实现（`SimpleCache` 单例 + `CacheDataSource`）。
          *
          * ⚠️ 早前这里写「本刀不实现它，因为壳与 RN 共享 OkHttpClient、
          * 两边各配磁盘缓存会打架」—— **那个理由是错的，已推翻**：RN video 走
@@ -277,9 +278,10 @@ class ScreenPlayerPool(
             .build()
 
         /**
-         * 容量分档 —— 对齐 iOS 的 `≥6GB→5 / ≥4GB→4 / else 3`。
+         * 容量分档 —— 保留 iOS 的 3/4/5 档位范围，但 Android 阈值是
+         * `largeMemoryClass ≥512MB→5 / ≥256MB→4 / else 3`。
          *
-         * ⚠️ **用 [ActivityManager.getMemoryClass] 而不是设备物理内存**：
+         * ⚠️ **用 `largeMemoryClass`（无效时回落 `memoryClass`）而不是设备物理内存**：
          * Android 上真正的上界是**本进程的堆上限**，不是设备装了多少内存。
          * 一台 8GB 的低端机 memoryClass 可能只有 128MB，照物理内存开 5 个播放器
          * 就是照着 OOM 走。这是 iOS 那条判据在 Android 上的**必要偏离**
@@ -416,15 +418,15 @@ class ScreenPlayerPool(
         /**
          * DataSource 工厂。
          *
-         * ⚠️ **缓存是可选能力，不得击穿页面**：`SimpleCache` 与
-         * `StandaloneDatabaseProvider` 的**构造期**就可能抛（目录被另一个实例锁住、
-         * 索引损坏、磁盘满、DB 初始化失败），而这条调用栈来自 Compose 的
-         * borrow —— 抛出去就是整页崩。
+         * ⚠️ **缓存是可选能力，不得击穿页面**：本工厂每次
+         * `createDataSource()` 才读取 [cacheOrNull]。首次调用只触发后台状态机；
+         * READY 前以及 FAILED 后都直接走
+         * [androidx.media3.datasource.DefaultDataSource.Factory]，不在主线程等待目录扫描。
+         * `SimpleCache` / database provider 的构造与校验异常由 [openCacheBlocking]
+         * 的 `catch (Exception)` 收口，而不是从 Compose borrow 栈同步抛出。
          *
-         * `FLAG_IGNORE_CACHE_ON_ERROR` **只覆盖 DataSource 的读写阶段，
-         * 不覆盖构造阶段**，所以必须在这里 `runCatching` 后降级成不带 cache 的
-         * [androidx.media3.datasource.DefaultDataSource.Factory]。
-         * 降级的代价只是「不省流量」，比崩页面好得多。
+         * `FLAG_IGNORE_CACHE_ON_ERROR` 只负责 READY 之后的 DataSource 读写错误；
+         * 它不替代上面的初始化降级。两条路径的代价都只是「不省流量」。
          */
         @UnstableApi
         internal fun dataSourceFactory(
