@@ -1,6 +1,7 @@
 package ai.lightspeed.tipsy.shell
 
 import ai.lightspeed.tipsy.shell.auth.Generations
+import ai.lightspeed.tipsy.shell.i18n.AccountLanguageMirrorLike
 import ai.lightspeed.tipsy.shell.pages.settings.SettingsSource
 import ai.lightspeed.tipsy.shell.pages.settings.SettingsViewModel
 import ai.lightspeed.tipsy.shell.pages.settings.SupportedLanguage
@@ -182,6 +183,101 @@ class SettingsViewModelTest {
         assertEquals(SettingsViewModel.SAVE_FAILED_KEY, vm.state.value.languageError)
     }
 
+    // ── 共享信封镜像（§2.37 的 FAIL 项）─────────────
+
+    @Test
+    fun `Done 会把语言回写共享信封`() = runTest {
+        // 不回写的后果：开一次 RN Surface 再返回，refreshAccountLanguage()
+        // 从信封读到旧值把语言覆盖回英文 —— 正是 §2.37 抓到的缺陷
+        val api = FakeApi(languages = listOf(lang("en", "English"), lang("ja", "日本語")))
+        val mirror = FakeMirror()
+        val vm = viewModel(api, current = { "en" }, mirror = mirror)
+        vm.onLanguagePageAppear()
+        advanceUntilIdle()
+        vm.onLanguageSelect("ja")
+        vm.onLanguageDone()
+        advanceUntilIdle()
+
+        assertEquals(listOf("ja"), mirror.written)
+    }
+
+    @Test
+    fun `镜像跟着本地切而不是等接口成功`() = runTest {
+        // 与 RN 的刻意差异：壳在每次 Surface 出栈时读信封覆盖当前语言，
+        // 所以「本地切了但没镜像」的窗口里语言就会退回去。
+        // 既然本地语言失败也不回滚，镜像必须与它同步落地
+        val gate = CompletableDeferred<Unit>()
+        val api = FakeApi(languages = listOf(lang("en", "English"), lang("ja", "日本語")))
+        api.setLanguageGate = gate
+        val mirror = FakeMirror()
+        val vm = viewModel(api, current = { "en" }, mirror = mirror)
+        vm.onLanguagePageAppear()
+        advanceUntilIdle()
+        vm.onLanguageSelect("ja")
+        vm.onLanguageDone()
+        advanceUntilIdle()
+
+        // gate 未放行 → 接口仍挂在 await 里（FakeApi 在 await **之前**就记了
+        // setLanguageCalls，所以这里不能用「调用列表为空」判定 —— 那测的是
+        // fake 的记账顺序，不是行为）。镜像此刻必须已经写了
+        assertFalse("gate 未放行，接口不该已返回", gate.isCompleted)
+        assertEquals("镜像必须先于接口返回落地", listOf("ja"), mirror.written)
+
+        gate.complete(Unit)
+        advanceUntilIdle()
+        // 接口完成后镜像不重复写
+        assertEquals(listOf("ja"), mirror.written)
+    }
+
+    @Test
+    fun `保存失败也保留镜像 与本地语言一致`() = runTest {
+        // 本地语言失败不回滚（见上面那条测试），镜像跟着它 ——
+        // 若这里把镜像撤回，下次 Surface 出栈语言又会退回去
+        val api = FakeApi(
+            languages = listOf(lang("en", "English"), lang("ja", "日本語")),
+            failSetLanguage = true,
+        )
+        val mirror = FakeMirror()
+        val vm = viewModel(api, current = { "en" }, mirror = mirror)
+        vm.onLanguagePageAppear()
+        advanceUntilIdle()
+        vm.onLanguageSelect("ja")
+        vm.onLanguageDone()
+        advanceUntilIdle()
+
+        assertEquals("ja", vm.state.value.selectedLanguage)
+        assertEquals(listOf("ja"), mirror.written)
+    }
+
+    @Test
+    fun `镜像写入失败不回滚 UI 语言`() = runTest {
+        // MMKV 不可用时宁可丢一次持久化，也不要让用户看到「选了又跳回去」
+        // （同 HomeFilterStore.writeGender 的约定）
+        val api = FakeApi(languages = listOf(lang("en", "English"), lang("ja", "日本語")))
+        val vm = viewModel(api, current = { "en" }, mirror = FakeMirror(succeeds = false))
+        vm.onLanguagePageAppear()
+        advanceUntilIdle()
+        vm.onLanguageSelect("ja")
+
+        assertTrue(vm.onLanguageDone())
+        advanceUntilIdle()
+        assertEquals("ja", vm.state.value.selectedLanguage)
+        assertEquals(listOf("ja"), api.appliedLanguages)
+    }
+
+    @Test
+    fun `Done 不可点时不写镜像`() = runTest {
+        val api = FakeApi(languages = listOf(lang("en", "English")))
+        val mirror = FakeMirror()
+        val vm = viewModel(api, current = { "en" }, mirror = mirror)
+        vm.onLanguagePageAppear()
+        advanceUntilIdle()
+
+        assertFalse(vm.onLanguageDone())
+        advanceUntilIdle()
+        assertTrue(mirror.written.isEmpty())
+    }
+
     @Test
     fun `错误提示弹过后可清掉`() = runTest {
         val api = FakeApi(
@@ -350,14 +446,28 @@ class SettingsViewModelTest {
         api: FakeApi,
         current: () -> String = { "en" },
         generations: Generations = Generations(),
+        mirror: FakeMirror = FakeMirror(),
     ) = SettingsViewModel(
         api = api,
         applyLanguage = { api.appliedLanguages += it },
         currentLanguage = current,
+        languageMirror = mirror,
         generations = generations,
         scope = this,
         logWarn = { _, _ -> },
     )
+
+    /** 记录回写共享信封的调用（真实实现要 MMKV + Expo runtime，JVM 里都没有）。 */
+    private class FakeMirror(
+        /** 模拟 MMKV 不可用。 */
+        private val succeeds: Boolean = true,
+    ) : AccountLanguageMirrorLike {
+        val written = mutableListOf<String>()
+        override fun writeLanguage(languageCode: String): Boolean {
+            written += languageCode
+            return succeeds
+        }
+    }
 
     private class FakeApi(
         private val languages: List<SupportedLanguage>? = null,

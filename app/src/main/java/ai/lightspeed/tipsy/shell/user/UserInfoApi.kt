@@ -25,14 +25,16 @@ import ai.lightspeed.tipsy.shell.network.AuthMode
  *
  * ## 为什么不碰 `language_code`
  *
- * 响应里有 `language_code`，但语言真值链是
- * `/user/set_language` → RN `updateUserInfo()` → `user-storage` 本地镜像，
- * 而壳**只读** `user-storage`（`AccountLanguageReader` 的既定边界：
- * 「语言设置页刻意不迁移，壳不需要写这条链」）。
+ * 响应里有 `language_code`，但语言的写入链已经收口在别处：原生语言页
+ * → `L10n.setLanguage` + `AccountLanguageMirror`（§2.37）。
  *
  * 在这里跟着切语言会引入第二个 writer，与 §3 记的「i18n：壳是唯一 writer」冲突，
  * 且两阶段 i18n 下时序难以推理（iOS 踩过「二启永远无种子」的同类问题）。
- * 语言真变了由 `onLanguageSettled` 自愈。
+ *
+ * ⚠️ 原注释在这里写「壳**只读** `user-storage`」作为理由 —— 那半句已过时
+ * （语言页原生化后壳要写该信封，见 `AccountLanguageWriter`）。
+ * **但本类不碰语言的结论不变**，理由是上面那条「不要第二个 writer」，
+ * 不是「壳不写这个 key」。
  */
 class UserInfoApi(private val apiClient: ApiClient) : UserInfoSource {
 

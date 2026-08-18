@@ -3,6 +3,7 @@ package ai.lightspeed.tipsy.shell.pages.settings
 import ai.lightspeed.tipsy.shell.R
 import ai.lightspeed.tipsy.shell.TipsyApplication
 import ai.lightspeed.tipsy.shell.auth.AuthStateHub
+import ai.lightspeed.tipsy.shell.i18n.AccountLanguageMirror
 import ai.lightspeed.tipsy.shell.i18n.L10n
 import ai.lightspeed.tipsy.shell.pages.home.HomeFilterStore
 import ai.lightspeed.tipsy.shell.router.AppRoute
@@ -220,6 +221,11 @@ class SettingsFragment : Fragment() {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T = SettingsViewModel(
                     api = SettingsApi(app.apiClient),
+                    // 语言镜像：不接它语言会被静默倒灌回英文（§2.37）
+                    languageMirror = AccountLanguageMirror(
+                        store = app.sharedMmkvStore,
+                        currentUserId = { app.tokenStore.currentUserId() },
+                    ),
                     generations = app.generations,
                 ) as T
             }
