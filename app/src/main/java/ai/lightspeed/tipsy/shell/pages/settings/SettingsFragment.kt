@@ -15,6 +15,7 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -32,6 +33,8 @@ import androidx.fragment.app.viewModels
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
@@ -107,6 +110,35 @@ class SettingsFragment : Fragment() {
         // 这里只要一个显示初值；读不到按 false（最保守，见 HomeFilterStore）
         val app = requireActivity().application as TipsyApplication
         viewModel.onAppear(nsfwEnabled = HomeFilterStore(app.sharedMmkvStore).readNsfw())
+    }
+
+    /**
+     * Limitless 开关写失败时弹 Toast。
+     *
+     * ⚠️ **必须有**：`onNsfwToggle` 失败是「自动回滚」（只有接口成功才改本地值），
+     * 没有提示的话表现为**开关点了自己弹回去**，和「没点到」完全无法区分 ——
+     * `/user/nsfw` 路径少了 `/update` 那个 404 就是这么藏了一整轮的。
+     *
+     * ⚠️ 挂 `onViewCreated` 而不是 `onStart`：后者每次前后台切换都会再注册一个
+     * 收集器，同一个错误会被弹成好几遍。这里一个 view 生命周期内只注册一次，
+     * 常驻收集（不是 `first()`）—— 弹完就 `onLanguageErrorShown()` 清掉标志，
+     * 所以不会重弹，且第二次失败仍然能弹。
+     */
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.state
+                .map { it.languageError }
+                .filterNotNull()
+                .collect { key ->
+                    Toast.makeText(
+                        requireContext().applicationContext,
+                        L10n.t(key),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    viewModel.onLanguageErrorShown()
+                }
+        }
     }
 
     override fun onDestroyView() {

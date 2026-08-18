@@ -1,6 +1,6 @@
 # Tipsy Android 原生化迁移：现状（唯一状态真值）
 
-> 更新：2026-08-17 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
+> 更新：2026-08-18 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
 > **G1 CI 已激活且在 main 上真绿**（§2.10 / §2.22）
 >
 > **W1 基本收尾**（细化方案见 [`../architecture/android-w1-plan.md`](../architecture/android-w1-plan.md)）：
@@ -10,7 +10,8 @@
 > ｜ **P6 network closeout 已实现且 CI 已验**（§2.14 / §2.22）
 > ｜ **§12 Fragment 机制已落地、真实实例关闭链待收口**（§2.15）
 > ｜ **P7 Qt / P8 Sentry 已决定推迟到业务迁移后**（2026-08-11，见 §2.17）
-> ｜ **P9 已完成**（§2.36）；**冒烟 6 过 / 1 FAIL / 3 未跑**（§2.37，语言那项 FAIL 是壳缺陷非 ChatDetail）
+> ｜ **P9 已完成**（§2.36）；**冒烟 7 过 / 3 未跑**（§2.37 + §2.39，语言那项
+> 壳缺陷已修并**复跑 PASS（模拟器）**；旋转/进程恢复仍未跑）
 > ｜ **原生登录页：邮箱验证码链路真机已验**（§2.20）—— Google/Apple 受 §12.8 签名指纹阻塞未接
 >
 > **W2 进行中**：五 Tab shell + Home 首屏（§2.23，主链路真机已验）+ 标签筛选抽屉
@@ -32,9 +33,13 @@
 > 白名单，**四个原生列表页的卡片点击第一次有下一屏**；顺带查出三个过期桥桩
 > （`requestLogin` / `openUserProfile` 系，debug 会抛）与「`openSurface`
 > 从来没传业务参数」两个真实缺陷。§12 实例关闭链按 owner 决定记为**已接受偏差**。
+> **语言倒灌已修 + 共享 MMKV 键读写方向已系统扫过**（§2.38，2026-08-18）：
+> 零 RN 改动、零 submodule bump（跨仓契约本就齐全，只是壳没调）。
+> ✅ **§9.1「语言切换」已复跑 PASS（模拟器）**（§2.39，2026-08-18）；同轮查出
+> **分级开关 `POST /user/nsfw` 少了 `/update` 导致 404**（已修 + 补契约测试）。
 > ⚠️ owner 2026-08-14 决定**真机冒烟统一推迟到功能完成后**，
-> 故待验清单只累积不清空（当前四刀）；但 owner 2026-08-17 追加决定
-> **P9 与 Screen P2（Media3）各插一次冒烟** —— 这两刀的失败模式
+> 故待验清单只累积不清空（当前四刀 + §2.38 的语言复跑）；但 owner 2026-08-17
+> 追加决定 **P9 与 Screen P2（Media3）各插一次冒烟** —— 这两刀的失败模式
 > （Surface 泄漏、OOM）只能真机暴露，单测与 mock 都抓不到。
 > 配套决策方案：[android-native-migration-plan.md](../architecture/android-native-migration-plan.md)
 > **本文是状态权威。** 方案文档只写决策不写状态；任何「进度/是否已实现」的问题一律以本文为准。
@@ -47,7 +52,9 @@
 - **已验证**：main 上 PR #25 的 G1 Fast Gate 全绿。W3 Search P1 提交前快照的本机证据：`lintDirectApkDebug` 无新增（baseline 5 条）、`assembleGooglePlayDebug`/`assembleDirectApkDebug` 通过、**DirectApk app 单测 695 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿；directApk 真机主链路冒烟 PASS（§2.31）。提交前审查再新增 13 条、扩展 2 条回归测试并修正并发/auth/Router/点击归因/分页去重行为，最终源码预计 708 条；**最终 head 未在本机重跑 Gradle，交 G1 验证**。
 - **他人主页已实现**（§2.32，2026-08-14）：6 文件 1,469 行，`AppRoute.UserProfile` 进白名单 —— **搜索 → 创作者 → 他人主页是壳的第一条端到端可用路径**。审计推翻了「复用自己视角」的前提（七处偏差）：只有 **1 个 tab**（RN 注释说两个，代码是一个）、数据源另有四条、`size` **200 且不翻页**、`/user/get/public` 走 `axiosAuth` 会对游客弹登录页、`/plot/list/creator` **现网从未被调用**、关注按钮在 `ProfileHeader.tsx` 而非 `user-profile.tsx`。真机冒烟 **NOT RUN**。
 - **Settings 列表 + 语言页已实现**（§2.33，8 文件 1,501 行）：补上了真实功能缺失 —— 此前**壳内没有任何入口能改语言**。审计订正三处：语言页**要原生实现**（RN 与 iOS 双证据）、`supportedLanguages` 壳内**恒为空**必须自己拉、Limitless 开关是 `nsfw` 的**唯一写方**且仅 directApk 可见。渠道 gating 收在 `SettingsRow` 并对三渠道各有单测。7 个 Surface 子屏（`AppRoute.SettingsSubScreen`）仍被明确拒绝。真机冒烟 **NOT RUN**。
-- **P9 冒烟部分兑现**（§2.37，2026-08-17）：§9.1 十项里 **6 项 PASS**（未登录/登录切换/Back 栈底/首帧/Embedded/50 次泄漏 —— 无泄漏、容器实例恒为 1、PSS +3.7%）、**语言切换 FAIL**（壳缺陷倒灌，非 ChatDetail 问题，见 §5）、旋转恢复 NOT RUN。⚠️ 跑在**模拟器**上，§2.5 已定不作覆盖升级证据。同时查出 **autolinking exclude 从 W0 起一直静默失效**（PR #34）—— 此前所有构建都带着 dev-launcher 在跑。
+- **P9 冒烟部分兑现**（§2.37，2026-08-17）：§9.1 十项里 **6 项 PASS**（未登录/登录切换/Back 栈底/首帧/Embedded/50 次泄漏 —— 无泄漏、容器实例恒为 1、PSS +3.7%）、**语言切换**当轮 FAIL（壳缺陷倒灌，非 ChatDetail 问题；已修并于 §2.39 复跑 **PASS**）、旋转恢复 NOT RUN。⚠️ 跑在**模拟器**上，§2.5 已定不作覆盖升级证据。同时查出 **autolinking exclude 从 W0 起一直静默失效**（PR #34）—— 此前所有构建都带着 dev-launcher 在跑。
+- **语言倒灌已修 + 共享键系统扫描**（§2.38，2026-08-18）：owner 选路 1 —— 语言页确认时回写 `user-storage` 信封（`AccountLanguageWriter` merge + `notifyUserStoreChanged`）。**跨仓契约是现成的**：RN 侧监听、桥方法、iOS 实现三者都在，只是 Android 壳从没调过 → **零 RN 改动、零 submodule bump**。前置顾虑核实排除（该 key 无 `version`/`migrate`，⚠️ 但性别筛选那个 key 有自定义 `merge`，结论**不可外推**）。9 个共享键的读写方向已全扫，表落在 `LegacyMmkvStore` 类注释。app 单测 **907 条** skipped=0，三组测试均做过反向验证。✅ **§9.1 语言那列已复跑 PASS（模拟器，非真机）**（§2.39）。
+- **语言复跑 PASS + 分级开关 404**（§2.39，2026-08-18）：语言那列 FAIL → **PASS**（`initialProps.context.languageCode` 实测 `zh-tw`，往返 5 次稳定）。同轮查出**`POST /user/nsfw` 少了 `/update` → 404**：因 `onNsfwToggle` 是刻意的非乐观更新（失败自动回滚），404 表现为「开关点了自己弹回去」，与「没点到」无法区分；fake-API 单测验不到真实路径，已补 `SettingsApiContractTest`（MockWebServer 真往返，已反向验证）。顺带修 `SettingsFragment` 从不观察 `languageError` 导致的**零提示**（收集器挂 `onViewCreated`，不是 `onStart`）。⚠️ 读共享 MMKV 必须先解析头部 `actualSize` —— 追加写会让 `tail` 读到上一代残留，方向正好相反。
 - **✅ 卡片点击已解锁**（§2.36，2026-08-17）：`ChatDetail` / `MiniPhoneChat` 进白名单，Home/ChatList/Search/Screen 四个页面的卡片点击**第一次有下一屏**。⚠️ 仍点不动的是 **Profile 的五个出口**（`EditProfileSurface` / `GemsSubscriptionSurface` / `UserCoinsSurface` / `RoleCardSurface` / Follow）与 Settings 的 7 个子屏 —— 那些 Surface 未过 §9.1。§12 实例关闭链**记为已接受偏差**（单层容器弹不错；根治要改 RN 侧 9 个调用点 + 双壳回归）。
 - **Screen P1 已实现**（§2.35，10 文件 2,131 行）：**Screen Tab 从占位换成真实页面，五个 Tab 全部落地**。AB 端点分流（游客/未登录恒 distribution）、归因、首屏缓存、会话埋点双轴、静态图/GIF 两形态。⚠️ **不播视频**：Media3 与有界播放器池属 P2，故 OOM 风险为零。两份 RN fixture 在提交前抓到我两个设计缺陷（归因 position 用原始下标、首屏缓存要在发请求前读）。
 - **Search P2 筛选器已实现**（§2.34，4 文件 723 行）：性别/排序/分级抽屉 + 二级标签栏，Search 达成完整对等。`SearchTagOrderTest` **逐条对拍 RN 的 144 行现成单测**。⚠️ 分级筛选的门是「非 GooglePlay && nsfw 开」，与 Settings 的 Limitless（只有 directApk）**不同轴** —— RuStore 在这里算可选。
@@ -58,7 +65,7 @@
 | 波次 | 内容 | 业务量 | 状态 | source_rn_sha | target_android_sha |
 | --- | --- | --- | --- | --- | --- |
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
-| W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟢 **完成**：契约层已收口且 CI 已验；**P9 已完成**（§2.36，白名单放开 + 桥桩回填）；§12 关闭链记为**已接受偏差**（owner 2026-08-17）。**冒烟部分兑现**（§2.37）：§9.1 6 过 / 1 FAIL / 3 未跑，业务分流项未验 | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17/#33 已并） |
+| W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟢 **完成**：契约层已收口且 CI 已验；**P9 已完成**（§2.36，白名单放开 + 桥桩回填）；§12 关闭链记为**已接受偏差**（owner 2026-08-17）。**冒烟部分兑现**（§2.37 + §2.39）：§9.1 **7 过 / 3 未跑**，业务分流项未验。语言那项的壳缺陷已修（§2.38）且**复跑 PASS（模拟器）**（§2.39） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17/#33 已并） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
 | W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1–P4、P6，§2.25–§2.29，真机验证）；ChatList P1 Grid 主链路已并（§2.30，模拟器冒烟 PASS）；**Search P1 主链路已实现**（§2.31，directApk 真机冒烟 PASS）；**他人主页已实现**（§2.32，第一条端到端可用路径）；**Settings 列表 + 语言页已实现**（§2.33）；**Search P2 筛选器已实现**（§2.34，Search 完整对等）；剩 Profile P5 ⋮ 菜单/P7 头像框、ChatList P2 Map | `a6b9fc56a88d97444fe5f1ce952068bb9222be82` | —（PR #21–#30 已并；Search P2 在 `feat/android-w3-search-p2`） |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | 🟡 **起步**：Screen **P1 已实现**（§2.35，数据层 + 翻页 + 埋点，**不含 Media3**）；剩 Screen P2（Media3 + 有界播放器池 + buffer 三件套，**OOM 首要风险**）与 P3 二期项、12 个 Surface、系统能力、OTA | `a6b9fc56a88d97444fe5f1ce952068bb9222be82` | —（Screen P1 在 `feat/android-w4-screen-p1`） |
@@ -2635,7 +2642,7 @@ ChatList 点击的 `recommendTracking` 透传。
 - lint 无新增（baseline 仍 5 条）；googlePlay + directApk assemble 通过
 - **未动** manifest / RN 依赖 / flavor / submodule（pin 仍 `a6b9fc56a`）
 - **真机冒烟已部分兑现，见 §2.37**（本节写的是 P9 实现当时的状态）。
-  §9.1 十项 6 过 / 1 FAIL / 3 未跑；下列 ①–⑥ 的业务分流项**仍未跑**
+  §9.1 十项 **7 过 / 3 未跑**（语言那列 §2.39 已复跑）；下列 ①–⑥ 的业务分流项**仍未跑**
   （本轮只走了 Home 入口，未验 html 富文本 / 多角色 / story / mini phone
   / 点头像进他人主页）。原始待跑清单：①四个入口各进一次聊天
   （Home/ChatList/Search/Screen 卡片点击）②html 富文本角色落
@@ -2665,7 +2672,7 @@ Pixel_10 模拟器 / API 36 / directApk debug / Metro 8083。
 | 首帧 | 🟢 PASS | 挂载即渲染，无白屏 |
 | Embedded（单层容器） | 🟢 PASS | `RNSurfaceFragment` 唯一实例，HomeFragment 在其下未销毁 |
 | 50 次泄漏 | 🟢 PASS | 见下表 |
-| **语言切换** | 🔴 **FAIL** | **壳缺陷，非 ChatDetail 问题** —— 见 §5 |
+| **语言切换** | 🟢 **PASS**（模拟器） | 壳缺陷已修（§2.38）并复跑（§2.39）：往返 5 次语言稳定，`context.languageCode` 实测 `zh-tw`。⚠️ 模拟器，非真机 |
 | 旋转 / 进程恢复 | ⬜ NOT RUN | 模拟器中途退出 |
 | OTA N/N-1 | — | 属 W4 |
 
@@ -2741,6 +2748,200 @@ patch-package 补丁（tipsy-app `da4f65a`），让 Android 与之对齐。
   反复试了七八次才发现。另：app 被系统标 cached 时（`caps=---------`、
   `curProcState=19`）UI 仍渲染但输入不被处理，`force-stop` 重启即恢复。
 
+### 2.38 语言回退修复 + 共享 MMKV 键读写方向系统扫描（2026-08-18）
+
+修掉 §2.37 抓到的语言倒灌（§9.1 唯一的 FAIL 项），并按 §5 那条建议
+**把所有共享键的读写方向系统扫了一遍** —— 不是逐个碰到再修。
+
+owner 2026-08-18 在三条路里选**路 1**：语言页确认时一并回写 `user-storage` 信封。
+
+#### 前置顾虑已核实排除（这是路 1 能落地的原因）
+
+原记录写「须先核实 RN 的 `version` / `merge` 配置，与性别筛选同一顾虑」。
+核实结果：`user-storage` 的 persist 配置**只有 `name` + `storage`**
+（`store/user.ts:286-289`）—— 无 `version`、无 `migrate`、无 `partialize`、
+无 `merge`。对照 zustand 源码（`zustand@5` `middleware.js`）：
+
+- 默认 `version: 0`（`:333`）→ 壳写 `version: 0` 与之一致
+- migrate 分支要求 `version` 不等**且**配了 `migrate`（`:389`）→ **永不触发**
+- 默认 merge 是浅展开 `{...currentState, ...persistedState}`（`:334-337`）
+  → 可以造只含一个字段的最小信封，缺的字段回落 store 默认值
+
+⚠️ **这个结论只对 `user-storage` 成立，不要套到性别筛选那个 key** ——
+`config-persist-storage` 有自定义 `merge`，差异见 §5 那条的对照表。
+
+#### 跨仓契约是现成的（本刀零 RN 改动、零 submodule bump）
+
+查出三件此前没接上的事实：
+
+1. `index.surfaces.js:73-76` **已有 `onUserStoreChanged` 监听**，注释写明
+   「壳每次 merge `user-storage`（restore/refresh/login）后通知长驻 JS runtime 重读」
+2. 桥方法 `TipsyAuthRegistry.notifyUserStoreChanged` **两端都在**，KDoc 甚至
+   写了「壳写 Zustand persist 信封必须 merge」—— **只是 Android 壳从没调过**
+3. iOS 侧早有对应实现：`AuthSession.syncUserToSharedStore` →
+   `SharedMMKV.mergePersistState`，且**信封缺失时造新的**（默认值
+   `["state": [:], "version": 0]`）
+
+所以这条链是照 iOS 补齐，不是新设计。**`tipsy-app` 零改动，pin 仍 `da4f65a`。**
+
+#### 落地
+
+新增 2 文件：`i18n/AccountLanguageWriter.kt`（纯函数 merge，可单测）+
+`i18n/AccountLanguageMirror.kt`（写 MMKV → 发 `onUserStoreChanged` 的接缝）。
+`SettingsViewModel` 注入 `languageMirror`，在 `:157` **紧跟本地切**回写。
+
+⚠️ **镜像跟着本地切、不跟着接口结果** —— 与 RN 的一处刻意差异，已写进代码注释：
+RN 的镜像是 `updateUserInfo()` 的副产物（接口失败就不镜像），而它的 i18next
+活在同一 runtime 内存里，陈旧信封要到下次冷启动才有影响；壳不同 ——
+`refreshAccountLanguage()` 在**每次 Surface 容器出栈**时读信封覆盖当前语言
+（`MainActivity.kt:102` → `TipsyApplication.kt:259`），所以「本地切了但没镜像」
+的窗口里语言就退回去了。既然本地语言**失败也不回滚**，镜像必须与它同步落地。
+
+⚠️ **两个字段以外一律不写**：只 put `languageCode`（RN 侧唯一写方是
+`updateUserInfo()` 的 `user.language_code || null`，`store/user.ts:187`）。
+信封里 `nsfw` 那类字段各有所有权，顺手写会破坏单向镜像流。
+
+#### 顺带订正三处过期注释（前提变了，结论跟着变）
+
+`AccountLanguageReader` / `UserInfoApi` 都写着「壳**只读** `user-storage`」，
+理由是「语言设置页刻意不迁移，留在 `SettingsSurface` 里」。
+**该前提在 §2.33 语言页原生化之后已不成立** —— 现在壳是语言唯一写入者，
+信封镜像也必须由壳维护。三处都已改并写明「不是当初记错，是前提变了」。
+
+（`UserInfoApi` **不碰语言的结论不变**，但理由换成「不要第二个 writer」，
+不再是「壳不写这个 key」。）
+
+#### 共享键读写方向扫描结果
+
+结论表落在 **`LegacyMmkvStore` 类注释**（代码里，随读写点一起改，不放本文
+避免两处漂移）。9 个 key/字段全扫，方向不成对的只有已知那两例：
+**语言（本刀已修）** 与 **性别筛选（仍待 owner，§5）**。其余方向正确：
+`nsfw` 刻意无 `writeNsfw`、`chat_draft_lru` 只读、`multi-cinema-conv-epoch`
+只写、`chat-persist-storage` 系两不碰。
+
+#### 验证
+
+- app 单测 **907 条**（+13：`AccountLanguageWriterTest` 10 +
+  `SettingsViewModelTest` 5 新增／1 修正），failures=0、**skipped=0**
+  （⚠️ skipped=0 需先 assemble —— `MergedManifestTest` 那 3 条断言的是
+  merged manifest 产物，无产物会 `assumeTrue` 跳过，而**跳过在 JUnit 里算通过**）
+- **三组测试都做过反向验证**（不是「写了就绿」）：注掉
+  `languageMirror.writeLanguage` → 3 条红；把「信封缺失时造新的」改回
+  `return null` → 3 条红；把 merge 改成整体覆盖 → 2 条红（正是「静默清掉
+  二十多个兄弟字段」那条）
+- `:tipsy-auth:testDebugUnitTest` 15 条全绿、skipped=0
+- `lintDirectApkDebug` **无新增**（baseline 仍 5 条）
+- `assembleGooglePlayDebug` + `assembleDirectApkDebug` +
+  `processGooglePlayReleaseMainManifest` 均通过
+- **未动** manifest / RN 依赖 / flavor / submodule（pin 仍 `da4f65a`）→
+  无需复查 release manifest diff
+- ~~**冒烟 NOT RUN**~~ ✅ **已复跑 PASS**（§2.39，2026-08-18，⚠️ 模拟器）：
+  语言页选繁中 → 开 `ChatDetailSurface` → 返回 → 语言仍是繁中，且 Surface 收到的
+  `context.languageCode` 实测 `zh-tw`（此前 `en`）。单测证据确实不能替代这一条 ——
+  同轮还查出了单测完全看不见的 `/user/nsfw` 404（§2.39）。
+  ⚠️ **但这是模拟器**（`emulator-5554` / `ro.kernel.qemu=1`）—— §2.5 已定模拟器
+  不作覆盖升级证据，真机复跑仍在待验清单里
+
+#### 顺带补一条环境记录（不是代码问题）
+
+本机 `tipsy-app/node_modules` 缺失 + 仓库根缺 `node_modules` 软链，
+两者都表现为 §2.2.2 那句无用报错 `Process 'command 'node'' finished with
+non-zero exit value 1`。软链是 ADR-004 要求的（`.gitignore` 已写明「由开发者/CI
+各自创建，不入库」）。⚠️ **第六处**「RN 假设 Gradle root = `<rn-project>/android`」：
+`ExpoAutolinkingSettingsPlugin.getExpoGradlePluginsFile` 硬编码
+`workingDir(settings.rootDir)` 且无覆盖入口 —— 这正是那条软链存在的原因，
+§2.2.2 的五处之外再加一处。排查方法仍是「在报错任务的 workingDir 手工复现
+那条 node 命令」，本轮两次都是这样定位的。
+
+### 2.39 语言复跑 PASS + 分级开关 404（2026-08-18）
+
+#### 语言那列：FAIL → PASS
+
+§2.38 只有单测证据，本轮冒烟复跑补齐（⚠️ **模拟器** `sdk_gphone16k_arm64`，
+非真机 —— §2.5 已定模拟器不作覆盖升级证据）：切 繁中 → 开 `ChatDetailSurface` →
+Back，**语言不再回落英文**，再连跑 4 次往返稳定；反向（繁中 → English）同样生效。
+直接证据是 Surface 的入参 —— `initialProps.context.languageCode` 实测 `zh-tw`
+（§2.37 时是 `en`），JS 侧同步打出 `align i18n to shell language: 'zh-tw'`。
+顺带确认 `preload` 的嵌套数字字段（`contentType:1`/`characterType:1`）
+按 §2.36 的要求以**数字**而非字符串到达。
+
+⚠️ **读共享 MMKV 必须先解析头部 `actualSize`**：文件预分配 512KB 且**追加写**，
+`strings | grep | tail` 会读到**上一代的残留记录**，方向正好相反。
+本轮第一次就被误导（末尾是 `en`，看着像没修好），按 `actualSize` 过滤后
+最后一条活记录才是 `zh-tw`。同理别用 4000 字节窗口做「就近匹配」——
+要按 `{}` 配平取出整条信封再 `json.loads`。
+
+#### 🔴 分级开关（Limitless）路径 404 —— 已修
+
+`POST /user/nsfw` **少了 `/update`**：真值是 `/user/nsfw/update`
+（`apis/user.ts:133` `updateUserNsfw`）。表现极具欺骗性 ——
+`onNsfwToggle` 是**刻意的非乐观更新**（接口成功才改本地值，§2.33），
+失败自动回滚，于是 404 表现为「**开关点了自己弹回去**」，
+与「没点到」完全无法区分。日志里只有一行 `写 /user/nsfw 失败`，
+`-v long` 才看得到 `ApiException$Http: HTTP 404`。
+
+**为什么单测全过却没拦住**：`SettingsViewModelTest` 用的是 fake API，
+验不到真实路径。已补 `SettingsApiContractTest` —— MockWebServer 真往返，
+断言 path == `/api/v1/user/nsfw/update` 且 body 只含 `nsfw` 一个字段
+（同 `HomeApiContractTest` 的理由）。已反向验证：改回旧路径该测试立刻失败。
+
+**顺带修一处静默失败**：`onNsfwToggle` 失败写的是 `languageError`，
+但订阅那个字段弹 Toast 的代码**只在 `LanguageFragment` 里**，
+`SettingsFragment` 从不观察 → 写失败**零提示**。已在 `SettingsFragment`
+补常驻收集器。⚠️ 挂 `onViewCreated` 而非 `onStart` —— 后者每次前后台切换
+都会再注册一个收集器，同一个错误会被弹好几遍。**已实测**：先做 3 次前后台切换
+（若挂 `onStart` 会堆出 4 个收集器）再断网点开关 → 失败日志 1 条、
+`VRI-Toast` **恰好 1 次**、开关保持原值；恢复网络后翻转成功、零失败。
+
+⚠️ **`svc wifi disable` 不等于断网**：模拟器的 CELLULAR 走 eth0 且仍
+`VALIDATED`，只关 WiFi 时请求照样成功，看着像「修复没生效」。要 `svc data disable`
+一起关，以 `dumpsys connectivity | grep 'Active default network'` 出现 `none` 为准。
+
+⚠️ **改完必须重装再验**：本轮曾在 `compileKotlin` + 单测通过后就去点真机，
+而设备上跑的仍是改动前的 APK（`dumpsys package | grep lastUpdateTime` 早于改动
+时间），于是「Toast 不弹」被误当成代码问题排查了一轮。
+
+#### 冒烟操作纪律：坐标必须每次现取
+
+§2.37 记的「硬编码坐标看起来像功能坏了」本轮又踩了三次，成因各不相同，
+值得记清楚：
+
+1. **同一控件的 y 会变**：设置页语言行在两次进入时分别是 y≈200 和 y≈350。
+2. **控件被状态栏吞掉点击**：Profile 齿轮某次 bounds 为 `[943,0][1069,116]`，
+   而 `mDisplayCutout` 顶部 inset 是 **142** —— 点击落在状态栏上，
+   连点 4 次「无反应」。正常态是 `[943,137][1069,258]`。
+   ⚠️ 首轮约 10 次尝试（tab 切换 / Surface 往返 / 设置页往返 / 滚动 / 后台恢复 /
+   冷启）**未能复现**；后来在「**别的 App 抢到前台后再冷启 Tipsy**」的情况下
+   **复现且稳定**（连点 3 次全部无效，bounds 持续为 `[943,0][1069,116]`），
+   而同条件下普通冷启 4/5 次正常（y=137）。根因仍**未定**：`mDisplayCutout`
+   顶部 inset 始终是 142，说明是 `WindowInsets.statusBars` 在该次组合里取到 0 ——
+   正是 `ProfileFragment.kt:133-137` 注释警告的现象，但那条注释断言「Compose inset
+   首帧就有值」，在这个竞态下**不成立**。**需 owner 定**是否加 inset 兜底。
+3. **重叠控件抢点击**：搜索页 `Filter`（`[928,269][1054,395]`）与
+   `Clear`（`[965,307][1080,433]`）大面积重叠，取「中心点」会落进公共区被
+   `Clear` 抢走 —— 实测弹出了**清空搜索记录的确认框**（已取消，记录未丢）。
+   重叠控件要取**该控件独有**的区域，别取中心。
+
+4. **UI dump 里的 `checkable` 节点不一定是你要的开关**：本轮有一次取到的是
+   角色创建页的 `create.profile.ageConfirmButton`（整行 `[26,2025][1054,2151]`），
+   在它上面做的「开关状态」判断全部无效。要**先按文本锚点定位**（`text="Limitless"`
+   在 `[52,1688]`）再取同行的开关（`[891,1656][1028,1782]`），
+   并顺手确认 `dumpsys activity | grep -c 'tag=settings'` 非 0（页面真在栈上）。
+5. **模拟器上的第三方 App 会抢前台**：本轮 YouTube 两次抢焦点（含一个权限弹窗），
+   导致一批「点击无反应」的观测不可信。冒烟前先 `pm disable-user --user 0` 掉它。
+
+搜索页的 `Filter` 图标还有个前提：**只在 Characters tab 且有结果时才出现**
+（`SearchScreen.kt:383`），空态页那个同名节点是另一个控件。
+
+另：`Content Rating` 分区在本轮**始终不出现**，这是**正确行为**而非缺陷 ——
+三重 gating 要求 `!isGooglePlay && nsfwEnabled`，而 nsfw 读的是
+`HomeFilterStore.readNsfw()`（config-persist 镜像）。壳**刻意没有 `writeNsfw`**
+（镜像由 RN 单向接力），故开关打开后镜像仍是 `false`，重启后开关也回到 `false`。
+⚠️ **这条不算已验**：本轮没能观察到 RN 把 `user.nsfw` 接力进镜像，
+`user-storage` 信封里也**没有 `nsfw` 字段**，`CurrentUser` 又刻意不映射它。
+**需 owner 定**：是接力链在纯原生页面下本就不会触发（那分级筛选在壳里永远出不来），
+还是缺一环。别把「分区没出现」直接当 PASS。
+
 ## 3. 横切能力
 
 
@@ -2749,7 +2950,7 @@ patch-package 补丁（tipsy-app `da4f65a`），让 Android 与之对齐。
 | Auth 所有权 | 🟡 **closeout 已实现且 CI 已验**（§2.22） | `shell/auth/`（§2.13 / §2.18）。single-flight/generation/原子条件清理已收口；历史 token 迁移未完（P2） |
 | `tipsy-auth` Android 实现 | 🟡 **桥已注册、能力 PARTIAL** | `modules/tipsy-auth/android/` + `ShellAuthProvider`；主线程约束已落地。§2.36 回填了 `requestLogin` / `openUserProfile` 系三个**标签过期的桩**（debug 会抛）—— ⚠️ **能力落地后必须回来改 override**，且现由 5 条单测钉死；仍未实现的只有 `notifyOnboardingCompleted`（W4）。Android 模块注册 16 个方法，iOS 30 个，其余按 Surface 启用增量补 |
 | 网络层 | 🟡 **closeout 已实现且 CI 已验**（§2.22） | `shell/network/`（§2.14 / §2.18）。过期 token 发送守门与双入口共享 gate 已实现。**未引 Retrofit** |
-| i18n | 🟢 **已完成**（含语言设置页） | `shell/i18n/`（§2.16）。壳是唯一 writer；key-based 查表 + 两条 normalize 规则 + Compose 自订阅组件。**原生语言设置页已实现**（§2.33）—— RN 的 `SettingsSurface` 白名单刻意不含 `Language`，iOS 侧也是原生 `LanguageViewController`；写入走 `POST /user/set_language` → 重拉 `/user/info`，不经 Zustand 信封。真机冒烟未跑 |
+| i18n | 🟢 **已完成**（含语言设置页 + 信封回写） | `shell/i18n/`（§2.16）。壳是唯一 writer；key-based 查表 + 两条 normalize 规则 + Compose 自订阅组件。**原生语言设置页已实现**（§2.33）—— RN 的 `SettingsSurface` 白名单刻意不含 `Language`，iOS 侧也是原生 `LanguageViewController`。写入走 `POST /user/set_language` **+ 回写 `user-storage` 信封**（§2.38，2026-08-18）—— ⚠️ 原记「不经 Zustand 信封」，**那正是 §2.37 语言倒灌的根因**，已修：`AccountLanguageWriter` merge + `notifyUserStoreChanged`。真机冒烟仍未跑（§9.1「语言切换」列待复跑） |
 | Router / 深链 | 🟡 parser/router 机制已落地，**白名单放开五个目标** | `shell/router/`；三个纯原生（`Search` §2.31 / `UserProfile` §2.32 / `Settings` §2.33，不受 §9.1 约束）+ **两个 Surface 目标**（`ChatDetail` / `MiniPhoneChat`，§2.36 P9 已过矩阵）。`onDestinationClosed` 的**谓词版是带参路由的唯一正确用法**（§2.32 / §2.36）——相等判定拿不到参数，会让目标永久打不开 |
 | RN Surface 宿主 | 🟡 机制已落地；**业务参数通道 P9 才真正接上** | `RNSurfaceFragment`（共享单 ReactHost）；UUID/首帧/reappear/props builder 已有。⚠️ §2.36 查出 `openSurface` **此前从不传 routeParams**（`SurfaceProps.forRoute` 没接到调用链），已修；props 值类型放宽到 `Any` 以支持嵌套 `preload` 与数字（RN 用严格相等）。真实 instance-aware close **记为已接受偏差**（§2.36） |
 | Push | 🔴 未开始 | — |
@@ -2771,11 +2972,19 @@ patch-package 补丁（tipsy-app `da4f65a`），让 Android 与之对齐。
 
 **§9.1 冒烟已部分兑现**（§2.37，2026-08-17）：未登录 / 登录切换 / Back 栈底 /
 首帧 / Embedded / 50 次泄漏 **6 项 PASS**（无泄漏，容器实例恒为 1）；
-**语言切换 FAIL** —— 但那是壳缺陷（`refreshAccountLanguage` 倒灌，§5）
-**不是 ChatDetail 的问题**；旋转/进程恢复 NOT RUN（模拟器中途退出）。
-⚠️ **这一行仍不得标 production-ready**：语言那列要等壳缺陷修完复跑，
-旋转那列要补，且本轮跑在**模拟器**上 —— §2.5 已定模拟器不作覆盖升级证据，
-50 次泄漏与首帧值得真机复跑。
+**语言切换**当轮 FAIL —— 但那是壳缺陷（`refreshAccountLanguage` 倒灌，§5）
+**不是 ChatDetail 的问题**，已修并于 §2.39 真机复跑 **PASS**（合计 **7 过**）；
+旋转/进程恢复 NOT RUN（模拟器中途退出）。
+
+⚠️ **这一行仍不得标 production-ready**：
+- 语言那列 ✅ **已复跑并 PASS**（§2.39，2026-08-18）：真机切 繁中 → 开
+  `ChatDetailSurface` → Back，语言**不再回落英文**，再连跑 4 次往返稳定；
+  `initialProps.context.languageCode` 实测为 `zh-tw`（此前是 `en`），
+  JS 侧同步打出 `align i18n to shell language: 'zh-tw'`。反向（繁中 → English）
+  同样生效，信封最后一条**活记录**为 `en`。
+- 旋转那列要补。
+- 本轮跑在**模拟器**上 —— §2.5 已定模拟器不作覆盖升级证据，
+  50 次泄漏与首帧值得真机复跑。
 
 其余 11 个生产 Surface 均未验收：
 
@@ -2812,30 +3021,26 @@ patch-package 补丁（tipsy-app `da4f65a`），让 Android 与之对齐。
 
 P9 冒烟新增的两项（2026-08-17，§2.37）：
 
-- 🔴 **原生语言页的选择会被静默覆盖回英文** —— 在语言页选繁中并确认，壳 UI
-  正确切换；但**只要开一次 RN Surface 再返回，语言就回退英文**，Surface 收到的
-  `context.languageCode` 也一直是 `en`。链路在代码里是确定的（不是推测）：
-  `MainActivity.kt:100-102` 挂 back stack listener，栈空时调
-  `app.refreshAccountLanguage()` → `TipsyApplication.kt:259-262` 从 MMKV 的
-  `user-storage` 读账号语言并 `L10n.setLanguage()` 覆盖 → 而原生语言页只把语言
-  存到服务端（`SettingsViewModel:140` 的 `api.setLanguage`），**从不回写
-  `user-storage`**（全仓只有读该 key 的代码，没有写的）。
-  那个 listener 的注释写着它是为「RN 设置页改完语言后壳需重读」服务的 ——
-  **该前提在 §2.33 语言页原生化之后已不成立**，覆盖逻辑留着就变成倒灌。
-  **需 owner 在三条路里定**：(1) 语言页确认时一并回写 `user-storage` 信封
-  （须先核实 RN 的 `version` / `merge` 配置，与下面性别筛选同一顾虑）；
-  (2) `refreshAccountLanguage` 只在冷启动跑、摘掉 back stack listener ——
-  最小，但会失掉「RN 侧改语言后壳重读」的能力，而 Settings 的 7 个子屏仍在
-  RN Surface 里，那条路径是否还需要要一并判断；(3) 判为已知偏差先记录。
+- ~~🔴 **原生语言页的选择会被静默覆盖回英文**~~ ✅ **已修**（2026-08-18，§2.38）：
+  owner 选**路 1**（语言页确认时回写 `user-storage` 信封）。前置顾虑已核实排除：
+  该 key **无 `version`/`migrate`**，不存在性别筛选那条担心的 migrate 分支。
+  §9.1 的「语言切换」列 ✅ **已复跑 PASS**（2026-08-18，§2.39，⚠️ 模拟器）。
+- ~~🔴 **分级开关（Limitless）点了没反应**~~ ✅ **已修**（2026-08-18，§2.39）：
+  `POST /user/nsfw` 少了 `/update`（真值 `/user/nsfw/update`）→ 404，因失败自动回滚
+  而伪装成「没点到」。已补 MockWebServer 契约测试 + 失败 Toast。
+- 🟡 **壳内 nsfw 镜像谁来接力**（§2.39 新增，**需 owner 定**）：开关写后端成功，
+  但 `config-persist.nsfw` 仍是 `false`、重启后开关回到 `false`。壳**刻意无 `writeNsfw`**
+  （RN 单向镜像），而 `user-storage` 信封里**没有 `nsfw` 字段**、`CurrentUser` 也刻意不映射。
+  后果：搜索页 `Content Rating` 分区在纯原生路径下**永远不出现**。
+  要定的是「这是设计如此」还是「缺一环」—— 别把「分区没出现」当 PASS。
 - **`GeneralMediaViewer` 的 `useVideoPlayer` 在容器拆除瞬间构造失败**（RN 侧，
   双壳共有，1/50 频率）—— 详见 §2.37。**需 owner 定**：可接受偏差，还是加
   `visible` 早退（要双壳回归）。
 
-> ⚠️ **共享 MMKV 信封「壳只读不写」已是第二例**（前有下面的性别筛选）。
-> 两处都是同一形状：壳与 RN 共用信封，壳读得对、但改动只落到自己或服务端，
-> 没回写信封，于是被 RN 的旧值倒灌。**建议系统扫一遍所有共享键的读写方向**，
-> 而不是逐个碰到再修 —— 这类缺陷的共同表现是「改了、看起来生效了、
-> 过一会儿又回去了」，用户不会报。
+> ⚠️ **共享 MMKV 信封的读写方向已系统扫过一遍**（2026-08-18，§2.38）——
+> 不再是「建议扫」。结论表落在 `LegacyMmkvStore` 类注释（代码里，随读写点一起改），
+> 本文只记结论：**语言那例已修，性别筛选那例仍待 owner**，其余键方向正确。
+> 这类缺陷的共同表现是「改了、看起来生效了、过一会儿又回去了」，用户不会报。
 
 W2 真机验证新增的一项（2026-08-12，§2.23.1）：
 
@@ -2843,9 +3048,25 @@ W2 真机验证新增的一项（2026-08-12，§2.23.1）：
   `mergeGenderIntoEnvelope` 刻意 `return null` 不写，导致全新安装用户改性别
   永不持久化、每次冷启动退回 `All`，且 UI 无任何提示。已核实壳读写路径正确
   （RN 的 `zustandStorage` 也是默认 MMKV 实例），根因是信封尚未被 RN 初始化。
-  **需 owner 在两条路里定**：(1) 缺失时写仅含 `{state:{gender}}` 的最小信封
-  （须先核实 RN 的 `version` / `merge` 配置，否则可能触发 migrate 分支）；
+  **需 owner 在两条路里定**：(1) 缺失时写仅含 `{state:{gender}}` 的最小信封；
   (2) 判为可接受，等 W3 迁 Settings 时 RN store 必然已初始化而自愈。
+
+  ⚠️ **原写的前置顾虑「须先核实 RN 的 `version`/`merge` 配置，否则可能触发
+  migrate 分支」已在 §2.38 核实完毕，但结论对这个 key 是「顾虑成立」** ——
+  与语言那个 key 相反，别把 §2.38 的结论直接套过来：
+
+  | | `user-storage`（语言） | `config-persist-storage`（性别） |
+  | --- | --- | --- |
+  | `version` | 无（= 默认 0） | 无（= 默认 0） |
+  | `migrate` | **无** | **无** |
+  | `merge` | 无（默认浅展开） | **有自定义 `merge`**（`config_persist.ts:447-476`） |
+
+  所以 migrate 分支两边都不会触发（zustand 只在 `version` 不等**且**配了
+  `migrate` 时走那条，`middleware.js:389`）—— 真正的差异是那个自定义 `merge`：
+  它会对 `tags` / `autoConsumeGemCallByUser` / `characterBadgeConfigs` 做
+  normalize，且**刻意丢弃 legacy `autoConsumeGemCall`**。造最小信封本身安全
+  （缺字段回落 store 默认值），但**要确认那个 merge 对只含 `gender` 的
+  state 不产生副作用**才能落地路 1。这一步尚未做。
 
 ## 6. 已废弃的历史尝试
 
