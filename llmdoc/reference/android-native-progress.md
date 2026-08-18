@@ -1,6 +1,6 @@
 # Tipsy Android 原生化迁移：现状（唯一状态真值）
 
-> 更新：2026-08-17 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
+> 更新：2026-08-18 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
 > **G1 CI 已激活且在 main 上真绿**（§2.10 / §2.22）
 >
 > **W1 基本收尾**（细化方案见 [`../architecture/android-w1-plan.md`](../architecture/android-w1-plan.md)）：
@@ -28,6 +28,12 @@
 > owner 已在模拟器验过。
 > **W4 起步：Screen（Tab1 大屏页）P1 已实现**（§2.35）——**五个 Tab 至此
 > 全部有真实页面**；P1 刻意不引 Media3（不播视频），OOM 风险为零。
+> **Tab3 创建入口已接 CreateSurface**（§2.38，2026-08-18）：`AppRoute.Create`
+> 进白名单，**五个 Tab 全部可用**；模拟器三轮开关 + 连点幂等已验。
+> ⚠️ 真机实测出一个**类别性**缺陷并已修：无参路由（实例恒相等）若不解除
+> Router 去重，表现是「关掉页面后再点永远打不开」—— 后续每个无参 Surface
+> 路由都要配解除。⚠️ **CreateSurface 无微根机器断言**（清单只覆盖 ChatDetail），
+> §9.1 那行仍全 `✎`，待 owner 定是否补清单再合。
 > **W1-P9 已完成**（§2.36，2026-08-17）：`ChatDetail` / `MiniPhoneChat` 进生产
 > 白名单，**四个原生列表页的卡片点击第一次有下一屏**；顺带查出三个过期桥桩
 > （`requestLogin` / `openUserProfile` 系，debug 会抛）与「`openSurface`
@@ -49,9 +55,10 @@
 - **Settings 列表 + 语言页已实现**（§2.33，8 文件 1,501 行）：补上了真实功能缺失 —— 此前**壳内没有任何入口能改语言**。审计订正三处：语言页**要原生实现**（RN 与 iOS 双证据）、`supportedLanguages` 壳内**恒为空**必须自己拉、Limitless 开关是 `nsfw` 的**唯一写方**且仅 directApk 可见。渠道 gating 收在 `SettingsRow` 并对三渠道各有单测。7 个 Surface 子屏（`AppRoute.SettingsSubScreen`）仍被明确拒绝。真机冒烟 **NOT RUN**。
 - **P9 冒烟部分兑现**（§2.37，2026-08-17）：§9.1 十项里 **6 项 PASS**（未登录/登录切换/Back 栈底/首帧/Embedded/50 次泄漏 —— 无泄漏、容器实例恒为 1、PSS +3.7%）、**语言切换 FAIL**（壳缺陷倒灌，非 ChatDetail 问题，见 §5）、旋转恢复 NOT RUN。⚠️ 跑在**模拟器**上，§2.5 已定不作覆盖升级证据。同时查出 **autolinking exclude 从 W0 起一直静默失效**（PR #34）—— 此前所有构建都带着 dev-launcher 在跑。
 - **✅ 卡片点击已解锁**（§2.36，2026-08-17）：`ChatDetail` / `MiniPhoneChat` 进白名单，Home/ChatList/Search/Screen 四个页面的卡片点击**第一次有下一屏**。⚠️ 仍点不动的是 **Profile 的五个出口**（`EditProfileSurface` / `GemsSubscriptionSurface` / `UserCoinsSurface` / `RoleCardSurface` / Follow）与 Settings 的 7 个子屏 —— 那些 Surface 未过 §9.1。§12 实例关闭链**记为已接受偏差**（单层容器弹不错；根治要改 RN 侧 9 个调用点 + 双壳回归）。
+- **Tab3 创建入口已接通**（§2.38，2026-08-18，219 行）：`AppRoute.Create` 进白名单，Tab3 的 ➕ 从「只打一行日志」变成挂 `CreateSurface` 直达创建表单 —— **五个 Tab 全部可用**。壳只传 `createEnterSource` 一个 prop，**刻意不复刻** RN tabPress 那四个参数（Surface 自决落地页，§2.30 纪律）。⚠️ 真机抓到**类别性**缺陷并已修：`AppRoute.Create()` 无参 ⇒ 实例恒相等 ⇒ 去重不解除就「只能用一次」，ChatDetail 因每次带不同 characterId 而侥幸未暴露；后续每个无参路由都要配解除。⚠️ **无微根机器断言**（清单只覆盖 ChatDetail，仅人工比对 provider 树），§9.1 那行全 `✎`，待 owner 定。
 - **Screen P1 已实现**（§2.35，10 文件 2,131 行）：**Screen Tab 从占位换成真实页面，五个 Tab 全部落地**。AB 端点分流（游客/未登录恒 distribution）、归因、首屏缓存、会话埋点双轴、静态图/GIF 两形态。⚠️ **不播视频**：Media3 与有界播放器池属 P2，故 OOM 风险为零。两份 RN fixture 在提交前抓到我两个设计缺陷（归因 position 用原始下标、首屏缓存要在发请求前读）。
 - **Search P2 筛选器已实现**（§2.34，4 文件 723 行）：性别/排序/分级抽屉 + 二级标签栏，Search 达成完整对等。`SearchTagOrderTest` **逐条对拍 RN 的 144 行现成单测**。⚠️ 分级筛选的门是「非 GooglePlay && nsfw 开」，与 Settings 的 Limitless（只有 directApk）**不同轴** —— RuStore 在这里算可选。
-- **不存在 / 未验**：ChatList 的 Map「時光長廊」视图仍是 P2；Screen 的视频播放（Media3）属 P2；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。生产路由白名单五个目标（三纯原生 + `ChatDetail`/`MiniPhoneChat`），**`ChatDetailSurface` 的 §9.1 真机十项仍 NOT RUN**；其余 11 个业务 Surface 全未过矩阵（含 Settings 的 7 个子屏与 Profile 的五个出口）。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
+- **不存在 / 未验**：ChatList 的 Map「時光長廊」视图仍是 P2；Screen 的视频播放（Media3）属 P2；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。生产路由白名单**六个**目标（三纯原生 + `ChatDetail`/`MiniPhoneChat` + **`Create`**），**`ChatDetailSurface` 的 §9.1 真机十项仍 NOT RUN**、**`CreateSurface` 那行全 `✎` 且无微根机器断言**（§2.38）；其余 10 个业务 Surface 全未过矩阵（含 Settings 的 7 个子屏与 Profile 的五个出口）。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
 
 ## 1. 波次状态
 
@@ -61,7 +68,7 @@
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟢 **完成**：契约层已收口且 CI 已验；**P9 已完成**（§2.36，白名单放开 + 桥桩回填）；§12 关闭链记为**已接受偏差**（owner 2026-08-17）。**冒烟部分兑现**（§2.37）：§9.1 6 过 / 1 FAIL / 3 未跑，业务分流项未验 | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17/#33 已并） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
 | W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1–P4、P6，§2.25–§2.29，真机验证）；ChatList P1 Grid 主链路已并（§2.30，模拟器冒烟 PASS）；**Search P1 主链路已实现**（§2.31，directApk 真机冒烟 PASS）；**他人主页已实现**（§2.32，第一条端到端可用路径）；**Settings 列表 + 语言页已实现**（§2.33）；**Search P2 筛选器已实现**（§2.34，Search 完整对等）；剩 Profile P5 ⋮ 菜单/P7 头像框、ChatList P2 Map | `a6b9fc56a88d97444fe5f1ce952068bb9222be82` | —（PR #21–#30 已并；Search P2 在 `feat/android-w3-search-p2`） |
-| W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | 🟡 **起步**：Screen **P1 已实现**（§2.35，数据层 + 翻页 + 埋点，**不含 Media3**）；剩 Screen P2（Media3 + 有界播放器池 + buffer 三件套，**OOM 首要风险**）与 P3 二期项、12 个 Surface、系统能力、OTA | `a6b9fc56a88d97444fe5f1ce952068bb9222be82` | —（Screen P1 在 `feat/android-w4-screen-p1`） |
+| W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | 🟡 **起步**：Screen **P1 已实现**（§2.35，数据层 + 翻页 + 埋点，**不含 Media3**）；**Tab3 创建入口已接 `CreateSurface`**（§2.38，白名单 + 模拟器已验，⚠️ 无微根机器断言）；剩 Screen P2（Media3 + 有界播放器池 + buffer 三件套，**OOM 首要风险**）与 P3 二期项、11 个 Surface、系统能力、OTA | `a6b9fc56a88d97444fe5f1ce952068bb9222be82` | —（Screen P1 在 `feat/android-w4-screen-p1`） |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
 
 **W0+W1 时间盒**：这两波不产出用户可见价值，目标是"够用就往下走"。若超过总工期 1/4,停下复审是否过度设计（方案 §8.5）。
@@ -2741,6 +2748,89 @@ patch-package 补丁（tipsy-app `da4f65a`），让 Android 与之对齐。
   反复试了七八次才发现。另：app 被系统标 cached 时（`caps=---------`、
   `curProcState=19`）UI 仍渲染但输入不被处理，`force-stop` 重启即恢复。
 
+### 2.38 W4：Tab3 创建入口接 CreateSurface（2026-08-18）
+
+**五个 Tab 至此全部可用** —— Tab3 的 ➕ 此前只打一行
+`Log.w("CreateSurface 未接入")`，现在点它挂 `CreateSurface`，直达创建表单
+（Create Avatar / Name / Type）。5 文件 + 2 测试文件，219 行。
+
+`AppRoute.Create(enterSource)` 进生产白名单，走 `openSurface` 的通用链
+（幂等判定、平铺 props、popSurface 收口都与 ChatDetail 同一条，未新增机制）。
+
+#### 壳**刻意不复刻** RN tabPress 的四个参数
+
+RN 侧 `TabNavigator.tsx:425-430` 的 tabPress 带
+`screen: 'ProfileDetail'` + `from` / `triggerSource` / `operationType`，
+但那是**完整 App 内**跳 `CreateTabStack` 的形状。壳只传一个
+`createEnterSource`：`CreateSurface` 自己就是那层微容器，它按 `isEdit`
+自决 `initialParams`（`CreateSurface.tsx:113-135`），并把 `createEnterSource`
+过 `normalizeCharacterTriggerSource` 得出 `triggerSource`。
+
+壳再传一份就是把分流复刻成两份（§2.30 定的纪律，ChatDetail 同理）。
+`SurfacePropsTest` 有一条专门断言那四个 key **不出现**。
+
+#### ⚠️ 无参路由的去重洞：Tab3 只能用一次（真机实测）
+
+第一版漏了去重解除，表现是**关掉创建页后再点 ➕ 永远打不开**，
+logcat 是 `重复路由，已去重：Create`。
+
+根因：`AppRoute.Create()` 参数固定（`tab_bar_plus`），每次点击产出的实例
+**完全相等**，`lastHandled` 不解除时去重永久命中。
+
+**这是类别性的，不是个例**：ChatDetail 躲过它纯属侥幸 —— 那条路由每次带
+不同 `characterId`，天然不相等。`Create` 是壳里**第一个无参 Surface 路由**，
+所以第一个踩到。后续每加一个无参路由（`Letter` / `EditProfile` /
+`UserCoins` 都是 data object）都必须在 `onBackStackChanged` 里配一条解除，
+否则同样「只能用一次」。
+
+修法与 ChatDetail 同构：按 `TAG_CREATE_SURFACE` 判容器已出栈后调
+`onDestinationClosed`（谓词版）。`AppRouterTest` 加了回归测试锁语义。
+
+#### 真机验证（模拟器 / Pixel_10 / API 36 / directApk debug）
+
+- 挂载 props 形状正确：`createEnterSource=tab_bar_plus` **平铺在顶层**，
+  与壳自有字段无撞名（`dumpsys` 读 `mArguments` 确认）
+- 三轮开→关→再开：每轮恰好 **1 层容器 / 1 个实例**，返回后归零
+- 连点三次：仍只有 1 层容器（`openSurface` 的 tag 幂等生效）
+- 返回后回到**点 ➕ 之前那个 Tab**（在 Profile 上测），不是空的 Create tab
+  —— 对齐 RN 的 `e.preventDefault()`；`selected` 不变
+- ⚠️ 跑在**模拟器**上，§2.5 已定不作覆盖升级证据
+
+#### 两条测量教训（补 §2.37 那两条）
+
+- **`grep -c "tag=CreateSurface"` 会给出假象**。同一实例在 `dumpsys` 里
+  出现多行，我一度读到「容器数 5」以为叠了五层。数实例要用
+  `grep -oE 'RNSurfaceFragment\{[0-9a-f]+\}' | sort -u | wc -l`，
+  或数 `BackStackEntry` 条目。
+- **uiautomator 会自己崩**（`RuntimeException: Bad file descriptor`），
+  崩的是 dump 进程不是 app。当时 tap 没送达、看起来像「第三次点击打不开」，
+  实际是测量工具挂了。判据：`adb shell pidof` 确认 app 仍在，重跑 dump。
+
+#### 未做
+
+- **编辑模式**（`editCharacter` / `editCharacterId`）：属 Profile 创作卡片
+  ⋮ 菜单那条入口，要**原封透传原始角色对象**才不丢字段（方案 §8.1 记的
+  iOS 坑：by-id 重拉会导致保存时字段重置 = 数据损坏），应单开 route。
+- 创建页的标签抽屉依赖 `hydrateTags`（`index.surfaces.js` 入口已调），
+  本轮只验到表单首屏，**抽屉内容未点进去看** —— 若发现标签为空先查那条。
+
+#### ⚠️ 合规缺口：CreateSurface 无微根机器断言（待 owner）
+
+`SurfaceDependencyChecklist` **只覆盖 ChatDetail**（已核实）。而 §2.36 里
+ChatDetail 进白名单前，是先有 `SurfaceDependencyChecklistTest` 对 RN 源码
+做了微根 18 项 + 5 个微栈目标的机器断言的。
+
+我手工比对了两者 provider 树，**同构**：SafeArea / Keyboard / SWR /
+GestureHandler / Portal / NavigationContainer + `SurfaceToastHost`，
+且 CreateSurface 更简单（无 game 分支）。所以风险不高 ——
+**但这是读代码的判断，不是机器断言**，而这类缺口的表现是静默的
+（§2.19 的 `hydrateTags` 缺口就是全新安装才必现）。
+
+owner 需定：补一份 CreateSurface 依赖清单再合（与 ChatDetail 同等待遇），
+还是先合、清单与 §9.1 填表作为独立包跟上。本刀按后者提交 ——
+**白名单里因此多了一个未经机器断言的 Surface**，这条必须显式记着，
+且 §9.1 的 `CreateSurface` 行仍全 `✎`，**不得标 production-ready**。
+
 ## 3. 横切能力
 
 
@@ -2777,9 +2867,15 @@ patch-package 补丁（tipsy-app `da4f65a`），让 Android 与之对齐。
 旋转那列要补，且本轮跑在**模拟器**上 —— §2.5 已定模拟器不作覆盖升级证据，
 50 次泄漏与首帧值得真机复跑。
 
-其余 11 个生产 Surface 均未验收：
+**`CreateSurface` 是第二个进生产白名单的业务 Surface**（§2.38，2026-08-18，
+Tab3 的 ➕）。⚠️ **它与 ChatDetail 不同等**：`SurfaceDependencyChecklist`
+**没有**覆盖它 —— provider 树只做了人工比对（与 ChatDetail 同构且更简单），
+**无机器断言**。§9.1 那一行仍全 `✎`，**不得标 production-ready**。
+补清单还是作为独立包跟上，待 owner 定（§2.38 末）。
 
-`CommentsSurface` / `OnboardingSurface` / `CreateSurface` / `DeleteAccountSurface` / `EditProfileSurface` / `GemsSubscriptionSurface` / `NotificationSurface` / `RoleCardSurface` / `SettingsSurface` / `UserCoinsSurface` / `WidgetSurface`
+其余 10 个生产 Surface 均未验收：
+
+`CommentsSurface` / `OnboardingSurface` / `DeleteAccountSurface` / `EditProfileSurface` / `GemsSubscriptionSurface` / `NotificationSurface` / `RoleCardSurface` / `SettingsSurface` / `UserCoinsSurface` / `WidgetSurface`
 
 矩阵表格见方案 §9.1。**未填满的行不得标 production-ready。**
 
