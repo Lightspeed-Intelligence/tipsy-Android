@@ -317,8 +317,9 @@ class AppRouterTest {
      * 表现是「Tab3 只能用一次」。ChatDetail 因为每次带不同 characterId
      * 而侥幸不暴露这个洞，Create 是第一个无参 Surface 路由。
      *
-     * Activity 侧的解除接线在 `onBackStackChanged`（按 `TAG_CREATE_SURFACE`
-     * 判容器是否已出栈）；这条在 Router 层锁住语义。
+     * Activity 侧的解除接线在 `onBackStackChanged`（按
+     * `CreateSurfaceContract.COMPONENT_NAME` 判容器是否已出栈）；
+     * 这条在 Router 层锁住语义。
      */
     @Test
     fun `Create 关闭后可再次打开`() {
@@ -444,9 +445,32 @@ class AppRouterTest {
         f.router.handle(AppRoute.Settings)
         assertEquals(1, f.navigated.size)
 
-        f.router.handle(AppRoute.SettingsSubScreen("Security"))
+        f.router.handle(
+            AppRoute.SettingsSubScreen(AppRoute.SettingsSubScreen.Screen.SECURITY),
+        )
         assertEquals("子屏不该导航", 1, f.navigated.size)
         assertEquals("子屏要被明确拒绝", 1, f.rejections.size)
+    }
+
+    /**
+     * `SettingsSubScreen` 带 screen 参数，Activity 在容器退栈时拿不到原 route 实例；
+     * 必须按 route 类型解除去重，否则关闭后再次点击同一行会永久命中 lastHandled。
+     */
+    @Test
+    fun `SettingsSurface 关闭后同一子屏可以再次打开`() {
+        val f = fixture(
+            loggedIn = true,
+            enabled = listOf(AppRoute.SettingsSubScreen::class.java),
+        )
+        val route = AppRoute.SettingsSubScreen(AppRoute.SettingsSubScreen.Screen.SECURITY)
+
+        f.router.handle(route)
+        f.router.handle(route)
+        assertEquals("容器还在时重复点击应去重", 1, f.navigated.size)
+
+        f.router.onDestinationClosed { it is AppRoute.SettingsSubScreen }
+        f.router.handle(route)
+        assertEquals("容器退栈后同一子屏必须能重开", 2, f.navigated.size)
     }
 
     /** 谓词不匹配时不得误清 —— A → B 的合法叠栈里，B 出栈不该解除 A 的去重。 */

@@ -288,7 +288,9 @@ class SurfacePropsTest {
      */
     @Test
     fun `SettingsSubScreen 产出平铺 initialScreen`() {
-        val props = SurfaceProps.forRoute(AppRoute.SettingsSubScreen("Security"))
+        val props = SurfaceProps.forRoute(
+            AppRoute.SettingsSubScreen(AppRoute.SettingsSubScreen.Screen.SECURITY),
+        )
         assertEquals(mapOf("initialScreen" to "Security"), props)
     }
 

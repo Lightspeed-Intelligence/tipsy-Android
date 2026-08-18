@@ -204,7 +204,9 @@ object SurfaceProps {
          * ⚠️ `Language` **不在**那个白名单里（语言页原生，§2.33 订正）——
          * 别把语言页做成这个 route。
          */
-        is AppRoute.SettingsSubScreen -> mapOf(SETTINGS_INITIAL_SCREEN to route.screen)
+        is AppRoute.SettingsSubScreen -> mapOf(
+            SETTINGS_INITIAL_SCREEN to route.screen.rnName,
+        )
 
         /*
          * `CreateSurface`（Tab3，W4）。**只有一个 prop**。

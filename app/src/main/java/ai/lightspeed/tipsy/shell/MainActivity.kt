@@ -6,14 +6,16 @@ import ai.lightspeed.tipsy.shell.pages.login.LoginFragment
 import ai.lightspeed.tipsy.shell.pages.profile.PublicProfileFragment
 import ai.lightspeed.tipsy.shell.pages.search.SearchFragment
 import ai.lightspeed.tipsy.shell.pages.settings.SettingsFragment
-import ai.lightspeed.tipsy.shell.tabs.TabHostFragment
-import androidx.activity.enableEdgeToEdge
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
+import ai.lightspeed.tipsy.shell.surface.CreateSurfaceContract
+import ai.lightspeed.tipsy.shell.surface.SettingsSurfaceContract
 import ai.lightspeed.tipsy.shell.surface.SurfaceProps
+import ai.lightspeed.tipsy.shell.tabs.TabHostFragment
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
+import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.ui.platform.ComposeView
 import androidx.fragment.app.commit
@@ -140,8 +142,15 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
             //
             // 用 data object 相等判定够用（无变参），但仍走谓词版保持与上面一致：
             // 将来若加 draft_box 等入口来源，相等判定会立刻失效而谓词版不会。
-            if (supportFragmentManager.findFragmentByTag(TAG_CREATE_SURFACE) == null) {
+            if (supportFragmentManager.findFragmentByTag(CreateSurfaceContract.COMPONENT_NAME) == null) {
                 router.onDestinationClosed { route -> route is AppRoute.Create }
+            }
+            // Settings 的 7 个直达屏共用同一个 SettingsSurface 容器。
+            // route 自身带不同的 screen，不能构造某个固定值做相等判断；容器出栈后
+            // 按类型解除，才能保证「关掉 Security 后还能再次打开 Security」，也不会
+            // 把 Blacklist 等同容器入口留在 lastHandled 里。
+            if (supportFragmentManager.findFragmentByTag(SettingsSurfaceContract.COMPONENT_NAME) == null) {
+                router.onDestinationClosed { route -> route is AppRoute.SettingsSubScreen }
             }
         }
 
@@ -283,9 +292,13 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
                 // W3：原生设置列表（§2.33）。它的 7 个子屏是 SettingsSubScreen，
                 // 未过 §9.1 故不在白名单 —— Router 会先拦下
                 is AppRoute.Settings -> openSettings()
+                // W3：设置列表的 7 个子屏共用 SettingsSurface。分支先接好但生产
+                // policy 仍保持关闭；完成 §9.1 后只需集中放开 route type。
+                is AppRoute.SettingsSubScreen ->
+                    openSurface(SettingsSurfaceContract.COMPONENT_NAME, route)
                 // W4：Tab3 伪 Tab 的目标。走 openSurface 的通用链 ——
                 // 幂等判定、平铺 props、popSurface 收口都与 ChatDetail 同一条
-                is AppRoute.Create -> openSurface(TAG_CREATE_SURFACE, route)
+                is AppRoute.Create -> openSurface(CreateSurfaceContract.COMPONENT_NAME, route)
                 // 其余目标尚未启用，Router 的 enabledRoutes 会先拦下 ——
                 // 走到这里说明有人启用了路由却没加分支，属实现错误，必须可见。
                 else -> error("路由已启用但缺少导航实现：${route.javaClass.simpleName}")
@@ -445,15 +458,6 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
          * 退栈后靠它判「该 Surface 已关闭」从而解除 Router 去重。
          */
         const val TAG_CHAT_DETAIL_SURFACE = "ChatDetailSurface"
-
-        /**
-         * `CreateSurface` 容器的 tag（W4，Tab3）。同 [TAG_CHAT_DETAIL_SURFACE]：
-         * 值等于 componentName，退栈后靠它解除 Router 去重。
-         *
-         * ⚠️ 漏了这条解除的表现是「关掉创建页后再点 ➕ 永远打不开」——
-         * `AppRoute.Create` 参数固定，两次点击的实例完全相等，去重会一直命中。
-         */
-        const val TAG_CREATE_SURFACE = "CreateSurface"
 
         fun tagForUserProfile(userId: String) = "$TAG_USER_PROFILE_PREFIX$userId"
 

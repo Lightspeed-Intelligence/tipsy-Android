@@ -1,6 +1,7 @@
 package ai.lightspeed.tipsy.shell.pages.settings
 
 import ai.lightspeed.tipsy.shell.BuildConfig
+import ai.lightspeed.tipsy.shell.router.AppRoute
 
 /**
  * Settings 列表的行定义与**渠道 gating**（`settings/page.tsx` 逐行核实）。
@@ -47,7 +48,11 @@ enum class SettingsRow(
      * （Widget 支持探测）属 W4 Widget 包。显示但点击被拒 ≠ 不显示，
      * 视觉差异记在验收里，比静默隐藏一个功能安全。
      */
-    ADD_WIDGET("Add Widget", "settings_add_widget_click", SettingsAction.SurfaceScreen("Widget")),
+    ADD_WIDGET(
+        "Add Widget",
+        "settings_add_widget_click",
+        SettingsAction.SurfaceScreen(AppRoute.SettingsSubScreen.Screen.WIDGET),
+    ),
 
     /**
      * 账号与安全 —— **本地展开/收起，不是导航**（`page.tsx:247`
@@ -60,20 +65,32 @@ enum class SettingsRow(
     ),
 
     /** 安全设置（展开项）。⚠️ 非 GooglePlay 才有（`page.tsx:251`）。 */
-    SECURITY("Security", "settings_security_click", SettingsAction.SurfaceScreen("Security")),
+    SECURITY(
+        "Security",
+        "settings_security_click",
+        SettingsAction.SurfaceScreen(AppRoute.SettingsSubScreen.Screen.SECURITY),
+    ),
 
     /** 黑名单（展开项）。文案 key 是 **`Blocked`** 不是 `Blacklist`（屏名才是后者）。 */
-    BLOCKED("Blocked", "settings_blocked_click", SettingsAction.SurfaceScreen("Blacklist")),
+    BLOCKED(
+        "Blocked",
+        "settings_blocked_click",
+        SettingsAction.SurfaceScreen(AppRoute.SettingsSubScreen.Screen.BLACKLIST),
+    ),
 
     /** 删除账号（展开项）。 */
     DELETE_ACCOUNT(
         "Delete Account",
         "settings_delete_account_click",
-        SettingsAction.SurfaceScreen("Delete"),
+        SettingsAction.SurfaceScreen(AppRoute.SettingsSubScreen.Screen.DELETE),
     ),
 
     /** 反馈。三渠道都有。 */
-    FEEDBACK("Feedback", "settings_feedback_click", SettingsAction.SurfaceScreen("Feedback")),
+    FEEDBACK(
+        "Feedback",
+        "settings_feedback_click",
+        SettingsAction.SurfaceScreen(AppRoute.SettingsSubScreen.Screen.FEEDBACK),
+    ),
 
     /** 社区规范。⚠️ 非 GooglePlay 才有；**外部链接**不经 Surface。 */
     COMMUNITY_GUIDELINES(
@@ -97,10 +114,18 @@ enum class SettingsRow(
     ),
 
     /** 关于。三渠道都有。 */
-    ABOUT("About Tipsy", "settings_about_click", SettingsAction.SurfaceScreen("About")),
+    ABOUT(
+        "About Tipsy",
+        "settings_about_click",
+        SettingsAction.SurfaceScreen(AppRoute.SettingsSubScreen.Screen.ABOUT),
+    ),
 
     /** 联系我们。三渠道都有。 */
-    CONTACT_US("Contact Us", "settings_contact_click", SettingsAction.SurfaceScreen("ContactUs")),
+    CONTACT_US(
+        "Contact Us",
+        "settings_contact_click",
+        SettingsAction.SurfaceScreen(AppRoute.SettingsSubScreen.Screen.CONTACT_US),
+    ),
 
     /**
      * 分级开关（Limitless）。⚠️ **只有 directApk**，见类注释。
@@ -197,7 +222,7 @@ sealed interface SettingsAction {
      *   表现为「点安全设置进了反馈页」。⚠️ `Language` **不在**那个白名单里
      *   （语言页原生，§2.33）
      */
-    data class SurfaceScreen(val screen: String) : SettingsAction
+    data class SurfaceScreen(val screen: AppRoute.SettingsSubScreen.Screen) : SettingsAction
 
     /** 外部链接（`WebBrowser.openBrowserAsync` / `Linking`）—— 不经 Surface。 */
     data class OpenUrl(val url: String) : SettingsAction
