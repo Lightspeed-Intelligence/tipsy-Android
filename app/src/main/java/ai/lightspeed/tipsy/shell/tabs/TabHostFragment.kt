@@ -1,12 +1,14 @@
 package ai.lightspeed.tipsy.shell.tabs
 
 import ai.lightspeed.tipsy.shell.R
+import ai.lightspeed.tipsy.shell.TipsyApplication
 import ai.lightspeed.tipsy.shell.pages.chatlist.ChatListFragment
 import ai.lightspeed.tipsy.shell.pages.home.HomeFragment
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileFragment
 import ai.lightspeed.tipsy.shell.pages.screen.ScreenFragment
+import ai.lightspeed.tipsy.shell.router.AppRoute
+import ai.lightspeed.tipsy.shell.router.AppRouter
 import android.os.Bundle
-import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -100,8 +102,15 @@ class TabHostFragment : Fragment() {
 
     private fun onTabClick(tab: ShellTab) {
         if (!tab.isRealTab) {
-            // Create 伪 Tab：拉起创建流程，**不切 Tab**
-            Log.w(TAG, "Create 入口点击：CreateSurface 未接入（W2 后续包）")
+            // Create 伪 Tab：拉起 CreateSurface，**不切 Tab**（selected 不变）——
+            // 对齐 RN `TabNavigator.tsx:422` 的 `e.preventDefault()`：
+            // 那边阻止了 tab 切换后才 navigate，所以关掉创建页应回到原来那个 Tab，
+            // 而不是停在一个空的 Create tab 上。
+            //
+            // 经 Router 而不是自己 commit 事务：§4.7 单一入口 ——
+            // 创建要求登录，未登录时 Router 会先弹登录页并把本路由排队，
+            // 登录后恰好执行一次。自己 commit 会绕过这道 gate。
+            requestRoute(AppRoute.Create(AppRoute.CreateEnterSource.TAB_BAR_PLUS))
             return
         }
         if (tab == selected) {
@@ -136,6 +145,15 @@ class TabHostFragment : Fragment() {
         }
     }
 
+    /**
+     * 经 Router 导航（§4.7 单一入口）。与 ProfileFragment.requestRoute 同构 ——
+     * 业务页不得自己 commit Fragment 事务，否则 auth gate 与去重会被绕过。
+     */
+    private fun requestRoute(route: AppRoute) {
+        val app = requireActivity().application as TipsyApplication
+        app.requestRoute(route, AppRouter.Source.IN_APP)
+    }
+
     private fun createFragment(tab: ShellTab): Fragment = when (tab) {
         ShellTab.HOME -> HomeFragment.newInstance()
         // Profile 是 W3 第一刀：资料头部 + 统计 + 创作/记忆两个内容 tab
@@ -152,8 +170,6 @@ class TabHostFragment : Fragment() {
     }
 
     companion object {
-        private const val TAG = "TabHostFragment"
-
         fun newInstance(): TabHostFragment = TabHostFragment()
     }
 }

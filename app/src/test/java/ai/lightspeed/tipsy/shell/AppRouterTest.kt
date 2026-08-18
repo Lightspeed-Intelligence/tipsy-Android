@@ -216,6 +216,41 @@ class AppRouterTest {
     }
 
     /**
+     * W4：`Create` 进白名单 —— Tab3 的 ➕ 至此真的有下一屏。
+     *
+     * 同上一条的理由：只加白名单不加 `ShellNavigator.navigate` 分支会走到
+     * `error()`，这里先红。
+     */
+    @Test
+    fun `Create 在生产白名单内`() {
+        assertTrue(
+            "Create 必须在生产白名单里，否则 Tab3 点击仍然点了没反应",
+            AppRoute.Create::class.java in ProductionRoutePolicy.enabledRouteTypes,
+        )
+    }
+
+    /**
+     * Create 要求登录：未登录时**排队**而不是直接打开。
+     *
+     * 创建流程的每个接口都要 token，未登录直接挂 Surface 的表现是
+     * 「进去了但一路 401」—— 比点了没反应更难归因。
+     */
+    @Test
+    fun `未登录点 Create 先登录再恰好执行一次`() {
+        val f = fixture(loggedIn = false, enabled = listOf(AppRoute.Create::class.java))
+        f.router.handle(AppRoute.Create())
+
+        assertEquals("不该直接导航", 0, f.navigated.size)
+        assertEquals("必须请求登录一次", 1, f.loginRequests.size)
+
+        f.loggedIn = true
+        f.hub.notifyDidLogin("u1")
+
+        assertEquals("登录后应恰好执行一次", listOf<AppRoute>(AppRoute.Create()), f.navigated)
+        assertFalse("执行后必须清空", f.router.hasPendingRoute())
+    }
+
+    /**
      * ⚠️ **Router 的去重挡不住「点两张不同卡片」** —— 这条测试记录的是一个
      * 已知边界，不是缺陷：`lastHandled` 是 `route to source`，两个不同
      * characterId 是两个不同 route，两次都会 navigate。
@@ -272,6 +307,33 @@ class AppRouterTest {
 
         f.router.handle(route)
         assertEquals("退出后再次点击是新意图", 2, f.navigated.size)
+    }
+
+    /**
+     * **真机实测过的缺陷**（W4，2026-08-18）：关掉创建页后再点 ➕ 打不开。
+     *
+     * `AppRoute.Create` 的参数固定（`tab_bar_plus`），两次点击产出的实例
+     * **完全相等** —— 所以 `lastHandled` 不解除时去重会**永久命中**，
+     * 表现是「Tab3 只能用一次」。ChatDetail 因为每次带不同 characterId
+     * 而侥幸不暴露这个洞，Create 是第一个无参 Surface 路由。
+     *
+     * Activity 侧的解除接线在 `onBackStackChanged`（按 `TAG_CREATE_SURFACE`
+     * 判容器是否已出栈）；这条在 Router 层锁住语义。
+     */
+    @Test
+    fun `Create 关闭后可再次打开`() {
+        val f = fixture(loggedIn = true, enabled = listOf(AppRoute.Create::class.java))
+
+        f.router.handle(AppRoute.Create())
+        assertEquals(1, f.navigated.size)
+
+        f.router.handle(AppRoute.Create())
+        assertEquals("在栈期间是重复投递", 1, f.navigated.size)
+
+        f.router.onDestinationClosed { it is AppRoute.Create }
+
+        f.router.handle(AppRoute.Create())
+        assertEquals("关掉创建页后再点 ➕ 必须能再开", 2, f.navigated.size)
     }
 
     /**
