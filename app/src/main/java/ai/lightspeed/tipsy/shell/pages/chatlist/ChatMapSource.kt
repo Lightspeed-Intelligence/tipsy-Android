@@ -58,7 +58,7 @@ internal object ChatMapSource {
         timeZone: TimeZone,
         nowMillis: Long,
         localize: (String) -> String,
-        formatDate: (year: Int, month: Int, dayOfMonth: Int) -> String,
+        formatDate: (DateTitle) -> String,
     ): List<ChatMapFloors.Floor<ChatThread>> {
         // ⚠️ 固定 threads —— **不是** sortedThreads。见类注释
         val threads = state.threads
@@ -66,6 +66,22 @@ internal object ChatMapSource {
         // 一次捕获的 calendar：key 与标题共用，避免两处用不同时区
         val calendar = Calendar.getInstance(timeZone)
         val todayDay = localDayOf(calendar, nowMillis)
+        val todayYear = calendar.get(Calendar.YEAR)
+
+        // ⚠️ **昨天必须用 Calendar 真算，不能 `todayDay - 1`**。
+        // `localDayOf` 的序号是 `year*512 + dayOfYear`，**在年界不连续**：
+        // 2027-01-01 = `2027*512+1` = 1037825，2026-12-31 = `2026*512+365` = 1037677
+        // —— 相差 **148**（= 512-364）而不是 1。
+        //
+        // 用减一的后果：**1 月 1 日看 12 月 31 日不显示 "Yesterday"**。
+        // 而 RN 是 `today.subtract(1, 'day')`（`func.ts:355`）、iOS 是
+        // `isDateInYesterday`，两端在跨年时都显示 Yesterday ——
+        // 所以这**不是可接受偏差，是对不上**（早前我写"与 RN 一致"是错的）。
+        val yesterdayDay = (calendar.clone() as Calendar).let { c ->
+            c.timeInMillis = nowMillis
+            c.add(Calendar.DAY_OF_YEAR, -1)
+            localDayOf(c, c.timeInMillis)
+        }
 
         val buckets = ChatMapFloors.groupByDay(
             threads = threads,
@@ -73,7 +89,9 @@ internal object ChatMapSource {
                 // ⚠️ 秒 → 毫秒。当成毫秒会把一切算到 1970 → 全挤一层
                 localDayOf(calendar, thread.latestTimeSeconds * MILLIS_PER_SECOND)
             },
-            titleOf = { day -> titleFor(calendar, day, todayDay, localize, formatDate) },
+            titleOf = { day ->
+                titleFor(calendar, day, todayDay, yesterdayDay, todayYear, localize, formatDate)
+            },
         )
         return ChatMapFloors.build(buckets)
     }
@@ -92,19 +110,41 @@ internal object ChatMapSource {
         return year.toLong() * DAYS_NAMESPACE + dayOfYear
     }
 
+    /**
+     * 日期标题的两种形态 —— **分支判定在 Source 里做完，不留给 UI 猜**。
+     *
+     * RN `formatChatMapTime`（`func.ts:357-361`）有**两个不同格式**：
+     * 同年 `D MMMM`（如 `12 August`）、跨年 `MMM D, YYYY`（如 `Aug 12, 2025`）。
+     * iOS 端口同构。
+     *
+     * ⚠️ 若只给 UI 一个 `(y, m, d)` 回调，UI 就得自己判"是不是今年" ——
+     * 那意味着它要**再捕获一次 now 与 timezone**，两处捕获时机不同就会
+     * 在午夜/跨年瞬间给出矛盾结果。所以这里显式带上 [includeYear]。
+     *
+     * @property includeYear true → `MMM D, YYYY`（跨年）；false → `D MMMM`（同年）
+     */
+    data class DateTitle(
+        val year: Int,
+        val month: Int,
+        val dayOfMonth: Int,
+        val includeYear: Boolean,
+    )
+
     /** 本地日 → 标题（对齐 `formatChatMapTime` 的四分支）。 */
     private fun titleFor(
         calendar: Calendar,
         day: Long,
         todayDay: Long,
+        yesterdayDay: Long,
+        todayYear: Int,
         localize: (String) -> String,
-        formatDate: (Int, Int, Int) -> String,
+        formatDate: (DateTitle) -> String,
     ): String {
         // ⚠️ 只有 Today/Yesterday 过 i18n（对齐 `ChatMap.tsx:355`）；
         // 日期串全过 localize 会把日期当词条 key —— 查不到回落原文所以
         // "看起来没事"，但词条表会留一堆假 key
         if (day == todayDay) return localize(TODAY)
-        if (day == todayDay - 1) return localize(YESTERDAY)
+        if (day == yesterdayDay) return localize(YESTERDAY)
 
         // 还原成年月日交给调用方格式化（壳的 L10n 不做日期本地化）
         val year = (day / DAYS_NAMESPACE).toInt()
@@ -112,20 +152,17 @@ internal object ChatMapSource {
         calendar.set(Calendar.YEAR, year)
         calendar.set(Calendar.DAY_OF_YEAR, dayOfYear)
         return formatDate(
-            calendar.get(Calendar.YEAR),
-            calendar.get(Calendar.MONTH) + 1,
-            calendar.get(Calendar.DAY_OF_MONTH),
+            DateTitle(
+                year = calendar.get(Calendar.YEAR),
+                month = calendar.get(Calendar.MONTH) + 1,
+                dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH),
+                // 对齐 RN `messageDate.isSame(today, 'year')`
+                includeYear = calendar.get(Calendar.YEAR) != todayYear,
+            ),
         )
     }
 
-    /**
-     * ⚠️ 注意 `todayDay - 1` 只在**同年内**是"前一天"。跨年（1 月 1 日的
-     * 前一天是上一年最后一天）时相减不成立 —— 那种情况会落到 [formatDate]
-     * 分支显示完整日期，**与 RN 一致**：RN 的 `formatChatMapTime` 对
-     * 非今年的日期用 `MMM D, YYYY`，1 月 1 日看昨天正好跨到去年。
-     * 唯一偏差是 12 月 31 日→1 月 1 日这一天不显示 "Yesterday" 而显示日期，
-     * 记为**已知偏差**（一年一天、且方向是"更明确"而非丢信息）。
-     */
+    /** 本地日序号的年内偏移基数（512 > 366，保证不同年份不碰撞且单调）。 */
     private const val DAYS_NAMESPACE = 512L
 
     private const val MILLIS_PER_SECOND = 1_000L

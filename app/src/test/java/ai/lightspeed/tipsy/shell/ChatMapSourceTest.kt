@@ -34,7 +34,10 @@ class ChatMapSourceTest {
         timeZone = tz,
         nowMillis = now,
         localize = { "L($it)" },
-        formatDate = { y, m, d -> "$y-$m-$d" },
+        // 把 includeYear 编进字符串，测试才能断言分支
+        formatDate = { t ->
+            if (t.includeYear) "${t.year}-${t.month}-${t.dayOfMonth}+Y" else "${t.month}-${t.dayOfMonth}"
+        },
     )
 
     @Test
@@ -127,10 +130,55 @@ class ChatMapSourceTest {
     }
 
     @Test
+    fun `跨年时 1月1日 看 12月31日 仍是 Yesterday`() {
+        // ⚠️ 早前用 `todayDay - 1` 判定，而序号是 `year*512 + dayOfYear`、
+        // **在年界不连续**（2027-01-01 与 2026-12-31 相差 660 不是 1），
+        // 所以跨年会漏判成日期标题。
+        // RN 是 `today.subtract(1,'day')`（func.ts:355）、iOS 是 isDateInYesterday
+        // —— 两端跨年都显示 Yesterday，这不是可接受偏差
+        val newYearNoon = millisAt(2027, java.util.Calendar.JANUARY, 1, 12)
+        val lastDayOfPrevYear = thread("nye", timeSeconds = millisAt(2026, java.util.Calendar.DECEMBER, 31, 10) / 1000L)
+
+        val result = floors(ChatListState(threads = listOf(lastDayOfPrevYear)), now = newYearNoon)
+        assertEquals("跨年必须显示 Yesterday", "L(Yesterday)", result[0].title)
+    }
+
+    @Test
+    fun `跨年时今天仍是 Today`() {
+        val newYearNoon = millisAt(2027, java.util.Calendar.JANUARY, 1, 12)
+        val today = thread("t", timeSeconds = millisAt(2027, java.util.Calendar.JANUARY, 1, 9) / 1000L)
+        val result = floors(ChatListState(threads = listOf(today)), now = newYearNoon)
+        assertEquals("L(Today)", result[0].title)
+    }
+
+    @Test
+    fun `同年普通日不带年份，跨年普通日带年份`() {
+        // RN：同年 `D MMMM`；跨年 `MMM D, YYYY`（func.ts:357-361）。
+        // ⚠️ 分支必须在 Source 里判完 —— 只给 UI (y,m,d) 的话 UI 得自己
+        // 再捕获一次 now/timezone，两处捕获时机不同会在午夜/跨年给出矛盾结果
+        val sameYear = thread("a", timeSeconds = daySeconds(10, hour = 10)) // 2026-08-10
+        val prevYear = thread("b", timeSeconds = millisAt(2025, java.util.Calendar.AUGUST, 12, 10) / 1000L)
+
+        val result = floors(ChatListState(threads = listOf(sameYear, prevYear)))
+        val titles = result.filter { it.items.isNotEmpty() }.map { it.title }
+        assertEquals(2, titles.size)
+        assertEquals("同年不带年份", "8-10", titles[0])
+        assertEquals("跨年带年份", "2025-8-12+Y", titles[1])
+    }
+
+    @Test
     fun `空状态也铺满层`() {
         val result = floors(ChatListState())
         assertEquals(5, result.size)
         assertTrue(result.all { it.items.isEmpty() })
+    }
+
+    /** UTC+8 下指定年月日时的毫秒时间戳。 */
+    private fun millisAt(year: Int, month: Int, day: Int, hour: Int): Long {
+        val cal = java.util.Calendar.getInstance(utcPlus8)
+        cal.set(year, month, day, hour, 0, 0)
+        cal.set(java.util.Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
     }
 
     /** UTC+8 下 2026-08-<day> <hour>:<minute> 的秒级时间戳。 */
