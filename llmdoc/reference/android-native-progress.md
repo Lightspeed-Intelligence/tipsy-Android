@@ -65,7 +65,7 @@
 - **Tab3 创建入口已接通**（§2.40，2026-08-18，219 行）：`AppRoute.Create` 进白名单，Tab3 的 ➕ 从「只打一行日志」变成挂 `CreateSurface` 直达创建表单 —— **五个 Tab 全部可用**。壳只传 `createEnterSource` 一个 prop，**刻意不复刻** RN tabPress 那四个参数（Surface 自决落地页，§2.30 纪律）。⚠️ 真机抓到**类别性**缺陷并已修：`AppRoute.Create()` 无参 ⇒ 实例恒相等 ⇒ 去重不解除就「只能用一次」，ChatDetail 因每次带不同 characterId 而侥幸未暴露；后续每个无参路由都要配解除。⚠️ **无微根机器断言**（清单只覆盖 ChatDetail，仅人工比对 provider 树），§9.1 那行全 `✎`，待 owner 定。
 - **Screen P1 已实现**（§2.35，10 文件 2,131 行）：**Screen Tab 从占位换成真实页面，五个 Tab 全部落地**。AB 端点分流（游客/未登录恒 distribution）、归因、首屏缓存、会话埋点双轴、静态图/GIF 两形态。⚠️ **不播视频**：Media3 与有界播放器池属 P2，故 OOM 风险为零。两份 RN fixture 在提交前抓到我两个设计缺陷（归因 position 用原始下标、首屏缓存要在发请求前读）。
 - **Search P2 筛选器已实现**（§2.34，4 文件 723 行）：性别/排序/分级抽屉 + 二级标签栏，Search 达成完整对等。`SearchTagOrderTest` **逐条对拍 RN 的 144 行现成单测**。⚠️ 分级筛选的门是「非 GooglePlay && nsfw 开」，与 Settings 的 Limitless（只有 directApk）**不同轴** —— RuStore 在这里算可选。
-- **不存在 / 未验**：ChatList 的 Map「時光長廊」视图仍是 P2；Screen 的视频播放已实现但**播放链路未验**（§2.42，游客 feed 全静态图）；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。生产路由白名单**六个**目标（三纯原生 + `ChatDetail`/`MiniPhoneChat` + **`Create`**），**`ChatDetailSurface` 的 §9.1 真机十项仍 NOT RUN**、**`CreateSurface` 那行全 `✎` 且无微根机器断言**（§2.40）；其余 10 个业务 Surface 全未过矩阵（含 Settings 的 7 个子屏与 Profile 的五个出口）。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
+- **不存在 / 未验**：ChatList 的 Map「時光長廊」视图仍是 P2；Screen 的视频播放（Media3）属 P2；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。生产路由白名单**六个**目标（三纯原生 + `ChatDetail`/`MiniPhoneChat` + **`Create`**），**`ChatDetailSurface` 的 §9.1 真机十项仍 NOT RUN**、**`CreateSurface` 那行全 `✎` 且无微根机器断言**（§2.40）；其余 10 个业务 Surface 全未过矩阵（含 Settings 的 7 个子屏与 Profile 的五个出口）。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1，待定修法）、**Follow 出口无 Surface 可用**与 **EditProfileSurface 属 W3 还是 W4**（§2.25，方案自相矛盾）。
 
 ## 1. 波次状态
 
@@ -75,7 +75,7 @@
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟢 **完成**：契约层已收口且 CI 已验；**P9 已完成**（§2.36，白名单放开 + 桥桩回填）；§12 关闭链记为**已接受偏差**（owner 2026-08-17）。**冒烟部分兑现**（§2.37 + §2.39）：§9.1 **7 过 / 3 未跑**，业务分流项未验。语言那项的壳缺陷已修（§2.38）且**复跑 PASS（模拟器）**（§2.39） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17/#33 已并） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
 | W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1–P4、P6，§2.25–§2.29，真机验证）；ChatList P1 Grid 主链路已并（§2.30，模拟器冒烟 PASS）；**Search P1 主链路已实现**（§2.31，directApk 真机冒烟 PASS）；**他人主页已实现**（§2.32，第一条端到端可用路径）；**Settings 列表 + 语言页已实现**（§2.33）；**Search P2 筛选器已实现**（§2.34，Search 完整对等）；剩 Profile P5 ⋮ 菜单/P7 头像框、ChatList P2 Map | `a6b9fc56a88d97444fe5f1ce952068bb9222be82` | —（PR #21–#30 已并；Search P2 在 `feat/android-w3-search-p2`） |
-| W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | 🟡 **起步**：Screen **P1 已实现**（§2.35，数据层 + 翻页 + 埋点，**不含 Media3**）；**Tab3 创建入口已接 `CreateSurface`**（§2.40，白名单 + 模拟器已验，⚠️ 无微根机器断言）；**Screen P2 已实现**（§2.42，Media3 有界池 + ±1 窗口 + buffer 三件套，⚠️ **视频播放本身 NOT RUN** —— 游客 feed 无 showcase 数据可验）；剩 P3 二期项、11 个 Surface、系统能力、OTA | `a6b9fc56a88d97444fe5f1ce952068bb9222be82` | —（Screen P2 在 `feat/android-w4-screen-p2-media3`） |
+| W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | 🟡 **起步**：Screen **P1 已实现**（§2.35，数据层 + 翻页 + 埋点，**不含 Media3**）；**Tab3 创建入口已接 `CreateSurface`**（§2.40，白名单 + 模拟器已验，⚠️ 无微根机器断言）；剩 Screen P2（Media3 + 有界播放器池 + buffer 三件套，**OOM 首要风险**）与 P3 二期项、11 个 Surface、系统能力、OTA | `a6b9fc56a88d97444fe5f1ce952068bb9222be82` | —（Screen P1 在 `feat/android-w4-screen-p1`） |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
 
 **W0+W1 时间盒**：这两波不产出用户可见价值，目标是"够用就往下走"。若超过总工期 1/4,停下复审是否过度设计（方案 §8.5）。
@@ -2407,7 +2407,6 @@ ExoPlayerImplInternal.shouldContinueLoading`，多个 ExoPlayer 并存时
 | 播放窗口 | **`abs(index - currentIndex) <= 1`** —— 只挂当前 ±1 三个播放器 | `FeedMediaItem.tsx:594` |
 | buffer 上限 | min 2500 / max **5000** / forPlayback 500 / afterRebuffer 1500 / backBuffer 2000 / 磁盘缓存 **50MB** | `FeedMediaItem.tsx:600-609` |
 
-✅ **Media3 依赖已于 §2.42 加上**（原记「还没加」）—— 下文是 P1 当时的状态。
 ⚠️ **`largeHeap` 已在但 Media3 依赖还没加** —— `app/build.gradle` 与
 `libs.versions.toml` 都搜不到 media3/exoplayer。加依赖时注意方案 §8.1 的
 「**三件套必须同时到位**」：largeHeap + 有界池 + 图片内存上限。
@@ -3032,101 +3031,6 @@ owner 需定：补一份 CreateSurface 依赖清单再合（与 ChatDetail 同�
 还是先合、清单与 §9.1 填表作为独立包跟上。本刀按后者提交 ——
 **白名单里因此多了一个未经机器断言的 Surface**，这条必须显式记着，
 且 §9.1 的 `CreateSurface` 行仍全 `✎`，**不得标 production-ready**。
-
-### 2.42 W4 Screen P2：Media3 有界播放器池（2026-08-18）
-
-`showcase` 形态**第一次真的播视频** —— P1 只显示静态封面（§2.35）。
-新增 3 文件 + 2 测试文件，733 行：`ScreenPlayerPool`（有界池）、
-`ScreenVideoHost`（±1 窗口内的视频层）、`ScreenSoundPreference`（声音初值）。
-
-**这是本波次开工门槛「先审计 iOS」的第一刀**（owner 2026-08-18 决定）。
-审计结论进了代码注释与 PR，此处只记状态与偏差。
-
-#### iOS 先例 → Android 映射（四条，两条是必要偏离）
-
-| iOS | Android | 说明 |
-| --- | --- | --- |
-| `Pages/Screen/AVPlayerPool.swift`（93 行） | `ScreenPlayerPool` | 结构照搬：借还、容量分档、±1 窗口 |
-| 容量按 `physicalMemory` 3~5 | 按 `ActivityManager.largeMemoryClass` 同档 | ⚠️ **必要偏离**：Android 的真实上界是**进程堆上限**而非设备内存。一台 8GB 低端机 `memoryClass` 可能只 128MB，照物理内存开 5 个播放器就是照着 OOM 走 |
-| `assetCache` 缓 `AVURLAsset` | **无** | ⚠️ **必要偏离**：`AVURLAsset` 自持加载状态可跨 player 复用；Media3 的对等物 `MediaSource` 一旦被 `setMediaSource` 消费就与那个 player 绑定，跨 player 复用是未定义行为 |
-| `actionAtItemEnd = .pause` / 不接管 AudioSession | `REPEAT_MODE_OFF` / `handleAudioFocus=false` | 等价映射 |
-
-#### ⚠️ 六个 buffer 值抄的是 RN 的 Android 分支，**不是 iOS**
-
-iOS 研究文档（`Tipsy-iOS/llmdoc/architecture/tab1-screen-migration-research.md`）
-§2.1 明写「Android 侧有详细 `bufferConfig`，iOS 侧没配 —— iOS 靠 AVPlayer
-默认缓冲策略」。**所以这一处没有 iOS 先例可对齐**，真值是
-`FeedMediaItem.tsx:602-608`，RN 注释原文是「Android 缓冲配置 - 防止大视频导致 OOM」：
-`minBufferMs` 2500 / `maxBufferMs` 5000 / `bufferForPlaybackMs` 500 /
-`AfterRebuffer` 1500 / `backBuffer` 2000。
-
-**照 iOS 的「不配」做，会正好丢掉 RN 专为防 OOM 加的那组参数** ——
-这正是「架构照 iOS、像素与参数照 RN Android 分支」这条边界的第一个实例。
-
-⚠️ `cacheSizeMB: 50`（HTTP 磁盘缓存）**本刀未实现**，记为**已知偏差**：
-Media3 侧对应 `SimpleCache` + `CacheDataSource`，而壳与 RN 共享同一个
-OkHttpClient，两边各配一份磁盘缓存会在同一目录打架。
-
-#### Media3 不是新增依赖
-
-`react-native-video` 已把整套 media3 **1.8.0** 引进依赖树
-（`node_modules/react-native-video/android/gradle.properties:7`
-`RNVideo_media3Version=1.8.0`，且实测 `:app:dependencies` 里
-`media3-exoplayer:1.8.0` 经它传递而来）。壳只是把**已在类路径上**的版本
-显式固定 —— 与 mmkv / coil / coroutines 同性质的耦合约束，
-声明更高版本会把 RN 侧的视频播放也顶上去。
-**刻意不引 `media3-session`**：它会注册系统媒体通知与锁屏控制，
-而 Screen 是静音自动播的 feed。
-
-#### ⚠️ 一处**待 owner 定**的所有权例外
-
-`videoSoundEnabled` 的真值在 **`chat-persist-storage`**（`chat_persist.ts:137`，
-默认 **`true` 开声**），而方案 §4.6 / §4.1 把该键整体划给 RN Surface ——
-`LegacyMmkvStore` 的结论表里这一行原本是**读 ❌ / 写 ❌**。
-
-原生 Screen 页要播视频就必须知道这个初值（否则默认静音或开声都是猜），
-故改成 **只读 `videoSoundEnabled` 这一个字段 / 仍不写**，结论表已同步更新。
-
-选只读的理由：§2.23.1（性别筛选）与 §2.37（账号语言）两例倒灌的形状完全相同
-—— 都是**壳写了共享信封但没 merge / 没通知 RN**。纯读**不可能**产生那一类缺陷。
-三条路里这是唯一不新开写口子的：
-
-| 路 | 行为对等 | 代价 |
-| --- | --- | --- |
-| **1 只读（已实现）** | 初值对 | 页内切换不持久化，下次进来回落 |
-| 2 壳内独立键 | 初值可能与 RN 不一致 | Screen 与 ChatDetail Surface 声音状态分叉 |
-| 3 允许壳写这一个键 | 完全对等 | 新开 Native→RN 私有键写口子，须先核该键有无自定义 `merge`（§2.38 的教训：`config-persist-storage` 有而 `user-storage` 没有，**结论不可外推**） |
-
-owner 若选 2 / 3，改 `ScreenSoundPreference` 一处 + 结论表 + 本节。
-
-#### 验证
-
-- app 单测 **921 条 failures=0 skipped=0**；`:tipsy-auth` 15 条全绿
-- `lintDirectApkDebug` 通过且**未加 baseline 条目**。Media3 的 opt-in 用逐点标注 ——
-  ⚠️ 必须标 `@UnstableApi` **本身**，Kotlin 的 `@OptIn(UnstableApi::class)`
-  对这个 marker **无效**（它是 Java 注解、无 `@RequiresOptIn`）：会得到
-  "'@OptIn' has no effect" 警告而 lint 的 `UnsafeOptInUsageError` 照样报错，
-  **看起来处理了其实没有**。另外标在 `borrow` / `onCreateView` 而**不是类上** ——
-  标类会让 `TabHostFragment` 也被要求 opt-in，内部实现细节不该外溢到 Tab 宿主
-- `assembleGooglePlayDebug` + `assembleDirectApkDebug` 通过
-- 模拟器（Pixel_10 / API 36 / directApk debug）：无崩溃；切 Tab 往返 5 次
-  PSS **176MB → 173MB 无增长**
-
-#### 🔴 视频播放本身 NOT RUN
-
-游客 feed 实测连划 8 张卡**全部是 `single_character`（静态图）**，
-一条 showcase 都没有 —— 所以**播放链路、首帧时序、「同时存活 ≤ capacity」
-这三项都没有数据可验**，不是验过了而是没得验。
-
-需要**登录后有 showcase 数据**的真机冒烟补：
-1. 视频真的起播 + 首帧到达后封面淡出（防黑帧那条时序）
-2. 快速连划 10+ 张，`aliveCount` 不超过 `capacity`（池的有界保证）
-3. 播完不循环：暂停 + 回首帧 + 封面重现
-4. 切 Tab / 进后台立即停播（不在后台出声）
-5. OOM 与解码器耗尽：反复进出 20 次后视频仍能播
-
-⚠️ 这五项是 P2 的**核心风险面**（方案 §8.1 标 Screen「唯一首要风险是 OOM」），
-在它们跑过之前 **Screen P2 不得标 production-ready**。
 
 ## 3. 横切能力
 
