@@ -29,6 +29,7 @@ import org.json.JSONObject
  * @property userId 用户 id（`user_id`）。**也是 Profile 页展示的 UID**
  * @property nickname 昵称，可空 —— 新注册用户可能还没设
  * @property avatarUrl 头像 URL，可空 —— 空时 UI 走占位图
+ * @property avatarDecorationCode 头像框配置 code，可空；图片 URL 由配置目录解析
  * @property backgroundImgUrl 主页背景图 URL，可空 —— 空时走内置默认图
  *   （`user-profile.tsx:418-423` fallback 到 `profile_bg.png`）
  * @property bio 个人简介（`bio`，`store/user.ts:195`），可空 —— 空时 UI 显示
@@ -44,6 +45,7 @@ data class CurrentUser(
     val nickname: String?,
     val avatarUrl: String?,
     val backgroundImgUrl: String?,
+    val avatarDecorationCode: String? = null,
     val bio: String? = null,
     val relationshipSwitch: Boolean = false,
 ) {
@@ -68,6 +70,8 @@ data class CurrentUser(
                 userId = userId,
                 nickname = ScalarCoercion.optString(data, FIELD_NICKNAME)?.takeIf { it.isNotBlank() },
                 avatarUrl = ScalarCoercion.optString(data, FIELD_AVATAR_URL)?.takeIf { it.isNotBlank() },
+                avatarDecorationCode = ScalarCoercion.optString(data, FIELD_AVATAR_DECORATION_CODE)
+                    ?.takeIf { it.isNotBlank() },
                 backgroundImgUrl = ScalarCoercion.optString(data, FIELD_BACKGROUND_IMG_URL)
                     ?.takeIf { it.isNotBlank() },
                 bio = ScalarCoercion.optString(data, FIELD_BIO)?.takeIf { it.isNotBlank() },
@@ -79,6 +83,7 @@ data class CurrentUser(
         private const val FIELD_USER_ID = "user_id"
         private const val FIELD_NICKNAME = "nickname"
         private const val FIELD_AVATAR_URL = "avatar_url"
+        private const val FIELD_AVATAR_DECORATION_CODE = "avatar_decoration_code"
         private const val FIELD_BACKGROUND_IMG_URL = "background_img_url"
         private const val FIELD_BIO = "bio"
         private const val FIELD_RELATIONSHIP_SWITCH = "relationship_switch"
