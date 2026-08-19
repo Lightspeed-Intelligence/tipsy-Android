@@ -138,6 +138,49 @@ class ProfileApi(private val apiClient: ApiClient) : ProfileSource {
         return ProfileFavoritePage.parse(envelope.data)
     }
 
+    // ── P5 卡片 ⋮ 菜单动作（`apis/character.ts` / `apis/create.ts`）──────
+
+    /**
+     * 置顶/取消置顶（`/character/toggle_pin`，`apis/character.ts:461-470`）。
+     *
+     * **单端点 toggle**：同一路径，服务端按当前态翻转 —— 不是 pin/unpin 两个。
+     * 三种类型共用，`item_type` 取 `character` / `story` / `game`。
+     *
+     * @return 服务端翻转后的 `is_pinned`（null = 响应没带，调用方按重拉对账）
+     */
+    override suspend fun togglePin(itemId: String, itemType: ProfileItemType): Boolean? {
+        val body = JSONObject()
+            .put(FIELD_TOGGLE_ITEM_ID, itemId)
+            .put(FIELD_TOGGLE_ITEM_TYPE, itemType.wire)
+        val envelope = apiClient.post(
+            path = PATH_TOGGLE_PIN,
+            jsonBody = body.toString(),
+            authMode = AuthMode.REQUIRED,
+        )
+        return envelope.data?.let { ScalarCoercion.optBoolean(it, FIELD_IS_PINNED_RESP) }
+    }
+
+    /**
+     * 删除角色（`/character/delete`，`apis/create.ts:334`）。
+     * story 是**另一个端点另一个字段**（[deleteStory]），不要归并。
+     */
+    override suspend fun deleteCharacter(characterId: String) {
+        apiClient.post(
+            path = PATH_DELETE_CHARACTER,
+            jsonBody = JSONObject().put(FIELD_CHARACTER_ID, characterId).toString(),
+            authMode = AuthMode.REQUIRED,
+        )
+    }
+
+    /** 删除故事（`/story/delete`，`apis/create.ts:355`，请求体 `story_id`）。 */
+    override suspend fun deleteStory(storyId: String) {
+        apiClient.post(
+            path = PATH_DELETE_STORY,
+            jsonBody = JSONObject().put(FIELD_STORY_ID, storyId).toString(),
+            authMode = AuthMode.REQUIRED,
+        )
+    }
+
     companion object {
         const val PATH_STATS_INFO = "/user/stats_info"
         const val PATH_CREATED_LIST = "/user/created/list"
@@ -163,6 +206,15 @@ class ProfileApi(private val apiClient: ApiClient) : ProfileSource {
         /** 创作列表每页 10（`useCreatedList.ts:18` `LIMIT = 10`）。 */
         const val PAGE_SIZE_CREATED = 10
 
+        /** 置顶 toggle（`apis/character.ts:466`）。 */
+        const val PATH_TOGGLE_PIN = "/character/toggle_pin"
+
+        /** 删除角色（`apis/create.ts:336`）。 */
+        const val PATH_DELETE_CHARACTER = "/character/delete"
+
+        /** 删除故事（`apis/create.ts:355`）。 */
+        const val PATH_DELETE_STORY = "/story/delete"
+
         /** `ReviewStage.All` —— 自己主页要看到待审/驳回的内容。 */
         const val REVIEW_STAGE_ALL = "All"
 
@@ -174,6 +226,13 @@ class ProfileApi(private val apiClient: ApiClient) : ProfileSource {
         private const val FIELD_TYPES = "types"
         private const val FIELD_NSFW = "nsfw"
         private const val FIELD_IS_REVERSE = "is_reverse"
+
+        // P5 动作字段
+        private const val FIELD_TOGGLE_ITEM_ID = "item_id"
+        private const val FIELD_TOGGLE_ITEM_TYPE = "item_type"
+        private const val FIELD_IS_PINNED_RESP = "is_pinned"
+        private const val FIELD_CHARACTER_ID = "character_id"
+        private const val FIELD_STORY_ID = "story_id"
     }
 }
 
@@ -186,6 +245,11 @@ interface ProfileSource {
     suspend fun fetchMemoryPage(page: Int): ProfileMemoryPage
     suspend fun fetchRoleCardPage(page: Int): ProfileRoleCardPage
     suspend fun fetchFavoritePage(page: Int, liked: Boolean): ProfileFavoritePage
+
+    // P5 卡片菜单动作
+    suspend fun togglePin(itemId: String, itemType: ProfileItemType): Boolean?
+    suspend fun deleteCharacter(characterId: String)
+    suspend fun deleteStory(storyId: String)
 }
 
 /**

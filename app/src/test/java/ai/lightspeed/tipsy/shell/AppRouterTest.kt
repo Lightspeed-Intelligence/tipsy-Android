@@ -230,6 +230,19 @@ class AppRouterTest {
     }
 
     /**
+     * P5：`EditCharacter` 进白名单 —— 创作卡 ⋮ 菜单的「编辑」有下一屏。
+     * 同 Create 的理由：只加白名单不加 `ShellNavigator.navigate` 分支会
+     * 走到 `error()`，这里先红。
+     */
+    @Test
+    fun `EditCharacter 在生产白名单内`() {
+        assertTrue(
+            "EditCharacter 必须在生产白名单里，否则卡片菜单的编辑点了没反应",
+            AppRoute.EditCharacter::class.java in ProductionRoutePolicy.enabledRouteTypes,
+        )
+    }
+
+    /**
      * Create 要求登录：未登录时**排队**而不是直接打开。
      *
      * 创建流程的每个接口都要 token，未登录直接挂 Surface 的表现是

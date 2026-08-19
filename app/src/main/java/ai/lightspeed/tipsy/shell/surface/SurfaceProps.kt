@@ -1,6 +1,7 @@
 package ai.lightspeed.tipsy.shell.surface
 
 import ai.lightspeed.tipsy.shell.router.AppRoute
+import org.json.JSONObject
 
 /**
  * 把 [AppRoute] 映射成目标 Surface 的**业务 props**（W1-CLOSEOUT-2）。
@@ -115,6 +116,14 @@ object SurfaceProps {
     const val CREATE_ENTER_SOURCE = "createEnterSource"
 
     /**
+     * `CreateSurface.tsx:29-31` 的编辑态双 prop：`editCharacter`（完整对象，
+     * 首选）与 `editCharacterId`（有损兜底）。`isEdit = !!editCharacter ||
+     * !!editCharacterId`（`:79`）—— 两个都不放才会落创建态。
+     */
+    const val EDIT_CHARACTER = "editCharacter"
+    const val EDIT_CHARACTER_ID = "editCharacterId"
+
+    /**
      * 把 route 转成业务 props。
      *
      * @return 业务参数；无参数的 route 返回**空 map**。
@@ -223,6 +232,26 @@ object SurfaceProps {
          * （原封喂 `initCharStateUpdate` 才不丢字段），届时单开 route。
          */
         is AppRoute.Create -> mapOf(CREATE_ENTER_SOURCE to route.enterSource)
+
+        /*
+         * `CreateSurface` 编辑态（P5，Profile 创作卡 ⋮ 菜单「编辑」）。
+         *
+         * `editCharacter` 是**完整角色对象**（嵌套层原文经 JsonRouteParams
+         * 结构转换）——CreateSurface 用 `initCharStateUpdate(editCharacter)`
+         * 全量预填（`CreateSurface.tsx:88-92`）。解析失败退化成只传
+         * `editCharacterId`：RN 走 `getCharacterAuth` 有损兜底（可能丢
+         * `conversation_style` 等字段，但仍是编辑态），比整个不传落进
+         * **创建态**（用户以为在编辑、实际新建了一个角色）安全得多。
+         */
+        is AppRoute.EditCharacter -> buildMap {
+            val payload = route.characterJson?.let { json ->
+                runCatching { JsonRouteParams.toParams(JSONObject(json)) }.getOrNull()
+            }
+            if (payload != null) put(EDIT_CHARACTER, payload)
+            route.characterId?.takeIf { it.isNotBlank() }?.let {
+                put(EDIT_CHARACTER_ID, it)
+            }
+        }
 
         // 其余 route 的目标页尚未启用（Router 会先拦下）。
         // **不写 else -> null**：加新 route 时编译器要强制我来这里想一次

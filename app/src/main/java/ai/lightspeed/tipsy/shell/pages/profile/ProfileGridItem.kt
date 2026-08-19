@@ -5,10 +5,13 @@ import ai.lightspeed.tipsy.shell.i18n.rememberLocalizedString
 import ai.lightspeed.tipsy.shell.pages.home.HomeText
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -21,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -51,18 +55,36 @@ import coil3.request.transformations
  * 4. 右上：置顶 Pin（`is_pinned`）
  * 5. `final_hit < 2`：整卡换成「不可用」遮罩，其余全部不画
  *
+ * ## P5 补齐的 ⋮ 菜单（[menu] 非 null 时）
+ *
+ * 动作矩阵按方案 §8.1（与 iOS 壳一致）：**角色=编辑/删除/置顶、
+ * 故事=删除/置顶、游戏=置顶**。两处刻意不迁：
+ * - **Share** —— 分享卡是 `ShareCharacter` 独立模态（427 行 + 分享基建），
+ *   iOS 壳同样未迁；
+ * - **圆形模糊揭开动画**（BlurView + Reanimated reveal）—— 纯视觉增强，
+ *   壳用静态深色 scrim；动作网格布局照抄。
+ *
+ * ⚠️ 两条容易做反的 RN 真值：
+ * - **遮罩卡（不可用）也显示 ⋮**（`isSelf &&` 块在 `isMasked` 三元**之外**，
+ *   `CharacterGridItem.tsx:655`）—— 这是用户删除不可用角色的唯一途径；
+ * - more 按钮必须**吃掉点击**（iOS 踩过装饰 View 穿透进详情页）——
+ *   Compose `clickable` 天然消费事件。
+ *
  * ## 本刀仍不做
  *
- * - **⋮ 菜单与动作**（编辑/删除/置顶）—— P5。菜单按钮届时必须是可点击组件
- *   吃掉事件（iOS 踩过装饰 View 点击穿透进详情页）
- * - **卡片点击进详情** —— 目标页（角色详情/ChatDetail）不在已启用集合
+ * - **卡片点击进聊天** —— ChatDetail 已启用（P9），但创作卡点击要先种
+ *   chat preload（`handleClick` 里那套 `chatPreloadStore`），属独立入口包
  * - 比赛 winner 徽章（`useCharacterDisplayBadge`，运营配置源）与水印
  *   （`watermarkRenderKind`，依赖水印配置 hydrate）
+ *
+ * @param menu P5 菜单回调组；null = 不渲染 ⋮（他人主页复用本组件时不传，
+ *   对齐 RN 的 `isSelf &&`）
  */
 @Composable
 fun ProfileGridItem(
     item: ProfileCreatedItem,
     modifier: Modifier = Modifier,
+    menu: ProfileCardMenuHooks? = null,
 ) {
     Box(
         modifier = modifier
@@ -72,11 +94,27 @@ fun ProfileGridItem(
             .testTag("profile_created_card_${item.dedupeKey}"),
     ) {
         if (item.isMaskedUnavailable) {
-            // final_hit < 2：整卡不可用，遮罩之外什么都不画（CharacterGridItem.tsx:548-559）
+            // final_hit < 2：整卡不可用，遮罩之外只留 ⋮ 菜单（见类注释）
             UnavailableMask()
-            return@Box
+        } else {
+            CardContent(item)
         }
 
+        if (menu != null) {
+            MenuTrigger(
+                onClick = menu.onOpen,
+                modifier = Modifier.align(Alignment.BottomEnd),
+            )
+            if (menu.isOpen) {
+                CardMenuOverlay(item = item, menu = menu)
+            }
+        }
+    }
+}
+
+/** 卡片正常内容（P4 的四层）。P5 抽出为函数：遮罩卡也要渲染菜单层。 */
+@Composable
+private fun BoxScope.CardContent(item: ProfileCreatedItem) {
         val cover = item.coverUrl
         if (!cover.isNullOrBlank()) {
             val url = HomeText.transformImageUrl(cover)
@@ -193,6 +231,157 @@ fun ProfileGridItem(
                     .testTag("profile_card_pin"),
             )
         }
+}
+
+/**
+ * P5 菜单的回调组。抽成一个参数对象而不是四个散参：调用点（两处网格）
+ * 少抄一遍，且「传了 onOpen 忘了 onPin」这类漏接从类型上排除。
+ */
+data class ProfileCardMenuHooks(
+    /** 本卡菜单是否展开（`state.openMenuKey == item.dedupeKey`）。 */
+    val isOpen: Boolean,
+    /** 置顶请求在飞（`state.pinningKey == item.dedupeKey`），Pin 键禁用。 */
+    val isPinning: Boolean,
+    val onOpen: () -> Unit,
+    val onDismiss: () -> Unit,
+    val onEdit: () -> Unit,
+    val onDelete: () -> Unit,
+    val onTogglePin: () -> Unit,
+)
+
+/**
+ * 右下 ⋮ 按钮（`menuTriggerContainer`：right 4 / bottom 12，图 24）。
+ * ⚠️ 必须吃掉点击（clickable 天然消费）—— iOS 的装饰 View 穿透教训。
+ */
+@Composable
+private fun MenuTrigger(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Image(
+        painter = painterResource(R.drawable.ic_profile_card_more),
+        // 无障碍标签裸英文（ChatList 顶栏图标同例）；RN 侧该按钮无 accessibilityLabel
+        contentDescription = "More actions",
+        modifier = modifier
+            .padding(end = MENU_TRIGGER_MARGIN_END.dp, bottom = MENU_TRIGGER_MARGIN_BOTTOM.dp)
+            .size(MENU_TRIGGER_ICON.dp)
+            .clickable(onClick = onClick)
+            .testTag("profile_card_more"),
+    )
+}
+
+/**
+ * 卡内菜单浮层（`CharacterGridItem.tsx:674-776` 的静态形状）。
+ *
+ * 动作矩阵（方案 §8.1）：角色=编辑/删除/置顶、故事=删除/置顶、游戏=置顶。
+ * Share 与圆形模糊揭开动画刻意不迁（见 [ProfileGridItem] 类注释）。
+ * 布局照 RN：整卡 scrim（点击关闭）+ 居中动作网格（两列、48% 宽、
+ * rowGap 18、图标 24、文案 10sp 白）。
+ */
+@Composable
+private fun BoxScope.CardMenuOverlay(item: ProfileCreatedItem, menu: ProfileCardMenuHooks) {
+    Column(
+        verticalArrangement = Arrangement.Center,
+        modifier = Modifier
+            .matchParentSize()
+            // scrim 本体即关闭热区（RN 的 absoluteFill Pressable + 黑 60% 遮罩）
+            .clickable(onClick = menu.onDismiss)
+            .background(MENU_SCRIM)
+            .padding(horizontal = MENU_GRID_PADDING_H.dp, vertical = MENU_GRID_PADDING_V.dp)
+            .testTag("profile_card_menu"),
+    ) {
+        // flexWrap 两列：动作最多 3 个，手工分行（每行两个）比引入 FlowRow 直白
+        val actions = menuActionsFor(item, menu)
+        actions.chunked(2).forEach { rowActions ->
+            Row(
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = MENU_ROW_GAP.dp),
+            ) {
+                rowActions.forEach { action ->
+                    MenuAction(action, modifier = Modifier.weight(1f))
+                }
+                // 奇数个动作时补占位，保持 48% 两列的布局（SpaceBetween 不拉伸单元素）
+                if (rowActions.size == 1) {
+                    Spacer(Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+private data class MenuActionSpec(
+    val icon: Int,
+    /** i18n key = 英文原文。 */
+    val labelKey: String,
+    val enabled: Boolean,
+    val onClick: () -> Unit,
+    val testTag: String,
+)
+
+/** 动作矩阵（见 [CardMenuOverlay]）。顺序照 RN：编辑 → 删除 → 置顶。 */
+private fun menuActionsFor(
+    item: ProfileCreatedItem,
+    menu: ProfileCardMenuHooks,
+): List<MenuActionSpec> = buildList {
+    if (item.type == ProfileItemType.CHARACTER) {
+        add(
+            MenuActionSpec(
+                icon = R.drawable.ic_profile_menu_edit,
+                labelKey = "Edit",
+                enabled = true,
+                onClick = menu.onEdit,
+                testTag = "profile_card_menu_edit",
+            ),
+        )
+    }
+    if (item.type != ProfileItemType.GAME) {
+        add(
+            MenuActionSpec(
+                // RN 的 card_delete.png 与 Search 清除历史是同一张图
+                //（lint IconDuplicates 实测抓出），复用已入库的那份
+                icon = R.drawable.ic_search_history_clear,
+                labelKey = "Delete",
+                enabled = true,
+                onClick = menu.onDelete,
+                testTag = "profile_card_menu_delete",
+            ),
+        )
+    }
+    add(
+        MenuActionSpec(
+            icon = if (item.isPinned) {
+                R.drawable.ic_profile_menu_unpin
+            } else {
+                R.drawable.ic_profile_menu_pin
+            },
+            labelKey = if (item.isPinned) "Unpin" else "Pin",
+            enabled = !menu.isPinning,
+            onClick = menu.onTogglePin,
+            testTag = "profile_card_menu_pin",
+        ),
+    )
+}
+
+@Composable
+private fun MenuAction(spec: MenuActionSpec, modifier: Modifier = Modifier) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier
+            .alpha(if (spec.enabled) 1f else MENU_DISABLED_ALPHA)
+            .clickable(enabled = spec.enabled, onClick = spec.onClick)
+            .testTag(spec.testTag),
+    ) {
+        Image(
+            painter = painterResource(spec.icon),
+            contentDescription = null, // 文案就在下方
+            modifier = Modifier.size(MENU_ACTION_ICON.dp),
+        )
+        Text(
+            text = rememberLocalizedString(spec.labelKey),
+            color = Color.White,
+            fontSize = MENU_ACTION_FONT.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = MENU_ACTION_TEXT_GAP.dp),
+        )
     }
 }
 
@@ -313,3 +502,18 @@ private const val MASK_PADDING_H = 8
 private const val MASK_LOCK_ICON = 24
 private const val MASK_FONT = 12
 private val MASK_BACKGROUND = Color(0x0FFFFFFF)
+
+// P5 ⋮ 菜单（menuTrigger right4/bottom12 图24；menuGrid paddingH10/V18；
+// menuGridContent rowGap18；menuAction 图24/文10sp；disabled opacity 0.4；
+// scrim = menuOverlayMask 黑 60%）
+private const val MENU_TRIGGER_ICON = 24
+private const val MENU_TRIGGER_MARGIN_END = 4
+private const val MENU_TRIGGER_MARGIN_BOTTOM = 12
+private const val MENU_GRID_PADDING_H = 10
+private const val MENU_GRID_PADDING_V = 18
+private const val MENU_ROW_GAP = 18
+private const val MENU_ACTION_ICON = 24
+private const val MENU_ACTION_FONT = 10
+private const val MENU_ACTION_TEXT_GAP = 10
+private const val MENU_DISABLED_ALPHA = 0.4f
+private val MENU_SCRIM = Color(0x99000000)
