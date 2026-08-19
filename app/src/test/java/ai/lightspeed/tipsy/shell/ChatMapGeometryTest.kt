@@ -102,9 +102,9 @@ class ChatMapGeometryTest {
         assertEquals(-1, ChatMapGeometry.VISIBLE_INDEX_MIN)
         assertEquals(3, ChatMapGeometry.VISIBLE_INDEX_MAX)
         assertEquals(2, ChatMapGeometry.TITLE_FADE_INDEX)
-        // ⚠️ 0.5px 容差不能去掉：初始/吸附后 scrollY 可能是 -0.0x 的浮点噪声，
+        // ⚠️ 0.5dp 容差不能去掉：初始/吸附后 scrollY 可能是 -0.0x 的浮点噪声，
         // 裸 floor 会错位一整行（iOS 端口踩过）
-        assertEquals(0.5f, ChatMapGeometry.CURR_INDEX_EPSILON, EPS)
+        assertEquals(0.5f, ChatMapGeometry.CURR_INDEX_EPSILON_DP, EPS)
     }
 
     @Test

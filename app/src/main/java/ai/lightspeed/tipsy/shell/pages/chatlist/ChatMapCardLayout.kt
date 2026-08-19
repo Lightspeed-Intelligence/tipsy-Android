@@ -169,23 +169,28 @@ internal object ChatMapCardLayout {
     /**
      * 楼层模式 → 5 个横向偏移（对齐 `processOne/Three/Five`）。
      *
+     * ⚠️ **所有尺寸参数都是 dp**（`Float`，与 solver 全链一致）。
+     * `windowWidthDp` 早前是 `Int` —— 那个类型很容易让人直接塞
+     * `constraints.maxWidth`（px）。产出的 `disOut` 会直接喂 [solve]，
+     * 单位混进来后**整条链都偏一个 density 倍且不报错**。
+     *
      * @param mode 楼层模式，恒为 1 / 3 / 5（4 与 2 归 3，见 [floorMode]）
      * @param nextMode 下一层的模式（展开动画要用）
-     * @param offsetY 该层的纵向偏移
-     * @param cardHeight 卡高 —— ⚠️ yRatio 用的是**卡高**不是行高
+     * @param offsetYDp 该层的纵向偏移（dp）
+     * @param cardHeightDp 卡高（dp）—— ⚠️ yRatio 用的是**卡高**不是行高
      *   （对齐 `TipsyCarousel` 的 `offsetY / itemSize.height`）
      */
     fun floorOffsets(
         mode: Int,
         nextMode: Int,
-        offsetY: Float,
-        windowWidth: Int,
-        cardWidth: Float,
-        cardHeight: Float,
+        offsetYDp: Float,
+        windowWidthDp: Float,
+        cardWidthDp: Float,
+        cardHeightDp: Float,
     ): FloatArray {
-        val n5Dis1 = (windowWidth - cardWidth * RATIO1) * 0.5f
-        val n5Dis2 = 0.3f * windowWidth + (0.2f - 0.5f * RATIO2) * cardWidth
-        val yRatio = if (cardHeight == 0f) 0f else offsetY / cardHeight
+        val n5Dis1 = (windowWidthDp - cardWidthDp * RATIO1) * 0.5f
+        val n5Dis2 = 0.3f * windowWidthDp + (0.2f - 0.5f * RATIO2) * cardWidthDp
+        val yRatio = if (cardHeightDp == 0f) 0f else offsetYDp / cardHeightDp
 
         return when (mode) {
             // processOne（`TipsyCarousel.tsx:117-129`）：默认全 0（不展开）。
@@ -287,6 +292,11 @@ internal object ChatMapCardLayout {
     private const val RATIO2 = 0.86f
     private const val RATIO3 = 1f
 
-    /** 一层最多 5 张，故 disOut 恒为 5 个。 */
+    /**
+     * **可见弧/偏移槽恒为 5**，故 `disOut` 恒 5 个。
+     *
+     * ⚠️ **不是"一层最多 5 张卡"** —— 同日超过 5 条会话全部保留
+     * （`ChatMapFloors.carouselSlots`），靠 distance 环绕显示。
+     */
     private const val CARD_SLOTS = 5
 }

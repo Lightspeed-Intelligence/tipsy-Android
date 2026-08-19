@@ -164,7 +164,7 @@ internal object ChatMapFloors {
      */
     fun currIndexFor(scrollY: Float, rowHeight: Int, floorIndex: Int): Int {
         if (rowHeight <= 0) return floorIndex
-        val shifted = (scrollY + ChatMapGeometry.CURR_INDEX_EPSILON) / rowHeight
+        val shifted = (scrollY + ChatMapGeometry.CURR_INDEX_EPSILON_DP) / rowHeight
         return Math.floor(shifted.toDouble()).toInt() + floorIndex
     }
 

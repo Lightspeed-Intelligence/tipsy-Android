@@ -35,7 +35,7 @@ internal object ChatMapGeometry {
      *
      * RN 侧这些量来自 `useWindowDimensions()`（`ChatMap.tsx:127`）——
      * React Native 的尺寸单位是**密度无关像素**，等价于 Android 的 dp。
-     * 常量 `300`（[floorHeight] 的偏移）、`-180`（translateY clamp 下界）、
+     * 常量 `300`（[floorHeightDp] 的偏移）、`-180`（translateY clamp 下界）、
      * 以及三组样条的输出值（`-70` / `170` / `500` / `-88` / `-180` 等）
      * **全部是 dp 数值**。
      *
@@ -49,7 +49,7 @@ internal object ChatMapGeometry {
      * | --- | --- | --- |
      * | [cardWidthDp] / [baseXDp] | 纯乘（`*12/25`、`*1.5/5`） | **恰好等价** —— 乘法与密度换算可交换，先 px 算再 `toDp()` 与先 `toDp()` 再算结果相同 |
      * | [floorHeightDp] | **带常量**（`(h - 300) / 3`） | **不等价**：`300` 是 dp 数值，px 下只相当于 `300/density` dp，曲线横轴整体偏移 |
-     * | [rowHeightDp] | **带 `round`** | **不严格等价**：先 px round 再转 dp 与先转 dp 再 round 相差最多约 0.5dp（实测 1123px 下差 0.52dp）。量小但同样不是恒等 |
+     * | [rowHeightDp] | **带 `round`** | **不严格等价**：先 px round 再转 dp 与先转 dp 再 round 相差**亚 dp**（实测 1123px / density 2.625 下 0.52dp；严格上界随 density 变）。量小但同样不是恒等 |
      * | [TRANSLATE_Y_CLAMP_LOWER_DP] 与三组样条输出 | 常量本身 | 直接当 px 用会让位移量差一个 density 倍 |
      *
      * 也就是说**只有纯乘那一类**传 px 才恰好没事；带常量、带 `round` 的都会偏。
@@ -76,7 +76,7 @@ internal object ChatMapGeometry {
     /**
      * 样条横轴基准 `floorHeight = (windowHeight - 300) / 3`。
      *
-     * ⚠️ 与 [rowHeight] 是**两个不同的量**（iOS 端口注释也专门标了这点）：
+     * ⚠️ 与 [rowHeightDp] 是**两个不同的量**（iOS 端口注释也专门标了这点）：
      * 前者是列表里一层的物理高度，这个是动画曲线的横轴基准。混用会让
      * 曲线整体错位 —— 而画面仍然会动，所以不容易看出来。
      */
@@ -149,12 +149,12 @@ internal object ChatMapGeometry {
     const val TITLE_FADE_INDEX = 2
 
     /**
-     * `currIndex` 的 0.5px 容差：`floor((scrollY + 0.5) / rowHeight) + index`。
+     * `currIndex` 的 **0.5dp** 容差：`floor((scrollY + 0.5) / rowHeight) + index`。
      *
      * ⚠️ 这个 0.5 不是随手加的（iOS 端口注释）：初始/吸附后 `scrollY` 可能是
      * `-0.0x` 的浮点噪声，裸 `floor` 会**错位一整行**。
      */
-    const val CURR_INDEX_EPSILON = 0.5f
+    const val CURR_INDEX_EPSILON_DP = 0.5f
 
     // ── 卡叠（与 iOS 同构，RN 侧无 Platform 分支）────────────────
 

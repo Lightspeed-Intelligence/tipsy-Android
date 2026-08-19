@@ -67,7 +67,7 @@ class ChatMapFloorsTest {
     }
 
     @Test
-    fun `currIndex 的 0_5px 容差挡住浮点噪声`() {
+    fun `currIndex 的 0_5dp 容差挡住浮点噪声`() {
         val rowHeight = 300
         // ⚠️ 初始/吸附后 scrollY 可能是 -0.0x 的浮点噪声。
         // 裸 floor(-0.04/300) = floor(-0.000133) = -1 → 错位一整行；

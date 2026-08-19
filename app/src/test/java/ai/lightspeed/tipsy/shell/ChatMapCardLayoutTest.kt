@@ -130,7 +130,7 @@ class ChatMapCardLayoutTest {
     @Test
     fun `五卡模式稳定态是展开的`() {
         // processFive 默认 [-n5Dis1, -n5Dis2, 0, n5Dis2, n5Dis1]（`:155`）
-        val out = ChatMapCardLayout.floorOffsets(5, 5, 0f, 1080, 518.4f, 691.2f)
+        val out = ChatMapCardLayout.floorOffsets(5, 5, 0f, 1080f, 518.4f, 691.2f)
         assertEquals(5, out.size)
         assertEquals("中间那张不偏移", 0f, out[2], EPS)
         assertEquals("外侧对称", -out[0], out[4], EPS)
@@ -144,7 +144,7 @@ class ChatMapCardLayoutTest {
         // **[-n5Dis2, -n5Dis2, 0, n5Dis2, n5Dis2]**（`TipsyCarousel.tsx:135`），
         // 不是全 0、也不是"随 yRatio 收拢到 0"。
         // 写成收拢的话 3 卡模式在稳定态会把卡片全叠到中间。
-        val out = ChatMapCardLayout.floorOffsets(3, 3, 0f, 1080, 518.4f, 691.2f)
+        val out = ChatMapCardLayout.floorOffsets(3, 3, 0f, 1080f, 518.4f, 691.2f)
         val n5Dis2 = 0.3f * 1080 + (0.2f - 0.5f * 0.86f) * 518.4f
         assertEquals(-n5Dis2, out[0], EPS)
         assertEquals(-n5Dis2, out[1], EPS)
@@ -160,8 +160,8 @@ class ChatMapCardLayoutTest {
         // ⚠️ RN 的 processThree 只在 nextI==5 或 nextI==1 时改 disOut，
         // **3→3 走 else 保持默认**（`:137-146`）。
         // 早前实现忽略 nextMode，导致 3→3 被错误地收拢
-        val stable = ChatMapCardLayout.floorOffsets(3, 3, 0f, 1080, 518.4f, 691.2f)
-        val moving = ChatMapCardLayout.floorOffsets(3, 3, 300f, 1080, 518.4f, 691.2f)
+        val stable = ChatMapCardLayout.floorOffsets(3, 3, 0f, 1080f, 518.4f, 691.2f)
+        val moving = ChatMapCardLayout.floorOffsets(3, 3, 300f, 1080f, 518.4f, 691.2f)
         assertArrayEquals("3→3 不随 yRatio 变化", stable, moving, EPS)
     }
 
@@ -172,11 +172,11 @@ class ChatMapCardLayoutTest {
         val n5Dis1 = (1080 - 518.4f * 0.74f) * 0.5f
         val n5Dis2 = 0.3f * 1080 + (0.2f - 0.5f * 0.86f) * 518.4f
         // yRatio = 0 端（offsetY 很小但非 0）→ 外侧接近 n5Dis1
-        val nearZero = ChatMapCardLayout.floorOffsets(3, 5, 0.001f, 1080, 518.4f, 691.2f)
+        val nearZero = ChatMapCardLayout.floorOffsets(3, 5, 0.001f, 1080f, 518.4f, 691.2f)
         assertEquals("外侧张到 n5Dis1", n5Dis1, Math.abs(nearZero[4]), 1f)
         assertEquals("内侧保持 n5Dis2", n5Dis2, Math.abs(nearZero[3]), 1f)
         // yRatio = 1 端 → 内外都是 n5Dis2
-        val atOne = ChatMapCardLayout.floorOffsets(3, 5, 691.2f, 1080, 518.4f, 691.2f)
+        val atOne = ChatMapCardLayout.floorOffsets(3, 5, 691.2f, 1080f, 518.4f, 691.2f)
         assertEquals(n5Dis2, Math.abs(atOne[4]), EPS)
         assertEquals(n5Dis2, Math.abs(atOne[3]), EPS)
     }
@@ -186,12 +186,12 @@ class ChatMapCardLayoutTest {
         // processThree 的 nextI==1 分支（`:142-145`）：
         // dis1 = interpolate(1-yRatio, [0,1], [0, n5Dis2])
         // yRatio=1 → 1-yRatio=0 → dis1=0（完全收拢）
-        val collapsed = ChatMapCardLayout.floorOffsets(3, 1, 691.2f, 1080, 518.4f, 691.2f)
+        val collapsed = ChatMapCardLayout.floorOffsets(3, 1, 691.2f, 1080f, 518.4f, 691.2f)
         assertEquals(0f, collapsed[0], EPS)
         assertEquals(0f, collapsed[4], EPS)
         // yRatio 接近 0 → 接近 n5Dis2（还没收）
         val n5Dis2 = 0.3f * 1080 + (0.2f - 0.5f * 0.86f) * 518.4f
-        val open = ChatMapCardLayout.floorOffsets(3, 1, 0.001f, 1080, 518.4f, 691.2f)
+        val open = ChatMapCardLayout.floorOffsets(3, 1, 0.001f, 1080f, 518.4f, 691.2f)
         assertEquals(n5Dis2, Math.abs(open[4]), 1f)
     }
 
@@ -199,7 +199,7 @@ class ChatMapCardLayoutTest {
     fun `五到三外侧收到 n5Dis2`() {
         // processFive 的 nextI==3 分支（`:157-161`）
         val n5Dis2 = 0.3f * 1080 + (0.2f - 0.5f * 0.86f) * 518.4f
-        val atOne = ChatMapCardLayout.floorOffsets(5, 3, 691.2f, 1080, 518.4f, 691.2f)
+        val atOne = ChatMapCardLayout.floorOffsets(5, 3, 691.2f, 1080f, 518.4f, 691.2f)
         assertEquals("外侧收到 n5Dis2", n5Dis2, Math.abs(atOne[4]), EPS)
         assertEquals(n5Dis2, Math.abs(atOne[3]), EPS)
     }
@@ -207,13 +207,13 @@ class ChatMapCardLayoutTest {
     @Test
     fun `单卡模式只在 next 为三时展开`() {
         // processOne（`:117-129`）：默认全 0；只有 yRatio≠0 且 nextMode==3 才展开
-        ChatMapCardLayout.floorOffsets(1, 1, 0f, 1080, 518.4f, 691.2f)
+        ChatMapCardLayout.floorOffsets(1, 1, 0f, 1080f, 518.4f, 691.2f)
             .forEach { assertEquals(0f, it, EPS) }
         // nextMode=1 即使 yRatio≠0 也不展开
-        ChatMapCardLayout.floorOffsets(1, 1, 300f, 1080, 518.4f, 691.2f)
+        ChatMapCardLayout.floorOffsets(1, 1, 300f, 1080f, 518.4f, 691.2f)
             .forEach { assertEquals(0f, it, EPS) }
         // nextMode=3 且 yRatio≠0 → 展开
-        val expanded = ChatMapCardLayout.floorOffsets(1, 3, 300f, 1080, 518.4f, 691.2f)
+        val expanded = ChatMapCardLayout.floorOffsets(1, 3, 300f, 1080f, 518.4f, 691.2f)
         assertTrue("1→3 应展开", Math.abs(expanded[4]) > 0f)
     }
 
@@ -229,7 +229,7 @@ class ChatMapCardLayoutTest {
         // 传 cardHeight/2 时 yRatio=0.5，收拢量应恰好是 n5Dis2 的一半
         val cardHeight = 691.2f
         val n5Dis2 = 0.3f * 1080 + (0.2f - 0.5f * 0.86f) * 518.4f
-        val half = ChatMapCardLayout.floorOffsets(3, 1, cardHeight / 2f, 1080, 518.4f, cardHeight)
+        val half = ChatMapCardLayout.floorOffsets(3, 1, cardHeight / 2f, 1080f, 518.4f, cardHeight)
         assertEquals(
             "yRatio=0.5 时收拢量应为 n5Dis2 的一半（分母必须是卡高）",
             n5Dis2 * 0.5f,
@@ -264,7 +264,7 @@ class ChatMapCardLayoutTest {
         assertTrue(bad.visible)
         assertEquals(1f, bad.scale, EPS)
         // cardHeight=0 不除零
-        val out = ChatMapCardLayout.floorOffsets(3, 3, 100f, 1080, 518.4f, 0f)
+        val out = ChatMapCardLayout.floorOffsets(3, 3, 100f, 1080f, 518.4f, 0f)
         out.forEach { assertFalse(it.isNaN()) }
     }
 
