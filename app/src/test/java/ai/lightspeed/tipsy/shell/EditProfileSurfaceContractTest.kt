@@ -29,6 +29,8 @@ class EditProfileSurfaceContractTest {
         File("src/main/java/ai/lightspeed/tipsy/shell/MainActivity.kt")
     private val loginFragmentFile =
         File("src/main/java/ai/lightspeed/tipsy/shell/pages/login/LoginFragment.kt")
+    private val applicationFile =
+        File("src/main/java/ai/lightspeed/tipsy/shell/TipsyApplication.kt")
 
     private val surfaceSource: String by lazy { surfaceFile.readText() }
     private val drawerSource: String by lazy { drawerFile.readText() }
@@ -36,6 +38,7 @@ class EditProfileSurfaceContractTest {
     private val registrationSource: String by lazy { registrationFile.readText() }
     private val mainActivitySource: String by lazy { mainActivityFile.readText() }
     private val loginFragmentSource: String by lazy { loginFragmentFile.readText() }
+    private val applicationSource: String by lazy { applicationFile.readText() }
 
     private val renderBody: String by lazy {
         val start = surfaceSource.indexOf("<SafeAreaProvider")
@@ -52,21 +55,39 @@ class EditProfileSurfaceContractTest {
             registrationFile,
             mainActivityFile,
             loginFragmentFile,
+            applicationFile,
         )) {
             assertTrue("找不到 ${file.absolutePath}", file.isFile)
         }
     }
 
     @Test
-    fun `原生登录成功同时广播 RN 与 Native auth 观察者`() {
-        val persistToken = loginFragmentSource.indexOf("app.tokenStore.onLoggedIn(result.token)")
-        val notifyRn = loginFragmentSource.indexOf(
-            "TipsyAuthRegistry.notifyAuthStateChanged(\"loggedIn\", userId)",
+    fun `原生登录先发布完整用户快照再广播 RN 与 Native`() {
+        assertTrue(
+            "LoginFragment 必须委托 Application 的完整会话事务",
+            loginFragmentSource.contains("app.establishUserSession(result.token)"),
         )
-        val notifyNative = loginFragmentSource.indexOf("app.authStateHub.notifyDidLogin(userId)")
+        val transaction = applicationSource.indexOf("suspend fun establishUserSession")
+        val clearOldUser = applicationSource.indexOf("userStorageRepository.clear()", transaction)
+        val persistToken = applicationSource.indexOf("tokenStore.onLoggedIn(token)", transaction)
+        val fetchUser = applicationSource.indexOf(
+            "currentUserStore.refresh(requireSharedSnapshot = true)",
+            persistToken,
+        )
+        val notifyRn = applicationSource.indexOf(
+            "TipsyAuthRegistry.notifyAuthStateChanged(\"loggedIn\", user.userId)",
+            fetchUser,
+        )
+        val notifyNative = applicationSource.indexOf(
+            "authStateHub.notifyDidLogin(user.userId)",
+            notifyRn,
+        )
 
+        assertTrue("找不到 Application 会话事务", transaction >= 0)
+        assertTrue("新 token 前必须清上一账号 user-storage", clearOldUser in transaction until persistToken)
         assertTrue("登录成功必须先落地 Native token", persistToken >= 0)
-        assertTrue("Android 缺 RN onAuthStateChanged(loggedIn) 广播", notifyRn > persistToken)
+        assertTrue("loggedIn 前必须成功拉 /user/info 并发布共享快照", fetchUser > persistToken)
+        assertTrue("完整用户发布后必须广播 RN loggedIn", notifyRn > fetchUser)
         assertTrue("RN 与 Native 登录广播顺序漂移", notifyNative > notifyRn)
     }
 

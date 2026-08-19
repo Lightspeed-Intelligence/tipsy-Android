@@ -28,6 +28,11 @@ import ai.lightspeed.tipsy.shell.network.ApiErrorGate
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileRefreshHub
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
+import ai.lightspeed.tipsy.shell.user.CurrentUser
+import ai.lightspeed.tipsy.shell.user.CurrentUserMirror
+import ai.lightspeed.tipsy.shell.user.CurrentUserStore
+import ai.lightspeed.tipsy.shell.user.UserInfoApi
+import ai.lightspeed.tipsy.shell.user.UserStorageRepository
 import android.util.Log
 import expo.modules.ApplicationLifecycleDispatcher
 import okhttp3.OkHttpClient
@@ -35,7 +40,10 @@ import expo.modules.ReactNativeHostWrapper
 import expo.modules.tipsyauth.TipsyAuthRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import java.io.IOException
 
 /**
  * 壳 Application。
@@ -120,6 +128,15 @@ class TipsyApplication : Application(), ReactApplication {
     /** 壳侧 API 客户端（W1-P6）。W2 的 Home / Login 用它发请求。 */
     lateinit var apiClient: ApiClient
         private set
+
+    /** `/user/info` 的进程级唯一 store；Native 页与 Surface 共享同一份发布链。 */
+    lateinit var currentUserStore: CurrentUserStore
+        private set
+
+    /** `user-storage` 所有 Native read-modify-write 的串行入口。 */
+    val userStorageRepository by lazy { UserStorageRepository(sharedMmkvStore) }
+
+    private var currentUserRestoreJob: Job? = null
 
     /**
      * 双 generation 闸门（§4.4）。auth 轨由 [tokenStore] 在 login/logout 时 bump；
@@ -300,6 +317,16 @@ class TipsyApplication : Application(), ReactApplication {
             generations = generations,
             scope = tokenScope,
             listener = object : ShellTokenStore.Listener {
+                override fun onTokenRemoved() {
+                    // 与 token persistence 的删除处于同一账号切换临界区：保证进程
+                    // 无论何时退出，都不会留下「无 token + 旧 user-storage」。这里只
+                    // 做一次有界 MMKV remove，不发网络、不等待外部任务。
+                    currentUserRestoreJob?.cancel()
+                    if (::currentUserStore.isInitialized) currentUserStore.clear()
+                    userStorageRepository.clear()
+                    clearSurfaceAccountCaches()
+                }
+
                 override fun onTokenCleared() {
                     // tokenStore 的唯一 clear 事件同时驱动两个消费端。
                     // provider.logout 不再单独 notify hub，否则主动登出会广播两次；
@@ -367,6 +394,73 @@ class TipsyApplication : Application(), ReactApplication {
             // P7 接壳的 lane store 后换成真值；现在 null = 壳无意见
             laneProvider = { null },
         )
+
+        currentUserStore = CurrentUserStore(
+            source = UserInfoApi(apiClient),
+            generations = generations,
+            currentUserId = { tokenStore.currentUserId() },
+            mirror = CurrentUserMirror(userStorageRepository),
+            // 两阶段 i18n 的账号阶段与共享用户发布共用同一个 /user/info 真值。
+            onUserUpdated = { user -> user.languageCode?.let(L10n::setLanguage) },
+        )
+        bootstrapCurrentUserSession()
+    }
+
+    /**
+     * 原生登录的完整落地事务：账号屏障 → token → `/user/info` → 完整共享快照
+     * → loggedIn 广播。拿不到用户时回滚 token，不发布半登录状态。
+     */
+    @Throws(IOException::class)
+    suspend fun establishUserSession(token: String): CurrentUser {
+        currentUserRestoreJob?.cancel()
+        currentUserStore.clear()
+        // 必须在新 token 之前删旧账号信封。否则进程若在网络 await 窗口退出，
+        // 下次冷启动会把 B token 与 A user-storage 配成一对。
+        userStorageRepository.clear()
+        clearSurfaceAccountCaches()
+
+        tokenStore.onLoggedIn(token)
+        if (!currentUserStore.refresh(requireSharedSnapshot = true)) {
+            tokenStore.clearToken()
+            throw IOException("登录后未能获取用户信息")
+        }
+
+        val user = currentUserStore.current.value ?: run {
+            tokenStore.clearToken()
+            throw IOException("登录后用户信息为空")
+        }
+        TipsyAuthRegistry.notifyAuthStateChanged("loggedIn", user.userId)
+        authStateHub.notifyDidLogin(user.userId)
+        return user
+    }
+
+    /**
+     * 冷启动恢复：本地 token/userId 匹配时保留快照作 Surface 种子，再后台校准；
+     * 不匹配（含只有 token 没信封）先清旧快照，成功响应会重新完整发布。
+     */
+    private fun bootstrapCurrentUserSession() {
+        if (!tokenStore.hasToken()) {
+            currentUserStore.clear()
+            userStorageRepository.clear()
+            clearSurfaceAccountCaches()
+            return
+        }
+
+        val tokenUserId = tokenStore.currentUserId()
+        val storedUserId = userStorageRepository.readUserId()
+        if (tokenUserId == null || storedUserId != tokenUserId) {
+            userStorageRepository.clear()
+            clearSurfaceAccountCaches()
+        }
+        currentUserRestoreJob = tokenScope.launch { currentUserStore.refresh() }
+    }
+
+    /**
+     * RN 中没有 userId 维度的账号缓存必须与 token/user-storage 同步清理。
+     * SWR 主缓存 key 已含 userId；这里只清按 characterId 建索引的持久首页 LRU。
+     */
+    private fun clearSurfaceAccountCaches() {
+        sharedMmkvStore.removeString(CHAT_HISTORY_FIRST_PAGE_CACHE_KEY)
     }
 
     /**
@@ -394,6 +488,7 @@ class TipsyApplication : Application(), ReactApplication {
 
     private companion object {
         const val TAG = "TipsyApplication"
+        const val CHAT_HISTORY_FIRST_PAGE_CACHE_KEY = "chat_history_first_page_lru"
 
         /** 埋点日志单独一个 tag，便于 `logcat -s` 过滤（量大）。 */
         const val TAG_ANALYTICS = "TipsyAnalytics"

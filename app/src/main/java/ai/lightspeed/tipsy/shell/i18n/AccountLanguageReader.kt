@@ -1,5 +1,6 @@
 package ai.lightspeed.tipsy.shell.i18n
 
+import ai.lightspeed.tipsy.shell.user.UserStorageRepository
 import org.json.JSONObject
 
 /**
@@ -43,7 +44,7 @@ import org.json.JSONObject
 object AccountLanguageReader {
 
     /** RN 侧 `persist` 的 name（`store/user.ts:287`）。 */
-    const val USER_STORAGE_KEY = "user-storage"
+    const val USER_STORAGE_KEY = UserStorageRepository.USER_STORAGE_KEY
 
     /**
      * 解析出账号语言码（**未规范化**，调用方走 [LanguageCodes.normalize]）。

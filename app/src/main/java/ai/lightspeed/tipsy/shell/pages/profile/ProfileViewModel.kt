@@ -167,7 +167,7 @@ class ProfileViewModel(
         userStatsJob?.cancel()
         userStatsJob = null
         cancelInFlight()
-        userStore.clear()
+        if (!loggedIn) userStore.clear()
         _state.value = ProfileState()
         if (loggedIn) onAppear()
     }

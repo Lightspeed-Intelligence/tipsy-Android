@@ -22,6 +22,7 @@ class CurrentUserParserTest {
                 .put("nickname", "Lee")
                 .put("avatar_url", "https://cdn/a.png")
                 .put("background_img_url", "https://cdn/bg.png")
+                .put("language_code", "ja")
                 .put("bio", "hello"),
         )
         assertEquals("u1", user?.userId)
@@ -29,6 +30,8 @@ class CurrentUserParserTest {
         assertEquals("https://cdn/a.png", user?.avatarUrl)
         assertEquals("https://cdn/bg.png", user?.backgroundImgUrl)
         assertEquals("hello", user?.bio)
+        assertEquals("ja", user?.languageCode)
+        assertEquals("u1", user?.sharedStorageSnapshot?.fields()?.getString("userId"))
     }
 
     @Test

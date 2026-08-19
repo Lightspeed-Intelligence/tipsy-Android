@@ -1,8 +1,10 @@
 package ai.lightspeed.tipsy.shell.i18n
 
-import ai.lightspeed.tipsy.shell.auth.LegacyMmkvStore
+import ai.lightspeed.tipsy.shell.user.UserStorageRepository
+import ai.lightspeed.tipsy.shell.user.UserStorageSnapshot
 import android.util.Log
 import expo.modules.tipsyauth.TipsyAuthRegistry
+import org.json.JSONObject
 
 /**
  * 账号语言镜像的写入接缝（进度文档 §2.37 的 FAIL 项）。
@@ -31,17 +33,15 @@ interface AccountLanguageMirrorLike {
  * 直到下次重开」。
  */
 class AccountLanguageMirror(
-    private val store: LegacyMmkvStore,
+    private val repository: UserStorageRepository,
     /** 当前账号 id（`onUserStoreChanged` 的 payload 契约要求）。 */
     private val currentUserId: () -> String?,
 ) : AccountLanguageMirrorLike {
 
     override fun writeLanguage(languageCode: String): Boolean {
-        val merged = AccountLanguageWriter.merge(
-            raw = store.getString(AccountLanguageReader.USER_STORAGE_KEY),
-            languageCode = languageCode,
+        val written = repository.merge(
+            JSONObject().put(UserStorageSnapshot.FIELD_LANGUAGE_CODE, languageCode),
         )
-        val written = store.putString(AccountLanguageReader.USER_STORAGE_KEY, merged)
         if (!written) {
             Log.w(TAG, "user-storage 写入失败，语言镜像本次未持久化（内存语言已切）")
             return false
