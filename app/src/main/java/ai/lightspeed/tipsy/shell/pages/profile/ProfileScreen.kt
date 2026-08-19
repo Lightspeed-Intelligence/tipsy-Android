@@ -94,6 +94,7 @@ fun ProfileScreen(
     onFollowingClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onWalletAction: (ProfileWalletAction) -> Unit,
+    avatarDecorationImageUrl: String? = null,
     /** 状态栏高度；与 `HomeScreen` 一样是实际 dp，不参与 `.s` 缩放。 */
     statusBarPadding: Dp,
     modifier: Modifier = Modifier,
@@ -259,6 +260,7 @@ private fun ProfileGrid(
                 onFollowersClick = onFollowersClick,
                 onFollowingClick = onFollowingClick,
                 onWalletAction = onWalletAction,
+                avatarDecorationImageUrl = avatarDecorationImageUrl,
             )
         }
 
