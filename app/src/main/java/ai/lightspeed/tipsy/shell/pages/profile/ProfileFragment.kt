@@ -7,10 +7,13 @@ import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
 import ai.lightspeed.tipsy.shell.user.CurrentUserStore
 import ai.lightspeed.tipsy.shell.user.UserInfoApi
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -22,6 +25,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.core.net.toUri
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
@@ -166,6 +170,7 @@ class ProfileFragment : Fragment() {
                         }
                     },
                     avatarDecorationImageUrl = state.avatarDecorationImageUrl,
+                    onSocialLinkClick = ::openExternalUrl,
                     // ⚠️ 用 Compose 的 inset 而不是 ViewCompat listener + 手动 render：
                     // listener 在**首帧之后**才回调，那之前值是 0，顶栏会画到状态栏底下
                     // （真机实测：Settings 与系统图标重叠）。
@@ -223,6 +228,21 @@ class ProfileFragment : Fragment() {
         // （RN 侧用 react-native-toast-message 是因为它跨平台统一处理）
     }
 
+    /**
+     * 社交链接（P7 渠道图标，对齐 RN `WebBrowser.openBrowserAsync`）。
+     *
+     * ⚠️ 必须捕获 [ActivityNotFoundException]（同 `SettingsFragment.openExternalUrl`）：
+     * 设备可能没有浏览器，未捕获会直接崩；RN 那个 await 也不会崩 App。
+     */
+    private fun openExternalUrl(url: String) {
+        val intent = Intent(Intent.ACTION_VIEW, url.toUri())
+        try {
+            startActivity(intent)
+        } catch (e: ActivityNotFoundException) {
+            Log.w(TAG, "无可用浏览器，忽略社交链接", e)
+        }
+    }
+
     companion object {
         fun newInstance() = ProfileFragment()
 
@@ -231,5 +251,7 @@ class ProfileFragment : Fragment() {
         private const val TYPE_FOLLOWING = "following"
 
         private const val CLIP_LABEL = "UID"
+
+        private const val TAG = "ProfileFragment"
     }
 }

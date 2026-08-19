@@ -34,7 +34,8 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 
 /**
- * Profile 顶部：头像 / 昵称 / Edit Profile 按钮 / 四个统计数字 / bio 区。
+ * Profile 顶部：头像（含 P7 头像框）/ 昵称 + 社交渠道图标 / Edit Profile 按钮 /
+ * 四个统计数字 / bio 区。
  *
  * **UID 不在这里** —— RN 把它放在悬浮顶栏左侧（`user-profile.tsx:656-674`，
  * 带复制图标），见 `ProfileScreen` 的 `ProfileTopBar`。第一刀曾放在昵称下方，
@@ -49,14 +50,17 @@ import coil3.compose.AsyncImage
  *    插值，背景色渐显、小号头像+昵称渐入、UID 渐出）—— 纯视觉增强，
  *    静态版顶栏已就位
  *
- * ## ⚠️ 头像框（avatar decoration）未做
+ * ## 头像框（avatar decoration，P7）
  *
  * RN 侧 `TipsyAvatar` 支持 `avatarDecorationCode`，配置由
  * `index.surfaces.js` 顶层的 `hydrateAvatarDecorationConfigs` 拉取，
  * 而进度 §2.19 记了那三个 hydrate **静默捕获失败**、失败表现为「头像框空掉」
- * （全新安装必现，升级安装因 MMKV 残留被掩蔽）。Profile 是头像框最显眼的页面。
- * 当前先把 code 透传到头像渲染边界；配置 URL 由调用方注入，未解析到 URL 时不绘制
- * 头像框，不能把 code 当 URL 直接交给 Coil。
+ * （全新安装必现，升级安装因 MMKV 残留被掩蔽）。壳侧不复刻那套持久层：
+ * code → URL 由 `ProfileViewModel.resolveAvatarDecoration` 每次刷新链解析
+ * （`AvatarDecorationApi`），本组件只收**已解析的 URL**；URL 为空不绘制，
+ * 不能把 code 当 URL 直接交给 Coil。框画满头像同一个 65dp 盒子 ——
+ * RN 是 58dp 头像内嵌 65dp 容器、框画 65dp（`TipsyAvatar.tsx:87-92`），
+ * 壳的头像本体本就简化为满 65dp 圆（P2 已记），框取同盒即对等。
  *
  * @param topPadding 头像行距屏顶的补偿间距，由 `ProfileScreen` 按
  *   「屏顶 250dp 锚点」换算（RN 是悬浮 header + `paddingTop: 250 - headerOffset`
@@ -73,6 +77,7 @@ fun ProfileHeaderSection(
     onFollowingClick: () -> Unit,
     onWalletAction: (ProfileWalletAction) -> Unit,
     avatarDecorationImageUrl: String? = null,
+    onSocialLinkClick: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxWidth().padding(top = topPadding)) {
@@ -109,6 +114,7 @@ fun ProfileHeaderSection(
                 modifier = Modifier
                     .padding(start = AVATAR_TEXT_GAP.dp)
                     .weight(1f),
+                verticalArrangement = Arrangement.spacedBy(NICKNAME_LINKS_GAP.dp),
             ) {
                 Text(
                     text = user?.nickname.orEmpty(),
@@ -117,6 +123,12 @@ fun ProfileHeaderSection(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                // 渠道图标（P7）：昵称下方一行社交平台链接。空表整行不渲染，
+                // 让 spacedBy 不产生空隙（对齐 RN `SocialLinksDisplay` 返回 null）
+                val socialLinks = ProfileSocialLinks.visibleLinks(user?.socialLinks.orEmpty())
+                if (socialLinks.isNotEmpty()) {
+                    ProfileSocialLinksRow(links = socialLinks, onLinkClick = onSocialLinkClick)
+                }
             }
 
             Text(
@@ -252,6 +264,8 @@ private fun StatItem(labelKey: String, count: Long, onClick: (() -> Unit)?, tag:
 
 private const val AVATAR_TEXT_GAP = 12
 private const val NICKNAME_FONT = 18
+/** `ProfileHeader.tsx` styles `textContainer.gap: 6` —— 昵称与图标行的间距。 */
+private const val NICKNAME_LINKS_GAP = 6
 private const val EDIT_BUTTON_FONT = 12
 private const val EDIT_BUTTON_RADIUS = 16
 private const val EDIT_BUTTON_H_PADDING = 12
