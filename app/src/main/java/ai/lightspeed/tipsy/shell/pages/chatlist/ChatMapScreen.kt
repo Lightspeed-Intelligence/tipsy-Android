@@ -11,6 +11,10 @@ import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -94,6 +98,14 @@ internal fun ChatMapScreen(
         val cardWidth = cardWidthDp.dp
         val cardHeight = cardHeightDp.dp
 
+        // 纵向滚动量（dp）—— 廊道整体的滚动，决定每层的 currIndex 与模式
+        var scrollYDp by remember { mutableFloatStateOf(0f) }
+
+        // ⚠️ 固定横轴只在 baseX 变化时重建：`solve()` 每帧每卡各调一次，
+        // 不复用会每帧产生数十个短命数组（低端机滚动 GC 抖动）
+        val baseXDp = remember(windowWidthDp) { ChatMapGeometry.baseXDp(windowWidthDp) }
+        val stops = remember(baseXDp) { ChatMapCardLayout.stopsFor(baseXDp) }
+
         floors.forEachIndexed { index, floor ->
             // 倒序：index 0（最新）在最底部
             val fromBottom = index
@@ -111,8 +123,30 @@ internal fun ChatMapScreen(
                     .zIndex(ChatMapZOrder.floorZ(index))
                     .testTag("chat_map_floor_${floor.key}"),
             ) {
+                // ⚠️ **每层独立的横滑状态**，key 用 canonical `floor.key`
+                // （不是下标）—— 分页/跨日后下标会错配，把昨天的横滑位置
+                // 复用给今天。见 ChatMapFloors.DateBucket 的 key 说明
+                var scrollXDp by remember(floor.key) { mutableFloatStateOf(0f) }
+
+                // 楼层模式与展开偏移：currIndex 决定 1/3/5 模式
+                val currIndex = ChatMapFloors.currIndexFor(scrollYDp, rowHeightDp, index)
+                val mode = ChatMapCardLayout.floorMode(currIndex, floor.slotCount)
+                val nextMode = ChatMapCardLayout.floorMode(currIndex + 1, floor.slotCount)
+                val disOut = ChatMapCardLayout.floorOffsets(
+                    mode = mode,
+                    nextMode = nextMode,
+                    // 该层相对当前档的纵向偏移
+                    offsetYDp = scrollYDp - currIndex * rowHeightDp,
+                    windowWidthDp = windowWidthDp,
+                    cardWidthDp = cardWidthDp,
+                    cardHeightDp = cardHeightDp,
+                )
+
                 ChatMapFloor(
                     floor = floor,
+                    scrollXDp = scrollXDp,
+                    disOut = disOut,
+                    stops = stops,
                     cardWidth = cardWidth,
                     cardHeight = cardHeight,
                     messageCountText = messageCountText,
@@ -134,6 +168,12 @@ internal fun ChatMapScreen(
 @Composable
 private fun ChatMapFloor(
     floor: ChatMapFloors.Floor<ChatThread>,
+    /** 该层的横向滚动量（dp）—— 每层独立，由调用方按 floor.key 持有。 */
+    scrollXDp: Float,
+    /** 该层的楼层模式偏移（`floorOffsets` 产出，5 个 dp 值）。 */
+    disOut: FloatArray,
+    /** 复用的插值横轴，见 [ChatMapCardLayout.Stops]。 */
+    stops: ChatMapCardLayout.Stops,
     cardWidth: androidx.compose.ui.unit.Dp,
     cardHeight: androidx.compose.ui.unit.Dp,
     messageCountText: (ChatThread) -> String,
@@ -202,20 +242,37 @@ private fun ChatMapFloor(
                 .height(cardHeight),
             contentAlignment = Alignment.Center,
         ) {
-            // 阶段一：卡片居中重叠铺位（transform 属阶段二）。
+            // 阶段二：卡片 transform 来自 solver。
             // slotCount 已含补位；真实卡不足时后面的槽渲染占位卡
             repeat(floor.slotCount) { slot ->
                 val thread = floor.items.getOrNull(slot)
-                // ⚠️ **两级层序的第二级**：卡片的 zIndex。
-                // 阶段一没有 solver 值可用（transform 属阶段二），先用
-                // **倒序**保证真实卡不被后面的占位卡盖住 ——
-                // `repeat` 是升序 compose，占位卡排在真实卡之后，
-                // 不给 zIndex 时「1 真卡 + 4 占位」会让占位把真卡完全遮掉。
-                // 阶段二接上 `ChatMapCardLayout.solve().zIndex` 后替换这里。
+                val t = ChatMapCardLayout.solve(
+                    index = slot,
+                    scrollX = scrollXDp,
+                    itemCount = floor.slotCount,
+                    stops = stops,
+                    disOut = disOut,
+                )
+                // 超出可见弧段的卡不绘制（对齐 RN 的 `scale: 0`）
+                if (!t.visible) return@repeat
+
                 val cardModifier = Modifier
-                    .zIndex(ChatMapZOrder.cardZ(slot, floor.slotCount))
-                    // 槽位级 tag：z-order 测试要能逐槽取 bounds/层序
+                    // ⚠️ 用 **solver 的 zIndex**（阶段一那套静态倒序已被取代）——
+                    // 它按 scale 分档，保证中间那张最大的画在最上
+                    .zIndex(t.zIndex)
+                    // 槽位级 tag：测试要能逐槽取 bounds
                     .testTag(cardSlotTag(floor.key, slot))
+                    .graphicsLayer {
+                        scaleX = t.scale
+                        scaleY = t.scale
+                        // ⚠️ **dp → px 的唯一出口**：solver 全链是 dp，
+                        // 而 `translationX` 收 px。`density` 来自
+                        // graphicsLayer 的 scope，不要在外面用 LocalDensity 再转一次
+                        translationX = t.translateX * density
+                        // ⚠️ RN 是 `[{translateX},{scale}]` —— 平移**不被缩放放大**。
+                        // graphicsLayer 的 translationX 作用在缩放后的图层上，
+                        // 语义一致（见 ChatMapCardLayout 类注释）
+                    }
                     .size(width = cardWidth, height = cardHeight)
                 if (thread == null) {
                     ChatMapPlaceholderCard(modifier = cardModifier)

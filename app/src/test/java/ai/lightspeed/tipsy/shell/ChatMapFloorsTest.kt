@@ -68,7 +68,7 @@ class ChatMapFloorsTest {
 
     @Test
     fun `currIndex 的 0_5dp 容差挡住浮点噪声`() {
-        val rowHeight = 300
+        val rowHeight = 300f
         // ⚠️ 初始/吸附后 scrollY 可能是 -0.0x 的浮点噪声。
         // 裸 floor(-0.04/300) = floor(-0.000133) = -1 → 错位一整行；
         // 加 0.5 后 floor(0.4987) = 0 ✓
@@ -80,7 +80,7 @@ class ChatMapFloorsTest {
         // floorIndex 叠加
         assertEquals(3, ChatMapFloors.currIndexFor(300f, rowHeight, 2))
         // rowHeight=0 不除零
-        assertEquals(2, ChatMapFloors.currIndexFor(100f, 0, 2))
+        assertEquals(2, ChatMapFloors.currIndexFor(100f, 0f, 2))
     }
 
     @Test

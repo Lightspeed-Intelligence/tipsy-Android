@@ -157,14 +157,20 @@ internal object ChatMapFloors {
     }
 
     /**
-     * `currIndex = floor((scrollY + 0.5) / rowHeight) + index`。
+     * `currIndex = floor((scrollYDp + 0.5) / rowHeightDp) + index`。
+     *
+     * ⚠️ **两个参数都是 dp**（`Float`）—— 早前是 `scrollY: Float, rowHeight: Int`，
+     * 无单位名且 `Int` 很像可以直接塞 px。而函数内部加的是
+     * [ChatMapGeometry.CURR_INDEX_EPSILON_DP]（0.5 **dp**）：
+     * 若调用方传 px，那个 0.5 就被当成 0.5px 用，容差实际缩小 density 倍、
+     * 挡不住浮点噪声。
      *
      * ⚠️ 那个 0.5 不是随手加的（iOS 端口注释）：初始/吸附后 `scrollY` 可能是
      * `-0.0x` 的浮点噪声，裸 `floor` 会**错位一整行**。
      */
-    fun currIndexFor(scrollY: Float, rowHeight: Int, floorIndex: Int): Int {
-        if (rowHeight <= 0) return floorIndex
-        val shifted = (scrollY + ChatMapGeometry.CURR_INDEX_EPSILON_DP) / rowHeight
+    fun currIndexFor(scrollYDp: Float, rowHeightDp: Float, floorIndex: Int): Int {
+        if (rowHeightDp <= 0f) return floorIndex
+        val shifted = (scrollYDp + ChatMapGeometry.CURR_INDEX_EPSILON_DP) / rowHeightDp
         return Math.floor(shifted.toDouble()).toInt() + floorIndex
     }
 
