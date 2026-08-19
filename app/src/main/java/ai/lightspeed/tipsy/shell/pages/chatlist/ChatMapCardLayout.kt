@@ -26,8 +26,10 @@ package ai.lightspeed.tipsy.shell.pages.chatlist
  * iOS 端口用 `CGAffineTransform(translationX:).scaledBy()` 复刻了这个序。
  *
  * Compose 侧对应：`graphicsLayer { scaleX = s; scaleY = s; translationX = tx }`
- * —— Compose 的 `translationX` 作用在**缩放之后的图层**上、以像素为单位，
+ * —— Compose 的 `translationX` 作用在**缩放之后的图层**上，
  * **不**被 `scaleX` 放大，与 RN 语义一致。
+ * ⚠️ 但它的单位是 **px**，而本文件解算出的是 **dp** —— 出口处必须
+ * `with(density) { it.dp.toPx() }` 转一次。这是 solver 全 dp 契约的唯一出口。
  * ⚠️ 别改成 `Modifier.offset { }` 再 `.scale()` —— 那个顺序下平移会被缩放影响。
  * （注意这与楼层那层相反：楼层是 `[{scale},{translateX},{translateY}]`，
  * 平移**会**被 scale 收住，见 iOS `ChatMapFloorView` 注释。两层顺序不同，别串。）
@@ -73,7 +75,13 @@ internal object ChatMapCardLayout {
     data class CardTransform(
         /** 缩放（0 表示该卡不可见，调用方应跳过绘制）。 */
         val scale: Float,
-        /** 横向平移（像素）。⚠️ 不被 scale 放大，见类注释。 */
+        /**
+         * 横向平移，单位 **dp**（不是 px）。⚠️ 不被 scale 放大，见类注释。
+         *
+         * ⚠️ 接 `graphicsLayer.translationX` 前**必须转 px**：
+         * `with(density) { translateX.dp.toPx() }`。solver 全链是 dp，
+         * 只在图层出口转一次 —— 混着用不会报错，只会让位移差一个 density 倍。
+         */
         val translateX: Float,
         /** 绘制层级 1~5，越大越靠前。 */
         val zIndex: Float,
@@ -84,9 +92,10 @@ internal object ChatMapCardLayout {
     /**
      * 解算第 [index] 张卡。
      *
-     * @param scrollX 当前横向滚动量（像素，可正可负）
+     * @param scrollX 当前横向滚动量，单位 **dp**（可正可负）。
+     *   ⚠️ 手势给的 `dragAmount` 是 px，**喂进来前要转 dp**
      * @param itemCount 该层铺的卡数（含补齐的空占位）
-     * @param baseX 见 [ChatMapGeometry.baseX]
+     * @param baseX 见 [ChatMapGeometry.baseXDp]（dp）
      * @param disOut 该楼层模式下的 5 个横向偏移（由 [floorOffsets] 给出）
      */
     fun solve(

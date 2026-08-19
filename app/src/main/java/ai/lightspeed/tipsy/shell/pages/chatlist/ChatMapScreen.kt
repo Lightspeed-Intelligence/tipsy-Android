@@ -70,11 +70,13 @@ internal fun ChatMapScreen(
     ) {
         val density = androidx.compose.ui.platform.LocalDensity.current
 
-        // ⚠️ **px → dp 必须在这里做完**：`ChatMapGeometry` 的所有量都是 dp
-        // （RN 的 `useWindowDimensions` 单位等价于 dp，常量 300 / -180 /
-        // 样条输出全是 dp 数值）。直接把 `constraints.maxWidth`（px）传进去
-        // 会让卡片在 density=2.625 的设备上放大 2.6 倍、曲线横轴一起错，
-        // 而**编译/单测/lint 全绿** —— 纯数学层不知道单位。阶段一我正是这样写错的。
+        // ⚠️ **px → dp 在这里做完**：`ChatMapGeometry` 的所有量都是 dp
+        // （RN 的 `useWindowDimensions` 单位等价于 dp；常量 300 / -180 /
+        // 样条输出全是 dp 数值）。
+        //
+        // 纯乘的那几个（cardWidth/baseX）传 px 恰好等价，但
+        // `floorHeightDp` 带常量 300、`rowHeightDp` 带 round，
+        // **都不可交换** —— 见 ChatMapGeometry 的单位契约段。
         val listHeightDp = with(density) { constraints.maxHeight.toDp().value }
         val windowWidthDp = with(density) { constraints.maxWidth.toDp().value }
 

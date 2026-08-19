@@ -147,6 +147,24 @@ class ChatMapGeometryTest {
     }
 
     @Test
+    fun `round 也不可严格交换 —— 别把规则记成只有带常量才有风险`() {
+        // ⚠️ 早前把契约理由写成"只有带加减常量的不可交换"，那不完整：
+        // `rowHeightDp` 用 Math.round，先 px round 再转 dp 与
+        // 先转 dp 再 round 相差最多约 0.5dp。
+        // 任何非线性/非齐次运算（round/floor/clamp/加减常量）都破坏可交换性
+        val density = 2.625f
+        val heightPx = 1123f
+        val viaPx = ChatMapGeometry.rowHeightDp(heightPx) / density
+        val viaDp = ChatMapGeometry.rowHeightDp(heightPx / density)
+        assertTrue(
+            "round 路径必须不严格相等（实测约差 0.5dp）",
+            Math.abs(viaPx - viaDp) > 0.1f,
+        )
+        // 但差值是"小而非零"，与 floorHeight 那种整体偏移不同量级
+        assertTrue("差值应是亚 dp 量级", Math.abs(viaPx - viaDp) < 1f)
+    }
+
+    @Test
     fun `未读点几何：x 为正向右越出、y 为负向上越出`() {
         // ⚠️ 这条守的是一次**坐标系符号翻转**：
         // RN 用 CSS 绝对定位 `right: -2`（负 = 向右越出，`ChatItem.tsx:141`），
