@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
@@ -14,6 +15,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -97,6 +99,12 @@ internal fun ChatMapScreen(
                     .fillMaxWidth()
                     .height(rowHeight)
                     .offset(y = -(rowHeight * fromBottom))
+                    // ⚠️ **两级层序的第一级**：`100 - index`（对齐 RN/iOS）。
+                    // index 0 是最新层、在最底部，**必须画在最上面**。
+                    // Compose 默认按 compose 顺序绘制 → 后 compose 的远层会
+                    // 盖住近层。不给 zIndex 的表现是"上面那层压着下面那层"，
+                    // 卡越出 row cell 之后尤其明显
+                    .zIndex((FLOOR_Z_BASE - index).toFloat())
                     .testTag("chat_map_floor_${floor.key}"),
             ) {
                 ChatMapFloor(
@@ -150,19 +158,43 @@ private fun ChatMapFloor(
         Box(
             Modifier
                 .fillMaxWidth()
-                // ⚠️ **gap 用 offset 而不是 padding**：
-                // `height(cardHeight).padding(top = gap)` 的语义是
-                // 「总高 cardHeight，其中 10dp 是内边距」→ 卡片只拿到
-                // `cardHeight - 10`。实算：263dp 的卡变成 253dp，
-                // 比例从 0.75 变成 0.78，而 solver 仍按 263 算
-                // `offsetY / cardHeight` —— **测量与解算分叉**，
-                // 表现是卡片略扁 + 展开动画进度偏一点，肉眼很难认定。
+                // ⚠️ **modifier 顺序是语义的一部分，不能重排**：
                 //
-                // 用 offset 把 gap 挪到 height 之外，卡片拿到完整 cardHeight。
+                //   offset → wrapContentHeight(Top, unbounded) → testTag → height
+                //
+                // 1. `offset(title + gap)`：gap 必须在 `height` **之外**。
+                //    写成 `height(x).padding(top = gap)` 的语义是「总高 x，
+                //    其中 gap 是内边距」→ 卡片只拿到 `x - gap`，比例 0.75 变 0.78，
+                //    而 solver 仍按原值算 `offsetY/cardHeight` —— 测量与解算分叉。
+                //
+                // 2. `wrapContentHeight(Alignment.Top, unbounded = true)`
+                //    **必须在 `height` 之前**（链上更靠外）：它先截住父传下来的
+                //    `maxHeight = rowHeight`，把 `Infinity` 传给内层 `height`，
+                //    让 `height` 真的拿到 `cardHeight`；对父仍上报 rowHeight，
+                //    但按 `Top` 把超出的 child 放在 y=0。
+                //
+                //    ⚠️ **不能反过来写 `height(x).wrapContentHeight(...)`**：那样外层
+                //    `height` 先收到父 max=rowHeight 被约束成 rowHeight，内层再
+                //    上报 cardHeight 就是"违约"，Compose 会把它**居中补偿** ——
+                //    顶部上移**半个溢出量**。实测（360×640dp、density 2.75）：
+                //    `(230.4-213)/2 = 8.7dp`，offset=0 时 card_row 落在楼层顶
+                //    **上方 24px**，加上 28dp offset 后 top 变成 19.27 而非 28。
+                //    `align(TopStart)` 修不了 —— 它只对齐父看到的那层外壳。
+                //
+                // 3. `testTag` **必须在 wrap 内侧**：放外侧只能读到对父上报的
+                //    rowHeight，读不到真实的 cardHeight。
+                //
+                // 为什么需要这一整套：外层 floor 是 `height(rowHeight)`，
+                // 而普通 `height(cardHeight)` 只是 *preferred* —— 当
+                // `cardHeight > rowHeight` 时会被父 `maxHeight` 压回去。
+                // 实测触发档 360×640dp：卡高 230.4 > 行高 213。
+                // 越出部分由最外层 `clipToBounds` 裁掉（对齐 RN `overflow: hidden`）。
                 .offset(
                     y = ChatMapStyle.FLOOR_TITLE_HEIGHT_DP.dp +
                         ChatMapStyle.FLOOR_TITLE_BOTTOM_GAP_DP.dp,
                 )
+                .wrapContentHeight(align = Alignment.Top, unbounded = true)
+                .testTag(cardRowTag(floor.key))
                 .height(cardHeight),
             contentAlignment = Alignment.Center,
         ) {
@@ -170,7 +202,15 @@ private fun ChatMapFloor(
             // slotCount 已含补位；真实卡不足时后面的槽渲染占位卡
             repeat(floor.slotCount) { slot ->
                 val thread = floor.items.getOrNull(slot)
-                val cardModifier = Modifier.size(width = cardWidth, height = cardHeight)
+                // ⚠️ **两级层序的第二级**：卡片的 zIndex。
+                // 阶段一没有 solver 值可用（transform 属阶段二），先用
+                // **倒序**保证真实卡不被后面的占位卡盖住 ——
+                // `repeat` 是升序 compose，占位卡排在真实卡之后，
+                // 不给 zIndex 时「1 真卡 + 4 占位」会让占位把真卡完全遮掉。
+                // 阶段二接上 `ChatMapCardLayout.solve().zIndex` 后替换这里。
+                val cardModifier = Modifier
+                    .zIndex((floor.slotCount - slot).toFloat())
+                    .size(width = cardWidth, height = cardHeight)
                 if (thread == null) {
                     ChatMapPlaceholderCard(modifier = cardModifier)
                 } else {
@@ -186,3 +226,16 @@ private fun ChatMapFloor(
         }
     }
 }
+
+/**
+ * 卡叠容器的 testTag —— 测量测试用它取真实 bounds。
+ *
+ * ⚠️ **必须带 `floor.key`**：一次 build 会产出 3 个 CHAT 层 + 2 个 RUNWAY，
+ * 用同一个静态 tag 会让 `onNodeWithTag` 匹配到多个节点而失败
+ * （实测语义树里 5 个同名节点）。
+ */
+internal fun cardRowTag(floorKey: String): String = "chat_map_card_row_$floorKey"
+
+/** 楼层 zIndex 基数：`FLOOR_Z_BASE - index`（对齐 RN/iOS 的 `100 - index`）。 */
+private const val FLOOR_Z_BASE = 100
+
