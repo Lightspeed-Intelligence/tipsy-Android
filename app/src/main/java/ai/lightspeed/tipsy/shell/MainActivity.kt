@@ -152,7 +152,12 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
             // 用 data object 相等判定够用（无变参），但仍走谓词版保持与上面一致：
             // 将来若加 draft_box 等入口来源，相等判定会立刻失效而谓词版不会。
             if (supportFragmentManager.findFragmentByTag(CreateSurfaceContract.COMPONENT_NAME) == null) {
-                router.onDestinationClosed { route -> route is AppRoute.Create }
+                router.onDestinationClosed { route ->
+                    // EditCharacter 与 Create 共用容器：同一角色的编辑 route
+                    // 实例相等（data class + 同一 rawJson），不解除同样会
+                    //「编辑过一次的角色再也点不开编辑」
+                    route is AppRoute.Create || route is AppRoute.EditCharacter
+                }
             }
             // Settings 的 7 个直达屏共用同一个 SettingsSurface 容器。
             // route 自身带不同的 screen，不能构造某个固定值做相等判断；容器出栈后
@@ -325,6 +330,11 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
                 // W4：Tab3 伪 Tab 的目标。走 openSurface 的通用链 ——
                 // 幂等判定、平铺 props、popSurface 收口都与 ChatDetail 同一条
                 is AppRoute.Create -> openSurface(CreateSurfaceContract.COMPONENT_NAME, route)
+                // P5：创作卡 ⋮ 菜单「编辑」→ 同一个 CreateSurface 的编辑态。
+                // 与 Create 共用容器与幂等判定（tag 是 componentName），
+                // 所以创建页开着时编辑请求会被忽略 —— 这正是单层容器纪律要的
+                is AppRoute.EditCharacter ->
+                    openSurface(CreateSurfaceContract.COMPONENT_NAME, route)
                 // W3 预接：RN auth-scoped bootstrap 已落地，但专属 §9.1 尚未
                 // 实机验收，生产 policy 仍关闭。组件身份、空 props、容器与关闭
                 // 去重先钉死；后续放行只改集中 policy，不再临场补导航机制。

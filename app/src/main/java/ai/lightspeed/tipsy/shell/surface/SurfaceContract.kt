@@ -2,6 +2,7 @@ package ai.lightspeed.tipsy.shell.surface
 
 import android.os.Bundle
 import java.util.UUID
+import org.json.JSONObject
 
 /**
  * Surface 的 initial props 与 capability handshake（W1 计划 §12.4）。
@@ -191,11 +192,67 @@ object SurfaceContract {
                     },
                 )
 
+                // JSON null（P5 editCharacter 载荷）。**不能丢**：
+                // `initCharStateUpdate` 展开时「键为 null」与「键缺失」在
+                // zustand 里语义不同（缺失保留 store 旧值）—— 丢掉的表现是
+                // 编辑一个清空过某字段的角色时旧值复活。Bundle 存显式 null，
+                // `Arguments.fromBundle` 落 `putNull` 还原成 JS null
+                JSONObject.NULL -> putString(key, null)
+
+                // JSON 数组（P5 editCharacter 的 tags / world_books 等）。
+                // `Arguments.fromBundle` 对 `instanceof List` 走 fromList，
+                // 元素支持 Bundle/标量/null —— 分派见 [toBundleList]
+                is List<*> -> putList(key, value)
+
                 else -> throw IllegalArgumentException(
                     "Surface prop『$key』的类型不受支持：${value.javaClass.name}。" +
                         "静默跳过会让该 prop 在 JS 侧恒为 undefined —— 请扩展 putRouteParams。",
                 )
             }
+        }
+    }
+
+    /**
+     * 写入 JSON 数组。按元素分两条 Bundle API —— 选错的失败点在**parcel 时**
+     * （进程重建保存 Fragment arguments），不在写入时，所以必须在这里就分对：
+     * - 对象元素 → `ArrayList<Bundle>` + [Bundle.putParcelableArrayList]
+     *   （Bundle 是 Parcelable **不是 Serializable**，走 Serializable 会在
+     *   进程重建时崩，平时完全正常 —— 典型的只在真机偶现的坑）
+     * - 标量/null 元素 → `ArrayList<Serializable?>` + [Bundle.putSerializable]
+     *
+     * 混合数组抛错：JSON 同构数组是后端契约，混了说明上游解析出了错，
+     * 静默取一半会让另一半在 JS 侧凭空消失。
+     */
+    private fun Bundle.putList(key: String, value: List<*>) {
+        val hasMaps = value.any { it is Map<*, *> }
+        if (hasMaps) {
+            val bundles = ArrayList<Bundle>(value.size)
+            for (element in value) {
+                val map = element as? Map<*, *> ?: throw IllegalArgumentException(
+                    "Surface prop『$key』是混合数组（对象与 ${element?.javaClass?.name} 并存），无法映射 Bundle",
+                )
+                bundles += Bundle().apply {
+                    @Suppress("UNCHECKED_CAST")
+                    putRouteParams(map as Map<String, Any>)
+                }
+            }
+            putParcelableArrayList(key, bundles)
+        } else {
+            val scalars = ArrayList<java.io.Serializable?>(value.size)
+            for (element in value) {
+                scalars += when (element) {
+                    null, JSONObject.NULL -> null
+                    is String -> element
+                    is Int -> element
+                    is Long -> element
+                    is Double -> element
+                    is Boolean -> element
+                    else -> throw IllegalArgumentException(
+                        "Surface prop『$key』数组元素类型不受支持：${element.javaClass.name}",
+                    )
+                }
+            }
+            putSerializable(key, scalars)
         }
     }
 

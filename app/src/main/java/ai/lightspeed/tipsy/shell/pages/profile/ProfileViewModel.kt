@@ -230,6 +230,143 @@ class ProfileViewModel(
         loadPages(tab, fromPage = p.nextPage)
     }
 
+    /** 一次性 Toast 已展示，清状态（同 `ChatListViewModel.consumeToast`）。 */
+    fun consumeToast() {
+        _state.value = _state.value.copy(toastKey = null)
+    }
+
+    // ── P5 卡片 ⋮ 菜单（方案 §8.1：角色=编辑/删除/置顶、故事=删除/置顶、游戏=置顶）──
+
+    /** 打开某张卡的菜单。单字段天然互斥 —— RN 那套 `closeOtherMenu` ref 表不需要。 */
+    fun onMenuOpen(item: ProfileCreatedItem) {
+        _state.value = _state.value.copy(openMenuKey = item.dedupeKey)
+    }
+
+    fun onMenuDismiss() {
+        _state.value = _state.value.copy(openMenuKey = null)
+    }
+
+    /** 菜单「Delete」→ 关菜单、挂确认弹窗（真正删除在 [onDeleteConfirmed]）。 */
+    fun onDeleteRequested(item: ProfileCreatedItem) {
+        _state.value = _state.value.copy(openMenuKey = null, pendingDelete = item)
+    }
+
+    fun onDeleteDismissed() {
+        _state.value = _state.value.copy(pendingDelete = null)
+    }
+
+    /**
+     * 确认删除（`CharacterGridItem.tsx:825-840` / `StoryItem.tsx:832-846`）。
+     *
+     * 语义照 RN：**服务端先删、成功后整列表重拉对账**（不是 ChatList 那种
+     * 乐观移除）—— 弹窗在发请求前就收掉，列表在重拉完成时更新。
+     * 成功不弹 Toast（RN 如此）；仅 character 发 `delete_character` 埋点
+     * （story 的 onConfirm 没有埋点，实测）。
+     *
+     * ⚠️ 失败提示是壳补的（`Delete failed`，ChatList 已有 key）：RN 的
+     * onConfirm **没有** try/catch，失败表现为「点了删除、卡片还在、
+     * 无任何提示」—— §2.39 那类静默失败，不继承。
+     */
+    fun onDeleteConfirmed() {
+        val target = _state.value.pendingDelete ?: return
+        _state.value = _state.value.copy(pendingDelete = null)
+        val deleteId = target.deleteId
+        if (deleteId.isNullOrBlank()) {
+            // game 无删除动作，UI 不该给出这个入口；走到这里是装配错误
+            logWarn("删除目标缺 id：type=${target.type} key=${target.dedupeKey}", null)
+            _state.value = _state.value.copy(toastKey = KEY_DELETE_FAILED)
+            return
+        }
+        coroutineScope.launch {
+            val result = runCatching {
+                when (target.type) {
+                    ProfileItemType.CHARACTER -> api.deleteCharacter(deleteId)
+                    ProfileItemType.STORY -> api.deleteStory(deleteId)
+                    ProfileItemType.GAME -> error("game 卡无删除动作")
+                }
+            }
+            if (result.isFailure) {
+                val error = result.exceptionOrNull()
+                if (error is CancellationException) throw error
+                logWarn("删除失败：${target.dedupeKey}", error)
+                _state.value = _state.value.copy(toastKey = KEY_DELETE_FAILED)
+                return@launch
+            }
+            if (target.type == ProfileItemType.CHARACTER) {
+                // 参数名照 RN sendEvent（camelCase characterId）
+                Analytics.track("delete_character", mapOf("characterId" to deleteId))
+            }
+            reloadCreatedTab()
+        }
+    }
+
+    /**
+     * 置顶/取消置顶（`CharacterGridItem.tsx:396-424` 的 `handleTogglePin`）。
+     *
+     * RN 语义逐条对齐：
+     * - 单飞（`isPinning` 门）；点击即关菜单；
+     * - **非乐观**：成功才重拉列表（置顶影响排序，本地重排不可靠，
+     *   服务端才知道 pinned 组的最终顺序）；
+     * - 成功 Toast 按**响应**的 `is_pinned` 分流（`res?.is_pinned` falsy →
+     *   Unpinned，null 同 falsy）；
+     * - 失败 Toast：服务端 msg 含 `up to 3 pins allowed` → 上限文案，
+     *   否则统一 `Pinned failed`（RN 不分置顶/取消方向，照抄）。
+     */
+    fun onTogglePin(item: ProfileCreatedItem) {
+        if (_state.value.pinningKey != null) return
+        val pinId = item.pinId
+        if (pinId.isNullOrBlank()) {
+            logWarn("置顶目标缺 id：key=${item.dedupeKey}", null)
+            _state.value = _state.value.copy(openMenuKey = null, toastKey = KEY_PIN_FAILED)
+            return
+        }
+        _state.value = _state.value.copy(openMenuKey = null, pinningKey = item.dedupeKey)
+        coroutineScope.launch {
+            val result = runCatching { api.togglePin(pinId, item.type) }
+            if (result.isFailure) {
+                val error = result.exceptionOrNull()
+                if (error is CancellationException) throw error
+                logWarn("置顶操作失败：${item.dedupeKey}", error)
+                _state.value = _state.value.copy(
+                    pinningKey = null,
+                    toastKey = pinFailureKey(error),
+                )
+                return@launch
+            }
+            _state.value = _state.value.copy(
+                pinningKey = null,
+                toastKey = if (result.getOrNull() == true) KEY_PIN_OK else KEY_UNPIN_OK,
+            )
+            reloadCreatedTab()
+        }
+    }
+
+    /**
+     * 上限判定照 RN `error?.toString().includes('up to 3 pins allowed')` ——
+     * 只认业务 envelope 的 msg（那是 RN 能 includes 到的来源）。
+     */
+    private fun pinFailureKey(error: Throwable?): String =
+        if (error is ApiException.Business &&
+            error.serverMessage?.contains(PIN_LIMIT_MSG_FRAGMENT) == true
+        ) {
+            KEY_PIN_LIMIT
+        } else {
+            KEY_PIN_FAILED
+        }
+
+    /**
+     * 删除/置顶成功后的创作列表对账重拉（RN 的 `createdMutate`）。
+     *
+     * 只动创作 tab：pin/delete 不影响四个统计数字与其它 tab。保留旧列表直到
+     * 新数据到达（清空会闪白，§8.4）。菜单动作只存在于创作 tab，此刻
+     * [cancelInFlight] 打断的必然是自己 tab 的在飞链。
+     */
+    private fun reloadCreatedTab() {
+        cancelInFlight()
+        updatePaging(ProfileTab.CREATED) { it.copy(errorMessage = null) }
+        loadPages(ProfileTab.CREATED, fromPage = 0)
+    }
+
     // ── 内部 ────────────────────────────────────────
 
     private fun loadFirstPageIfNeeded(tab: ProfileTab) {
@@ -495,5 +632,15 @@ class ProfileViewModel(
 
         /** i18n key（key = 英文原文）。UI 层判等后走 LocalizedText，同 Home。 */
         const val FALLBACK_ERROR_KEY = "Please try again later"
+
+        // P5 菜单动作的 Toast keys（词条已全部在 SHELL_KEYS，勿改英文原文）
+        const val KEY_PIN_OK = "Pinned successfully"
+        const val KEY_UNPIN_OK = "Unpinned successfully"
+        const val KEY_PIN_FAILED = "Pinned failed"
+        const val KEY_PIN_LIMIT = "Up to 3 pins allowed. Unpin one to try again."
+        const val KEY_DELETE_FAILED = "Delete failed"
+
+        /** RN 判上限的子串（`CharacterGridItem.tsx:415`），大小写照原文。 */
+        private const val PIN_LIMIT_MSG_FRAGMENT = "up to 3 pins allowed"
     }
 }

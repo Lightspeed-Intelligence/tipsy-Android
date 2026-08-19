@@ -30,6 +30,18 @@ data class ProfileState(
     val paging: Map<ProfileTab, ProfileTabPaging> = emptyMap(),
     /** 下拉刷新是整页级的（用户信息 + 统计 + 当前 tab 列表），故不进 [paging]。 */
     val isRefreshing: Boolean = false,
+    /**
+     * ⋮ 菜单当前展开在哪张卡上（dedupeKey）；null = 无菜单。
+     * RN 的菜单是卡内浮层且**互斥**（`closeOtherMenu` 遍历关闭其它卡），
+     * 单字段天然互斥，不需要那套 ref 表。
+     */
+    val openMenuKey: String? = null,
+    /** 待确认的删除目标（点了菜单「Delete」但还没点弹窗「Delete」）。 */
+    val pendingDelete: ProfileCreatedItem? = null,
+    /** 置顶请求在飞的卡（dedupeKey）；请求期间该卡菜单的 Pin 键禁用。 */
+    val pinningKey: String? = null,
+    /** 一次性 Toast 的 i18n key；消费后由 [ProfileViewModel.consumeToast] 清空。 */
+    val toastKey: String? = null,
 ) {
     fun pagingOf(tab: ProfileTab): ProfileTabPaging = paging[tab] ?: ProfileTabPaging()
 
