@@ -66,8 +66,32 @@ internal object ChatMapStyle {
     /** 红点直径 8dp（`:135` `const size = 8 * scale`）。 */
     const val UNREAD_DOT_SIZE_DP = 8
 
-    /** 红点左偏 2dp（`:137` `leftOffset = 2 * scale`）。 */
-    const val UNREAD_DOT_LEFT_DP = 2
+    /**
+     * 红点相对卡片**右上角**的偏移（Compose `Alignment.TopEnd` 坐标系）。
+     *
+     * ## ⚠️ 两个坐标系的符号是反的，别直接搬 RN 的数
+     *
+     * RN（CSS 绝对定位，`ChatItem.tsx:138-142`）：
+     * ```
+     * top:   -offset            = -4   // 负 = 向上越出
+     * right: -offset + leftOffset = -2   // 负 = 向右越出
+     * ```
+     * CSS 的 `right` 是「距右边缘的距离」，**负值表示越出**。
+     *
+     * Compose 的 `Alignment.TopEnd` + `offset(x)` 里，
+     * **x 为正才向右外移**、负值往卡内缩。所以：
+     *
+     * | 轴 | RN | Compose |
+     * | --- | --- | --- |
+     * | 竖直 | `top: -4` | `y = -4.dp`（同号，都是向上） |
+     * | 水平 | `right: -2` | **`x = +2.dp`**（**反号**） |
+     *
+     * 我第一版直接抄了 RN 的 `-2`，结果红点缩回卡内 —— 而它已经不被 clip 了，
+     * 所以看起来"就在角上"，只有和 RN 并排比才看得出差 4dp。
+     * iOS 端口的 `ChatMapCardView` trailing offset 也是 `+2`，与这里同号。
+     */
+    const val UNREAD_DOT_OFFSET_X_DP = 2
+    const val UNREAD_DOT_OFFSET_Y_DP = -(UNREAD_DOT_SIZE_DP / 2) // -4
 
     /** 卡面文字：白 50%。 */
     val cardTextColor = Color(0x80FFFFFF)

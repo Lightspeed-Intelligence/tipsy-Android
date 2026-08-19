@@ -105,9 +105,10 @@ internal fun ChatMapCard(
             Box(
                 Modifier
                     .align(Alignment.TopEnd)
+                    // ⚠️ x **为正**才向右越出（TopEnd 坐标系与 CSS 的 right 反号）
                     .offset(
-                        x = -ChatMapStyle.UNREAD_DOT_LEFT_DP.dp,
-                        y = -(ChatMapStyle.UNREAD_DOT_SIZE_DP / 2).dp,
+                        x = ChatMapStyle.UNREAD_DOT_OFFSET_X_DP.dp,
+                        y = ChatMapStyle.UNREAD_DOT_OFFSET_Y_DP.dp,
                     )
                     .size(ChatMapStyle.UNREAD_DOT_SIZE_DP.dp)
                     .clip(RoundedCornerShape(ChatMapStyle.CARD_CORNER_DP.dp))

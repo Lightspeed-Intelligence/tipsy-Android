@@ -1,6 +1,7 @@
 package ai.lightspeed.tipsy.shell
 
 import ai.lightspeed.tipsy.shell.pages.chatlist.ChatMapGeometry
+import ai.lightspeed.tipsy.shell.pages.chatlist.ChatMapStyle
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -143,6 +144,36 @@ class ChatMapGeometryTest {
         assertEquals(200f, ChatMapGeometry.floorHeightDp(900f), EPS)
         // 传 px 会得到不同的 dp 结果 —— 见上一条的不可交换性
         assertEquals(700f, ChatMapGeometry.floorHeightDp(2400f), EPS)
+    }
+
+    @Test
+    fun `未读点几何：x 为正向右越出、y 为负向上越出`() {
+        // ⚠️ 这条守的是一次**坐标系符号翻转**：
+        // RN 用 CSS 绝对定位 `right: -2`（负 = 向右越出，`ChatItem.tsx:141`），
+        // 而 Compose 的 `Alignment.TopEnd` + `offset(x)` 是 **x 正才向右外移**。
+        // 直接抄 RN 的 -2 会让红点缩回卡内 —— 而它已不被 clip，
+        // 所以看起来"就在角上"，只有与 RN 并排才看得出差 4dp。
+        assertEquals("x 必须为正（向右越出）", 2, ChatMapStyle.UNREAD_DOT_OFFSET_X_DP)
+        assertEquals("y 必须为负（向上越出）", -4, ChatMapStyle.UNREAD_DOT_OFFSET_Y_DP)
+        // y = -size/2：半个点越出上边缘（RN `top: -offset`）
+        assertEquals(
+            "y 恒为 -size/2",
+            -(ChatMapStyle.UNREAD_DOT_SIZE_DP / 2),
+            ChatMapStyle.UNREAD_DOT_OFFSET_Y_DP,
+        )
+        assertEquals(8, ChatMapStyle.UNREAD_DOT_SIZE_DP)
+    }
+
+    @Test
+    fun `占位卡圆角与真实卡不同`() {
+        // RN：真实卡 `borderRadius: 4`（ChatItem.tsx:237）、
+        // 占位卡 `borderRadius: 8`（ChatMap.tsx:240）—— 复用会错
+        assertEquals(4, ChatMapStyle.CARD_CORNER_DP)
+        assertEquals(8, ChatMapStyle.PLACEHOLDER_CORNER_DP)
+        assertTrue(
+            "两者必须不同，别复用",
+            ChatMapStyle.CARD_CORNER_DP != ChatMapStyle.PLACEHOLDER_CORNER_DP,
+        )
     }
 
     private companion object {

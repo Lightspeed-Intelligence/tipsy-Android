@@ -3,7 +3,6 @@ package ai.lightspeed.tipsy.shell.pages.chatlist
 import ai.lightspeed.tipsy.shell.ui.sSp
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -38,14 +37,22 @@ import androidx.compose.material3.Text
  * 把楼层铺在 `scrollView.contentView` 的 `y = (N-1-index) * rowHeight`
  * 并靠 `clipsToBounds` 裁掉滑出底部的层。
  *
- * 这里用 `Column` + 逐层 `offset` 复刻同一几何：
+ * 这里用逐层 `offset` 复刻同一几何：
  * - 层高恒 `rowHeight = listHeight / 3`（⚠️ Android **没有** `/2` 分支，
  *   见 [ChatMapGeometry.rowHeight]）；
  * - `clipToBounds` 对齐 RN 的 `overflow: hidden`。
  *
- * ⚠️ **刻意不用 `LazyColumn`**：楼层数恒为「真实组 + 补齐 + 2 跑道」的小常数
- * （通常 5），懒加载没有收益，而 `LazyColumn` 的回收会让阶段二的
- * per-floor 横滑状态更难保。
+ * ## ⚠️ 楼层数**不是**小常数 —— 虚拟化是下一刀的必修项
+ *
+ * 我早前写过"楼层数恒为小常数（通常 5）"作为不虚拟化的理由 —— **那是错的**：
+ * 所有日期桶都保留（`ChatMapFloors.build` 不截断），首 50 条会话若跨 50 天
+ * 就是 50 + 2 = **52 层**全量组合。而 `clipToBounds` **不会阻止**
+ * 被裁掉的 `AsyncImage` 发起网络请求。
+ *
+ * 当前实现仍是全量 `forEach` + `repeat`，**已知性能缺口**，
+ * 与层序 / Compose key / 横滑状态外置一起在下一刀收口
+ * （虚拟化会改变 per-floor 状态的持有方式，所以必须一起做）。
+ * RN 侧明确设了 floor 的 `windowSize/initialNumToRender/maxToRenderPerBatch = 3`。
  */
 @Composable
 internal fun ChatMapScreen(
@@ -119,7 +126,11 @@ private fun ChatMapFloor(
     timeText: (ChatThread) -> String,
     hasUnread: (ChatThread) -> Boolean,
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+    // ⚠️ **不用受限的 Column** —— 见下面 gap 那段。
+    // 楼层内部布局：标题占 18dp、gap 10dp、然后是**完整**卡高。
+    // 三者之和可能超过 rowHeight（`listHeight/3`），RN/iOS 都允许卡越出
+    // floor cell（靠外层裁剪），所以这里也不去压缩它。
+    Box(modifier = Modifier.fillMaxWidth()) {
         // 标题（跑道层没有标题）
         if (floor.kind == ChatMapFloors.FloorKind.CHAT) {
             Text(
@@ -137,8 +148,20 @@ private fun ChatMapFloor(
         Box(
             Modifier
                 .fillMaxWidth()
-                .height(cardHeight)
-                .padding(top = ChatMapStyle.FLOOR_TITLE_BOTTOM_GAP_DP.dp),
+                // ⚠️ **gap 用 offset 而不是 padding**：
+                // `height(cardHeight).padding(top = gap)` 的语义是
+                // 「总高 cardHeight，其中 10dp 是内边距」→ 卡片只拿到
+                // `cardHeight - 10`。实算：263dp 的卡变成 253dp，
+                // 比例从 0.75 变成 0.78，而 solver 仍按 263 算
+                // `offsetY / cardHeight` —— **测量与解算分叉**，
+                // 表现是卡片略扁 + 展开动画进度偏一点，肉眼很难认定。
+                //
+                // 用 offset 把 gap 挪到 height 之外，卡片拿到完整 cardHeight。
+                .offset(
+                    y = ChatMapStyle.FLOOR_TITLE_HEIGHT_DP.dp +
+                        ChatMapStyle.FLOOR_TITLE_BOTTOM_GAP_DP.dp,
+                )
+                .height(cardHeight),
             contentAlignment = Alignment.Center,
         ) {
             // 阶段一：卡片居中重叠铺位（transform 属阶段二）。
