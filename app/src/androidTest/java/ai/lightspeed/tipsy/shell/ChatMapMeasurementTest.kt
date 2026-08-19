@@ -30,7 +30,8 @@ import org.junit.runner.RunWith
  *
  * 早前一版是在测试里手写一个"形状相似"的 `Box(height=row){ Box(height=card) }`
  * —— 那样**永远测不到生产修复**：它重新制造了旧的 preferred-size 路径，
- * 不经过 `unboundedHeight()`，所以生产改对改错都不影响结果。
+ * 不经过生产那条 `offset → wrapContentHeight(Top, unbounded) → height` 链，
+ * 所以生产改对改错都不影响结果。
  * 那是第四种假保护（前三种：常量而非调用点、dividend 恒正、clamp 端取样）。
  *
  * ## ⚠️ fixture 必须落在超约束档

@@ -59,10 +59,12 @@ fragment = "1.8.5"
 # ── 测试 ──
 junit = "4.13.2"
 androidxJunit = "1.2.1"
-# ⚠️ **3.7.0 是必需的，不是"顺手升级"**：3.6.1 的 Espresso 用反射调
-# `InputManager.getInstance`，该入口在新平台上已移除 —— 表现是
-# `createComposeRule` 起不来、`NoSuchMethodException`，**所有** Compose
-# instrumented 测试在 API 36/37 上直接挂（实测 Pixel_10/android-37.1）。
+# ⚠️ **3.7.0 是必需的，不是"顺手升级"**：3.6.1 的 Espresso 对
+# `InputManager.getInstance` 的**反射查找在 API 36/37 上失败**
+# （⚠️ 不是 AOSP 删了方法，是应用侧反射不可用）—— 表现是
+# `NoSuchMethodException`，**基于 `createComposeRule` 的测试**起不来
+# （实测 Pixel_10/android-37.1）。
+# ⚠️ 范围仅限这类测试：`MmkvInteropTest` 不碰 Compose，同设备上一直是过的。
 # 官方 3.7.0 release notes 有逐字对应的修复：
 # "Use getSystemService instead of reflective InputManager.getInstance"。
 #
