@@ -61,6 +61,7 @@ class ProfileFragment : Fragment() {
                 walletApi = ProfileWalletApi(app.apiClient),
                 userStore = CurrentUserStore(UserInfoApi(app.apiClient)),
                 languageProvider = { L10n.current },
+                avatarDecorationSource = AvatarDecorationApi(app.apiClient),
             ) as T
         }
     }
@@ -164,6 +165,7 @@ class ProfileFragment : Fragment() {
                             ProfileWalletAction.COINS -> requestRoute(AppRoute.UserCoins)
                         }
                     },
+                    avatarDecorationImageUrl = state.avatarDecorationImageUrl,
                     // ⚠️ 用 Compose 的 inset 而不是 ViewCompat listener + 手动 render：
                     // listener 在**首帧之后**才回调，那之前值是 0，顶栏会画到状态栏底下
                     // （真机实测：Settings 与系统图标重叠）。

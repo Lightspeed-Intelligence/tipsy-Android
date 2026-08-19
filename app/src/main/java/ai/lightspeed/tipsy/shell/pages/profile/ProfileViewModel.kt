@@ -67,6 +67,7 @@ class ProfileViewModel(
     private val scope: CoroutineScope? = null,
     /** 注入而非直接调用：JVM 单测里 `android.util.Log` 是抛 "not mocked" 的桩。 */
     private val logWarn: (String, Throwable?) -> Unit = { msg, t -> Log.w(TAG, msg, t) },
+    private val avatarDecorationSource: AvatarDecorationSource? = null,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ProfileState())
@@ -359,7 +360,16 @@ class ProfileViewModel(
             // 先刷用户信息：statsInfo 需要 userId
             val userInfoRefreshed = userStore.refresh()
             val user = userStore.current.value
-            _state.value = _state.value.copy(user = user)
+            val decorationUrl = runCatching {
+                avatarDecorationSource?.fetchImageUrl(user?.avatarDecorationCode)
+            }.onFailure {
+                if (it is CancellationException) throw it
+                logWarn("拉取头像框配置失败，保留头像本体", it)
+            }.getOrNull()
+            _state.value = _state.value.copy(
+                user = user,
+                avatarDecorationImageUrl = decorationUrl,
+            )
             val userId = user?.userId
             // EditProfile 的 dirty 只能由一次真正成功的 /user/info 响应确认清除。
             // refresh 失败会保留 CurrentUserStore 的旧值；若只看 user != null，

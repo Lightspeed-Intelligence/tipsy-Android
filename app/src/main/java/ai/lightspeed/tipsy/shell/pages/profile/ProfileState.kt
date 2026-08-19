@@ -18,6 +18,8 @@ import ai.lightspeed.tipsy.shell.user.CurrentUser
 data class ProfileState(
     /** 当前用户；null 表示还没拉到（首次冷启动进页面时的瞬态）。 */
     val user: CurrentUser? = null,
+    /** 已解析的头像框 URL；目录失败或 code 缺失时为空，头像本体仍照常显示。 */
+    val avatarDecorationImageUrl: String? = null,
     /** 四个统计数字。⚠️ 字段与标签交叉，见 [ProfileStats] 类注释。 */
     val stats: ProfileStats = ProfileStats.EMPTY,
     /** 钱包三栏卡（宝石/免费/金币 + 订阅档位）。拉取失败保留旧值，同 stats。 */

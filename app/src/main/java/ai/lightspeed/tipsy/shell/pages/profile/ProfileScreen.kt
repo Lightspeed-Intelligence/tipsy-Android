@@ -94,6 +94,7 @@ fun ProfileScreen(
     onFollowingClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onWalletAction: (ProfileWalletAction) -> Unit,
+    avatarDecorationImageUrl: String? = null,
     /** 状态栏高度；与 `HomeScreen` 一样是实际 dp，不参与 `.s` 缩放。 */
     statusBarPadding: Dp,
     modifier: Modifier = Modifier,
@@ -157,6 +158,7 @@ fun ProfileScreen(
                     Box(Modifier.fillMaxSize()) {
                         ProfileGrid(
                             state = state,
+                            avatarDecorationImageUrl = avatarDecorationImageUrl,
                             gridState = gridState,
                             // 头像行锚点换算，见类注释。列表首屏内容不足时至少留一点呼吸
                             headerTopPadding = (AVATAR_TOP_ANCHOR.dp - statusBarPadding -
@@ -230,6 +232,7 @@ private fun ProfileBackgroundImage(url: String?, modifier: Modifier = Modifier) 
 @Composable
 private fun ProfileGrid(
     state: ProfileState,
+    avatarDecorationImageUrl: String?,
     gridState: LazyGridState,
     headerTopPadding: Dp,
     onTabSelected: (ProfileTab) -> Unit,
@@ -259,6 +262,7 @@ private fun ProfileGrid(
                 onFollowersClick = onFollowersClick,
                 onFollowingClick = onFollowingClick,
                 onWalletAction = onWalletAction,
+                avatarDecorationImageUrl = avatarDecorationImageUrl,
             )
         }
 

@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -54,7 +55,8 @@ import coil3.compose.AsyncImage
  * `index.surfaces.js` 顶层的 `hydrateAvatarDecorationConfigs` 拉取，
  * 而进度 §2.19 记了那三个 hydrate **静默捕获失败**、失败表现为「头像框空掉」
  * （全新安装必现，升级安装因 MMKV 残留被掩蔽）。Profile 是头像框最显眼的页面。
- * 本刀不做，避免在一个已知会静默失败的配置源上再叠一层。
+ * 当前先把 code 透传到头像渲染边界；配置 URL 由调用方注入，未解析到 URL 时不绘制
+ * 头像框，不能把 code 当 URL 直接交给 Coil。
  *
  * @param topPadding 头像行距屏顶的补偿间距，由 `ProfileScreen` 按
  *   「屏顶 250dp 锚点」换算（RN 是悬浮 header + `paddingTop: 250 - headerOffset`
@@ -70,6 +72,7 @@ fun ProfileHeaderSection(
     onFollowersClick: () -> Unit,
     onFollowingClick: () -> Unit,
     onWalletAction: (ProfileWalletAction) -> Unit,
+    avatarDecorationImageUrl: String? = null,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxWidth().padding(top = topPadding)) {
@@ -79,16 +82,28 @@ fun ProfileHeaderSection(
                 .padding(horizontal = ProfileStyle.STATS_HORIZONTAL_PADDING.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            AsyncImage(
-                model = user?.avatarUrl,
-                contentDescription = user?.nickname,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .size(ProfileStyle.AVATAR_SIZE.dp)
-                    .clip(CircleShape)
-                    .background(ProfileStyle.CARD_PLACEHOLDER)
-                    .testTag("profile_avatar"),
-            )
+            Box(modifier = Modifier.size(ProfileStyle.AVATAR_SIZE.dp)) {
+                AsyncImage(
+                    model = user?.avatarUrl,
+                    contentDescription = user?.nickname,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .matchParentSize()
+                        .clip(CircleShape)
+                        .background(ProfileStyle.CARD_PLACEHOLDER)
+                        .testTag("profile_avatar"),
+                )
+                avatarDecorationImageUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                    AsyncImage(
+                        model = url,
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .matchParentSize()
+                            .testTag("profile_avatar_decoration"),
+                    )
+                }
+            }
 
             Column(
                 modifier = Modifier
