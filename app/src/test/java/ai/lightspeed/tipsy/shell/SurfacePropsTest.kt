@@ -300,6 +300,12 @@ class SurfacePropsTest {
         assertTrue(SurfaceProps.forRoute(AppRoute.Settings).isEmpty())
     }
 
+    /** EditProfile 的业务真值由 RN auth-scoped bootstrap 拉取，壳不得透传旧资料。 */
+    @Test
+    fun `EditProfile 不携带业务 props`() {
+        assertTrue(SurfaceProps.forRoute(AppRoute.EditProfile).isEmpty())
+    }
+
     // ── Create（Tab3，W4）─────────────────────────────────────
 
     /**

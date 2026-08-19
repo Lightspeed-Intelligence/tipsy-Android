@@ -329,6 +329,32 @@ class ShellAuthProviderTest {
         assertEquals("https://api.example.com/v1", f.provider.apiBaseURL())
     }
 
+    // ── EditProfileSurface → Native Profile 刷新 ─────────────────
+
+    @Test
+    fun `profileChanged 用 Native token 的 userId 发刷新信号`() = runTest {
+        val f = fixture(persisted = tokenWithExp(now + 3600, sub = "native-owner"))
+
+        f.provider.notifyProfileChanged()
+
+        assertEquals(listOf("native-owner"), f.profileRefreshRequests)
+    }
+
+    @Test
+    fun `profileChanged 在无有效 Native 账号时忽略且可诊断`() = runTest {
+        val fixtures = listOf(
+            fixture(persisted = null),
+            fixture(persisted = tokenWithExp(now - 1)),
+        )
+
+        fixtures.forEach { it.provider.notifyProfileChanged() }
+
+        fixtures.forEach { f ->
+            assertTrue(f.profileRefreshRequests.isEmpty())
+            assertTrue(f.logs.any { it.contains("无有效 Native userId") })
+        }
+    }
+
     // ── 未实现项必须可见（P0 建立的纪律，P1 不得破坏）───────────
 
     /**
@@ -460,6 +486,8 @@ class ShellAuthProviderTest {
         val loginReasons: List<String?>,
         /** `onRequestRoute` 收到的路由，按调用顺序。 */
         val routeRequests: List<AppRoute>,
+        /** EditProfileSurface 成功通知解析出的 Native 账号。 */
+        val profileRefreshRequests: List<String>,
     ) {
         val popSurfaceCount: Int get() = popSurfaceCounter()
         val logoutCount: Int get() = logoutCounter()
@@ -510,6 +538,7 @@ class ShellAuthProviderTest {
         val gemsCalls = mutableListOf<Map<String, String>>()
         val loginReasons = mutableListOf<String?>()
         val routeRequests = mutableListOf<AppRoute>()
+        val profileRefreshRequests = mutableListOf<String>()
         lateinit var provider: ShellAuthProvider
         val gate = ApiErrorGate(
             onAuthRejected = { provider.handleServerAuthRejectedForToken(it) },
@@ -528,6 +557,7 @@ class ShellAuthProviderTest {
             onNavigateGemsPurchase = { gemsCalls.add(it) },
             onRequestLogin = { loginReasons.add(it) },
             onRequestRoute = { routeRequests.add(it) },
+            onProfileRefreshRequested = { profileRefreshRequests.add(it) },
             tokenStore = tokenStore,
             apiErrorGate = gate,
             scope = this,
@@ -540,7 +570,7 @@ class ShellAuthProviderTest {
         return Fixture(
             provider, persistence, generations,
             { popCount }, { logoutCount }, logs, gemsCalls, gate, { rnLogoutCount },
-            loginReasons, routeRequests,
+            loginReasons, routeRequests, profileRefreshRequests,
         )
     }
 

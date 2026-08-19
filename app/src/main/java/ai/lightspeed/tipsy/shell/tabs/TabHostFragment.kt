@@ -161,9 +161,8 @@ class TabHostFragment : Fragment() {
         ShellTab.PROFILE -> ProfileFragment.newInstance()
         // ChatList W3 P1：Grid 视图 + 操作全链路；Map「時光長廊」是 P2
         ShellTab.CHAT_LIST -> ChatListFragment.newInstance()
-        // Screen W4-P1：AB 分流 + 竖向翻页 + 归因 + 会话埋点。
-        // ⚠️ **不播视频**：showcase 形态显示静态封面，Media3 与有界播放器池
-        // 属 P2（§2.35：OOM 是首要风险且只能真机暴露）
+        // Screen W4-P1/P2：AB 分流 + 竖向翻页 + 归因/会话埋点，showcase 在
+        // ±1 窗口内经 Media3 有界池播放；池不可用时仍降级显示封面。
         ShellTab.SCREEN -> ScreenFragment.newInstance()
         // isRealTab 已在 onTabClick 拦下，走到这里说明有人改了那个判断
         ShellTab.CREATE -> error("Create 是伪 Tab，不应创建 Fragment")

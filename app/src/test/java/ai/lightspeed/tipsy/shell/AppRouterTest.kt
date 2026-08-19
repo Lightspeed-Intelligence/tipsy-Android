@@ -473,6 +473,44 @@ class AppRouterTest {
         assertEquals("容器退栈后同一子屏必须能重开", 2, f.navigated.size)
     }
 
+    /**
+     * EditProfile 已完成 Android 容器与 auth-scoped gate 预接，但专属 §9.1
+     * 尚未实机验收，必须继续由生产 policy 明确拒绝，不能把静态实现误当上线证据。
+     */
+    @Test
+    fun `EditProfile 预接后仍不在生产白名单`() {
+        assertFalse(
+            "EditProfile 的 fresh-login / 跨账号 / 慢请求 §9.1 未跑，不得进入生产白名单",
+            AppRoute.EditProfile::class.java in ProductionRoutePolicy.enabledRouteTypes,
+        )
+
+        val f = fixture(
+            loggedIn = true,
+            enabled = ProductionRoutePolicy.enabledRouteTypes.toList(),
+        )
+        f.router.handle(AppRoute.EditProfile)
+
+        assertEquals("生产路径不该导航", 0, f.navigated.size)
+        assertEquals("必须明确拒绝而不是 silent no-op", 1, f.rejections.size)
+    }
+
+    /** 无参 Surface 关闭后必须解除 lastHandled，否则编辑资料只能打开一次。 */
+    @Test
+    fun `EditProfileSurface 关闭后可以再次打开`() {
+        val f = fixture(
+            loggedIn = true,
+            enabled = listOf(AppRoute.EditProfile::class.java),
+        )
+
+        f.router.handle(AppRoute.EditProfile)
+        f.router.handle(AppRoute.EditProfile)
+        assertEquals("容器还在时重复点击应去重", 1, f.navigated.size)
+
+        f.router.onDestinationClosed { it is AppRoute.EditProfile }
+        f.router.handle(AppRoute.EditProfile)
+        assertEquals("容器退栈后必须能重开", 2, f.navigated.size)
+    }
+
     /** 谓词不匹配时不得误清 —— A → B 的合法叠栈里，B 出栈不该解除 A 的去重。 */
     @Test
     fun `谓词不匹配时不解除去重`() {

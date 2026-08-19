@@ -13,15 +13,15 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * 大屏页的编排（W4-P1，进度文档 §2.35）。
+ * 大屏页的数据编排（W4-P1，进度文档 §2.35）。
  *
- * ## P1 范围：数据正确性，**不含视频播放**
+ * ## P1 负责数据，P2 视频已在 UI/播放层接入
  *
- * 已做：AB 端点分流、分页 + session 复用、归因、首屏缓存、会话埋点、
- * 静态图/GIF 两形态。
- * **不做**（P2）：Media3 播放器池、±1 窗口、buffer 三件套 ——
- * `showcase` 形态先显示 `thumbnailUrl` 静态封面。
- * 这样 OOM 风险为零（OOM 只能真机暴露，而真机验证已推迟）。
+ * 本类仍只编排 AB 端点分流、分页 + session 复用、归因、首屏缓存与
+ * 会话埋点。Media3 有界池、±1 窗口、buffer/cache 与播放可见性由
+ * `ScreenPlayerPool` / `ScreenVideoHost` / `ScreenFragment` 负责（§2.42）。
+ * 真实 showcase 视频与 OOM/解码器验收仍 NOT RUN，不得因 P2 代码已接线
+ * 就宣称 production-ready。
  *
  * ## ⚠️ session_id 的复用规则：**只有翻页复用**
  *

@@ -25,6 +25,7 @@ import ai.lightspeed.tipsy.shell.i18n.L10n
 import ai.lightspeed.tipsy.shell.i18n.LanguageCodes
 import ai.lightspeed.tipsy.shell.network.ApiClient
 import ai.lightspeed.tipsy.shell.network.ApiErrorGate
+import ai.lightspeed.tipsy.shell.pages.profile.ProfileRefreshHub
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
 import android.util.Log
@@ -105,6 +106,12 @@ class TipsyApplication : Application(), ReactApplication {
      * iOS 因为常驻 Tab 只广播给 RN 桥，踩过"登录后无人重拉""登出串账号数据"。
      */
     val authStateHub = AuthStateHub()
+
+    /**
+     * EditProfileSurface → 原生 Profile 的账号级刷新接力。
+     * 注册为 [authStateHub] observer，登录/登出/换号会同步清掉旧账号 pending。
+     */
+    val profileRefreshHub = ProfileRefreshHub()
 
     /** token 真值。W2 原生 Login 页登录成功后调 [ShellTokenStore.onLoggedIn]。 */
     lateinit var tokenStore: ShellTokenStore
@@ -196,6 +203,7 @@ class TipsyApplication : Application(), ReactApplication {
         // L10n.current，而 index.surfaces.js 在 runtime 启动时就调它对齐 i18n
         bootstrapI18n()
         installAnalytics()
+        authStateHub.addObserver(profileRefreshHub)
         registerAuthBridge()
         // Expo 模块的 Application 生命周期分发；autolinked 模块依赖它
         ApplicationLifecycleDispatcher.onApplicationCreate(this)
@@ -332,6 +340,9 @@ class TipsyApplication : Application(), ReactApplication {
                 } else {
                     handler(params)
                 }
+            },
+            onProfileRefreshRequested = { ownerUserId ->
+                profileRefreshHub.notifyProfileChanged(ownerUserId)
             },
             tokenStore = tokenStore,
             apiErrorGate = apiErrorGate,

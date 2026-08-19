@@ -31,15 +31,17 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.yield
 
 /**
  * Profile Tab 的宿主（W3 第一刀，替掉 `TabPlaceholderFragment`）。
  *
- * ## 出口全部经 Router，且现在**都会被明确拒绝**
+ * ## 出口全部经 Router，启用状态集中在 policy
  *
- * `ProductionRoutePolicy.enabledRouteTypes` 目前是 `emptySet()`（P9 / §9.1 前
- * 没有业务路由可进生产），所以设置 / 编辑资料 / Follow 列表点下去会走
- * `navigator.rejectNotEnabled` 给出明确错误。
+ * `ProductionRoutePolicy.enabledRouteTypes` 已放行原生 Settings，但 EditProfile、
+ * Follow、Gems 与 UserCoins 仍会走 `navigator.rejectNotEnabled`给出明确错误。
+ * EditProfile 的 Surface/auth/refresh 预接线已落地，只是 §9.1 未跑，因此生产
+ * policy 刻意保持关闭。
  *
  * 这是 §8.3 要求的形态：「路由到未启用的 Surface 必须给出明确错误或安全 fallback，
  * **不做 silent no-op**」。不是漏实现 —— 留 TODO 让点击无反应才是违反纪律的那种
@@ -80,7 +82,39 @@ class ProfileFragment : Fragment() {
         }
     }
 
+    /**
+     * EditProfileSurface 是 sibling 容器：它盖住 Profile 时，本 Fragment 可能一直
+     * 保持 STARTED，关闭也不会再走 [onStart]。协调器同时处理前台即时刷新、
+     * 非前台的 onStart 补消费，以及 `/user/info` 成功后才 ack dirty。
+     */
+    private lateinit var profileRefreshCoordinator: ProfileRefreshCoordinator
+
     private var hasReportedFirstExposure = false
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val app = requireActivity().application as TipsyApplication
+        profileRefreshCoordinator = ProfileRefreshCoordinator(
+            hub = app.profileRefreshHub,
+            currentUserIdProvider = { app.tokenStore.currentUserId() },
+            isStarted = { lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) },
+            refresh = { onUserInfoRefreshed, onUserInfoRefreshFailed ->
+                viewModel.onProfileChanged(
+                    onUserInfoRefreshed = onUserInfoRefreshed,
+                    onUserInfoRefreshFailed = onUserInfoRefreshFailed,
+                )
+            },
+            scheduleRetry = { retry ->
+                lifecycleScope.launch {
+                    // 失败 completion 发生在当前 userStatsJob 收尾；让出一次主线程后
+                    // 再发 retry，避免 refreshUserAndStats 从自己的 completion 里同步取消自己。
+                    yield()
+                    retry()
+                }
+            },
+        )
+        app.profileRefreshHub.addObserver(profileRefreshCoordinator)
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -146,7 +180,10 @@ class ProfileFragment : Fragment() {
 
     override fun onStart() {
         super.onStart()
-        viewModel.onAppear()
+        // dirty 轨已发起定向用户资料刷新时，onAppear 只保留「首屏列表
+        // 按需加载」，避免紧接着取消定向请求并重发第二轮 /user/info。
+        val startedTargetedRefresh = profileRefreshCoordinator.onStart()
+        viewModel.onAppear(refreshProfile = !startedTargetedRefresh)
         if (!hasReportedFirstExposure) {
             hasReportedFirstExposure = true
             viewModel.onFirstExposure()
@@ -155,6 +192,7 @@ class ProfileFragment : Fragment() {
 
     override fun onDestroy() {
         val app = requireActivity().application as TipsyApplication
+        app.profileRefreshHub.removeObserver(profileRefreshCoordinator)
         app.authStateHub.removeObserver(authObserver)
         super.onDestroy()
     }

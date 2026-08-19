@@ -81,7 +81,7 @@ object SurfaceDependencyChecklist {
     )
 
     /**
-     * `CreateSurface` 的微根（Android 固定 RN pin `da4f65a`）。
+     * `CreateSurface` 的微根（以 Android 当前嵌入的 RN pin 为准）。
      *
      * 顺序与 Settings 相同，但缺失后果不同：Create 的标签抽屉、编辑预填和深层
      * 创建流都在这个微容器里。iOS 用专属 `CreateSurfaceViewController` 承载；
@@ -160,6 +160,30 @@ object SurfaceDependencyChecklist {
         "BlacklistSearch",
         "Widget",
     )
+
+    /**
+     * `EditProfileSurface` 的微根（以 Android 当前嵌入的 RN pin 为准）。
+     *
+     * iOS 活跃路径同样用专属 `EditProfileSurfaceViewController` 挂这个 RN Surface；
+     * 旧原生编辑页只作休眠回滚备份。Android 因而不复活另一套业务实现，只用
+     * 通用容器 + [EditProfileSurfaceContract] 保留组件身份。
+     *
+     * `NavigationContainer` / 单屏 `Stack.Navigator` 看似多余，但抽屉子树里的
+     * `TipsyAutoHeightDrawer` 无条件调用 `useNavigation()`；删掉会在启动时直接崩。
+     */
+    val EDIT_PROFILE: List<Requirement> = listOf(
+        Requirement("SafeAreaProvider", "资料表单顶到状态栏/挖孔下"),
+        Requirement("KeyboardProvider", "昵称与简介输入框被键盘盖住"),
+        Requirement("SWRConfig", "资料与头像框请求的缓存/revalidate 语义漂移"),
+        Requirement("GestureHandlerRootView", "返回手势与社媒抽屉拖拽失效"),
+        Requirement("PortalProvider", "社媒抽屉的具名 portal 没有根宿主"),
+        Requirement("NavigationContainer", "TipsyAutoHeightDrawer 的 useNavigation 启动即崩"),
+        Requirement("Stack.Navigator", "EditProfile 单屏根无法挂载"),
+        Requirement("SurfaceToastHost", "保存/上传结果只写 toast store，界面无提示"),
+    )
+
+    /** `EditProfileSurface` 的 root stack 刻意只有一个屏。 */
+    val EDIT_PROFILE_STACK_TARGETS: List<String> = listOf("EditProfile")
 
     /**
      * 核对时需要人工确认的事项（写下来，避免下次重新调查）。

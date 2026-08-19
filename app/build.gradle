@@ -266,8 +266,9 @@ dependencies {
     implementation libs.coil.network.okhttp
 
     // 视频播放（W4 Screen P2 的 showcase mp4）。**不是新增依赖** —— media3 1.8.0
-    // 已由 react-native-video 引入依赖树（实测 :app:dependencies 可见）；版本是与
-    // RN 侧的耦合约束，见 catalog 注释。刻意不引 media3-session，理由同处。
+    // 已由 react-native-video 引入依赖树（含 media3-session，实测 :app:dependencies
+    // 可见）；壳只显式声明自己直接使用的模块并对齐版本。Screen 不实例化
+    // MediaSession / MediaSessionService，因此不会接入系统媒体通知或锁屏控制。
     implementation libs.media3.exoplayer
     implementation libs.media3.ui
     // 50MB 磁盘缓存（对齐 RN 的 cacheSizeMB）。⚠️ 用**独立目录** ScreenVideoCache，

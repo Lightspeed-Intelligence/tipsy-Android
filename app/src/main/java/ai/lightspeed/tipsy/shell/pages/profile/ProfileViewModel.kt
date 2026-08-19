@@ -87,10 +87,28 @@ class ProfileViewModel(
      * 幂等：当前 tab 已有数据时不重复拉首屏（对齐 `HomeViewModel.loadIfNeeded`）。
      * 用户信息与统计每次都刷 —— RN 侧 `FollowInfo` 是 `isFocused` 时 `mutate`
      * （`FollowInfo.tsx:41-45`），头像昵称改完回到页面要立刻更新。
+     * [refreshProfile] 只由 Fragment 在同一 onStart 已发起 dirty 定向刷新时传 false；
+     * 内容列表的按需加载仍照常执行。
      */
-    fun onAppear() {
-        refreshUserAndStats()
+    fun onAppear(refreshProfile: Boolean = true) {
+        if (refreshProfile) refreshUserAndStats()
         loadFirstPageIfNeeded(_state.value.selectedTab)
+    }
+
+    /**
+     * EditProfileSurface 成功修改资料后的定向刷新。
+     *
+     * 复用 [refreshUserAndStats]，只更新用户资料、统计与同链路的钱包，不复位或重拉
+     * 五个内容 tab。编辑昵称/头像不该让用户正在看的创作/收藏列表跳回第 0 页。
+     * [onUserInfoRefreshed] 仅在本次 `/user/info` 确实成功时回调响应 userId；失败时
+     * 即使 store 里仍有旧用户也不回调成功，而是在当前任务收尾后调用
+     * [onUserInfoRefreshFailed]，让协调器做一次有界重试。
+     */
+    fun onProfileChanged(
+        onUserInfoRefreshed: (String) -> Unit = {},
+        onUserInfoRefreshFailed: () -> Unit = {},
+    ) {
+        refreshUserAndStats(onUserInfoRefreshed, onUserInfoRefreshFailed)
     }
 
     /**
@@ -331,14 +349,27 @@ class ProfileViewModel(
                 .let { TabPage(it.items, it.totalPages, totalIsPages = true) }
     }
 
-    private fun refreshUserAndStats(): Job {
+    private fun refreshUserAndStats(
+        onUserInfoRefreshed: ((String) -> Unit)? = null,
+        onUserInfoRefreshFailed: (() -> Unit)? = null,
+    ): Job {
         userStatsJob?.cancel()
+        var userInfoRefreshFailed = false
         val job = coroutineScope.launch {
             // 先刷用户信息：statsInfo 需要 userId
-            userStore.refresh()
+            val userInfoRefreshed = userStore.refresh()
             val user = userStore.current.value
             _state.value = _state.value.copy(user = user)
-            val userId = user?.userId ?: return@launch
+            val userId = user?.userId
+            // EditProfile 的 dirty 只能由一次真正成功的 /user/info 响应确认清除。
+            // refresh 失败会保留 CurrentUserStore 的旧值；若只看 user != null，
+            // 会把旧缓存误当成本次成功并吞掉后续重试。
+            if (userInfoRefreshed && userId != null) {
+                onUserInfoRefreshed?.invoke(userId)
+            } else {
+                userInfoRefreshFailed = true
+            }
+            if (userId == null) return@launch
             val stats = runCatching { api.fetchSelfStats(userId) }
                 .onFailure {
                     if (it is CancellationException) throw it
@@ -349,6 +380,12 @@ class ProfileViewModel(
                 _state.value = _state.value.copy(stats = stats)
             }
             refreshWallet()
+        }
+        job.invokeOnCompletion { error ->
+            // completion 后再报失败：协调器会排队补一次重试；若在协程体内同步回调，
+            // 新 refresh 会从旧 userStatsJob 里取消自己。被新 mutation/登出取消的任务
+            // 不算失败事件——前者已有新 revision，后者已清 dirty。
+            if (error == null && userInfoRefreshFailed) onUserInfoRefreshFailed?.invoke()
         }
         userStatsJob = job
         return job

@@ -38,7 +38,7 @@ coil = "3.0.4"
 # react-native-video 已把整套 media3 **1.8.0** 引进依赖树（已核实其
 # android/gradle.properties:7 `RNVideo_media3Version=1.8.0`，且实测
 # `:app:dependencies` 里 media3-exoplayer:1.8.0 经它传递而来）。
-# 所以壳侧**不是新增依赖**，只是把已在类路径上的版本显式固定下来。
+# 所以壳侧**不是新增依赖**，只是让直接使用的模块与既有运行时版本显式对齐。
 #
 # ⚠️ 声明更高版本会经 Gradle 冲突解析把 react-native-video 用的那份也顶上去
 # —— RN 侧的视频播放（ChatDetail 的开场白视频等）就跑在被顶上去的 media3 上，
@@ -87,8 +87,9 @@ coil-network-okhttp = { module = "io.coil-kt.coil3:coil-network-okhttp", version
 # 只声明 exoplayer + ui：
 #   - exoplayer  → ExoPlayer 本体（progressive mp4 够用，dash/hls/rtsp 均不需要）
 #   - ui         → PlayerView / AspectRatioFrameLayout（RESIZE_MODE_ZOOM = RN 的 cover）
-# ⚠️ **不声明 media3-session**：MediaSession 会向系统注册媒体通知与锁屏控制，
-# 而 Screen 是静音自动播的 feed，注册进去等于每划一张卡就动一次系统媒体焦点。
+# media3-session 已由 react-native-video **传递引入**，并非不在依赖树中；
+# 壳不直接声明它，也不实例化 MediaSession / MediaSessionService。依赖在 classpath
+# 本身不会注册系统媒体通知或锁屏控制，Screen 因而仍只使用 ExoPlayer 播放层。
 #noinspection NewerVersionAvailable
 media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
 #noinspection NewerVersionAvailable

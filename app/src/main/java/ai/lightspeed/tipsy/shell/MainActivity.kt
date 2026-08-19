@@ -9,6 +9,7 @@ import ai.lightspeed.tipsy.shell.pages.settings.SettingsFragment
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
 import ai.lightspeed.tipsy.shell.surface.CreateSurfaceContract
+import ai.lightspeed.tipsy.shell.surface.EditProfileSurfaceContract
 import ai.lightspeed.tipsy.shell.surface.SettingsSurfaceContract
 import ai.lightspeed.tipsy.shell.surface.SurfaceProps
 import ai.lightspeed.tipsy.shell.tabs.TabHostFragment
@@ -99,6 +100,14 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
         // 用 back stack listener 而不是在 popSurface() 里调：返回键有**两条**路径
         // （桥的 popSurface / 系统返回键直接走 FragmentManager），只挂前者会让
         // 「按系统返回键退出设置页」这条路漏掉语言更新。listener 覆盖两者。
+        // 进程重建时 FragmentManager 可能已恢复 EditProfile 容器；先用真实 tag
+        // 初始化可见沿，否则之后的 pop 只会被看成重复 false，丢掉最终刷新。
+        app.profileRefreshHub.onEditProfileSurfaceVisibilityChanged(
+            isVisible = supportFragmentManager.findFragmentByTag(
+                EditProfileSurfaceContract.COMPONENT_NAME,
+            ) != null,
+            currentUserId = app.tokenStore.currentUserId(),
+        )
         supportFragmentManager.addOnBackStackChangedListener {
             if (supportFragmentManager.backStackEntryCount == 0) {
                 app.refreshAccountLanguage()
@@ -152,6 +161,23 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
             if (supportFragmentManager.findFragmentByTag(SettingsSurfaceContract.COMPONENT_NAME) == null) {
                 router.onDestinationClosed { route -> route is AppRoute.SettingsSubScreen }
             }
+            // EditProfile 是无参 data object；若不在容器真正退栈后按类型解除，
+            // 第二次点击会永久命中 Router 的 lastHandled 去重（与 Create 同型）。
+            // 分支先预接，但 ProductionRoutePolicy 仍保持关闭：auth-scoped gate
+            // 已静态落地，专属 §9.1 真机矩阵跑完前这段不会由生产路由抵达。
+            val isEditProfileSurfaceVisible = supportFragmentManager.findFragmentByTag(
+                EditProfileSurfaceContract.COMPONENT_NAME,
+            ) != null
+            if (!isEditProfileSurfaceVisible) {
+                router.onDestinationClosed { route -> route is AppRoute.EditProfile }
+            }
+            // Surface 与 Profile 是 sibling：退栈时底层 Fragment 可能始终 STARTED，
+            // 不会再触发 onStart。用真实 true→false 关闭沿强制一次最终校准，
+            // 账号仍从 Native token store 读，不接受 JS userId。
+            app.profileRefreshHub.onEditProfileSurfaceVisibilityChanged(
+                isVisible = isEditProfileSurfaceVisible,
+                currentUserId = app.tokenStore.currentUserId(),
+            )
         }
 
         router = AppRouter(
@@ -299,6 +325,11 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
                 // W4：Tab3 伪 Tab 的目标。走 openSurface 的通用链 ——
                 // 幂等判定、平铺 props、popSurface 收口都与 ChatDetail 同一条
                 is AppRoute.Create -> openSurface(CreateSurfaceContract.COMPONENT_NAME, route)
+                // W3 预接：RN auth-scoped bootstrap 已落地，但专属 §9.1 尚未
+                // 实机验收，生产 policy 仍关闭。组件身份、空 props、容器与关闭
+                // 去重先钉死；后续放行只改集中 policy，不再临场补导航机制。
+                is AppRoute.EditProfile ->
+                    openSurface(EditProfileSurfaceContract.COMPONENT_NAME, route)
                 // 其余目标尚未启用，Router 的 enabledRoutes 会先拦下 ——
                 // 走到这里说明有人启用了路由却没加分支，属实现错误，必须可见。
                 else -> error("路由已启用但缺少导航实现：${route.javaClass.simpleName}")
