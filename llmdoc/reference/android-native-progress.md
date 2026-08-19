@@ -1,6 +1,6 @@
 # Tipsy Android 原生化迁移：现状（唯一状态真值）
 
-> 更新：2026-08-18 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
+> 更新：2026-08-19 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
 > **G1 CI 已激活且在 main 上真绿**（§2.10 / §2.22）
 >
 > **W1 基本收尾**（细化方案见 [`../architecture/android-w1-plan.md`](../architecture/android-w1-plan.md)）：
@@ -17,7 +17,8 @@
 > **W2 进行中**：五 Tab shell + Home 首屏（§2.23，主链路真机已验）+ 标签筛选抽屉
 > 与 For You 冷启动种子（§2.24，**抽屉、种子写入门禁、离线渲染种子真机全已验**）。
 > Home 剩 banner / 彩蛋弹窗 / mp4 封面三项（前两项评估留 RN Surface）。
-> **W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 Grid 主链路
+> **W3 进行中**：Profile 主体完成（§2.25–§2.29；**P7 完成 = 头像框 + 渠道图标**，
+> §2.44，含对 PR #41 两处偏差的收尾修正）；ChatList P1 Grid 主链路
 > 已并入 main 且模拟器冒烟 PASS（§2.30）；Search P1 主链路已实现且 directApk
 > 真机冒烟 PASS（§2.31）；**P2 筛选器已实现**（§2.34）。
 > **他人主页已实现并并入 main**（§2.32，PR #28）：`AppRoute.UserProfile` 进白名单，
@@ -58,7 +59,7 @@
 
 ## 0. 三十秒速览
 
-- **波次进度**：W0 完成；**W1 完成**（契约层已在 CI 组合验证（§2.22）；**P9 已完成**（§2.36）；§12 关闭链记为已接受偏差）；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 已随 PR #25 并入 main（§2.30）；**Search P1 主链路已实现并完成 directApk 冒烟**（§2.31）；**P2 筛选器已实现**（§2.34，Search 完整对等）；**EditProfile 已完成静态预接/账号隔离/刷新接力**（§2.43），但 production policy 仍关闭。
+- **波次进度**：W0 完成；**W1 完成**（契约层已在 CI 组合验证（§2.22）；**P9 已完成**（§2.36）；§12 关闭链记为已接受偏差）；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 已随 PR #25 并入 main（§2.30）；**Search P1 主链路已实现并完成 directApk 冒烟**（§2.31）；**P2 筛选器已实现**（§2.34，Search 完整对等）；**EditProfile 已完成静态预接/账号隔离/刷新接力**（§2.43），但 production policy 仍关闭；**P7 完成 = 头像框 + 渠道图标**（§2.44，PR #41 + 收尾 PR，含 AuthMode 契约修正与失败保留语义）—— W3 业务面仅剩 P5 ⋮ 菜单与 ChatList P2 Map（PR #42 draft 进行中）。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`、`pages/chatlist/`、`pages/search/`、`pages/screen/`**；EditProfile 刷新接力落在 `pages/profile/ProfileRefreshHub` 与 `tipsy-auth.notifyProfileChanged`。
 - **submodule**：pin **`4ae2ebc667cf1801a09457156493a9eda7bf887e`**（§2.43 的 EditProfile 账号安全/通知链；前一 pin `da4f65a04` 是 §2.37 autolinking 补丁）。⚠️ `da4f65a` 与 PR #34 的三处壳改动**必须同时存在**：指针回退则 exclude 仍失效，而 styles/lifecycle 两处已让构建变绿 —— 会得到「构建通过但图片仍坏」的假绿。
 - **已验证**：main 上 PR #25 的 G1 Fast Gate 全绿。W3 Search P1 提交前快照的本机证据：`lintDirectApkDebug` 无新增（baseline 5 条）、`assembleGooglePlayDebug`/`assembleDirectApkDebug` 通过、**DirectApk app 单测 695 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿；directApk 真机主链路冒烟 PASS（§2.31）。提交前审查再新增 13 条、扩展 2 条回归测试并修正并发/auth/Router/点击归因/分页去重行为，最终源码预计 708 条；**最终 head 未在本机重跑 Gradle，交 G1 验证**。
@@ -80,7 +81,7 @@
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟢 **完成**：契约层已收口且 CI 已验；**P9 已完成**（§2.36，白名单放开 + 桥桩回填）；§12 关闭链记为**已接受偏差**（owner 2026-08-17）。**冒烟部分兑现**（§2.37 + §2.39）：§9.1 **7 过 / 3 未跑**，业务分流项未验。语言那项的壳缺陷已修（§2.38）且**复跑 PASS（模拟器）**（§2.39） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17/#33 已并） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
-| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1–P4、P6，§2.25–§2.29）；ChatList P1、Search P1/P2、他人主页、Settings 列表/语言均已落；**EditProfile 已完成静态预接、账号隔离与 Profile 刷新接力**（§2.43），但生产 policy 仍关闭。剩 Profile P5 ⋮ 菜单/P7 头像框、ChatList P2 Map 与 EditProfile §9.1 设备矩阵 | `4ae2ebc667cf1801a09457156493a9eda7bf887e` | —（PR #21–#30 已并；EditProfile 外层 PR 待开） |
+| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1–P4、P6，§2.25–§2.29；**P7 头像框 + 渠道图标 §2.44**）；ChatList P1、Search P1/P2、他人主页、Settings 列表/语言均已落；**EditProfile 已完成静态预接、账号隔离与 Profile 刷新接力**（§2.43），但生产 policy 仍关闭。剩 Profile P5 ⋮ 菜单、ChatList P2 Map（PR #42 draft 进行中）与 EditProfile §9.1 设备矩阵 | `4ae2ebc667cf1801a09457156493a9eda7bf887e` | —（PR #21–#30、#41 已并；EditProfile 外层 PR 待开） |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | 🟡 **进行中**：Screen P1 数据链（§2.35）与 P2 Media3 有界播放机制（§2.42，PR #39 / `6084df0`）已实现；P2 仍有真实视频/cache 失败/API24–33 层序/audio focus 四项 NOT RUN，故不 production-ready。Tab3 已接 `CreateSurface`（§2.40/§2.41）；剩 Screen next-item/fade/firstInteractive/P3、10 个未启用业务 Surface（含 W3 已预接但未放行的 EditProfile）、系统能力、OTA | `da4f65a04f50bc098c2df3bd9f8fbcc13018f7a5` | `6084df0d401e610d6fbcf26ce88c2bc494025927` |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
 
@@ -1975,6 +1976,11 @@ Search 的创作者点击换真页。新增 6 文件 1,469 行（`PublicProfileA
 开工前审计推翻了「复用自己视角基础设施」这个直觉前提 —— 七处偏差
 （1–4 是最初审计，5–7 是写码时二次核实补的），全部已按实测落地：
 
+> ⚠️ **第八处偏差后来在 P7 补出**（2026-08-19，§2.44）：RN 的 `ProfileHeader`
+> 自己/他人两个视角都渲染昵称下方的社交渠道图标（数据他人视角来自
+> `/user/get/public` 的 `display_urls`），本节的头部实现**没有**这排图标。
+> 展示层可直接复用 `ProfileSocialLinks`，留待他人主页后续包。
+
 1. **他人主页只有 1 个 tab，不是 5 个**（`CharacterGrid.tsx:980-1005`）：
    `isSelf` 否分支的 `return [...]` 里只有一个元素。该分支上方注释写
    「他人主页显示角色和视频两个tab」，**注释与代码不符，代码是真值**。
@@ -3283,6 +3289,91 @@ Native 表单。Android 只补宿主契约、账号安全门与修改成功后�
 因此 `EditProfileSurface` 的 §9.1 行仍有 8 个设备/生命周期验收格全 `✎`，
 生产 policy 必须保持关闭；本结论是
 “可提交预接线”，不是 production-ready。
+
+### 2.44 W3 Profile P7：头像框 + 渠道图标（2026-08-19）
+
+P7 的定义在 §2.26：**头像框与渠道图标两半**。PR #41（merge `cc97de0`）只落了
+头像框渲染缝且零测试；收尾 PR 修正其两处偏差、补齐渠道图标半边并补测试。
+
+#### 第一笔：头像框渲染缝（PR #41，7 文件 +79 行）
+
+- `CurrentUser` 增 `avatar_decoration_code`（`/user/info`，`ScalarCoercion` +
+  空串归 null）；`AvatarDecorationApi` 拉公开目录
+  `/avatar_decoration/config/list` 按 code 解析 `image_url`；
+  `ProfileViewModel` 刷新链解析后经 `ProfileState.avatarDecorationImageUrl`
+  下发；`ProfileHeaderSection` 把框画成头像上层的**不可点 overlay**
+  （`ContentScale.Fit`，testTag `profile_avatar_decoration`）。
+- **尺寸对等已核实**：RN 是 58dp 头像内嵌 65dp 容器、框画满 65dp
+  （`TipsyAvatar.tsx:87-92`）；壳的头像本体本就简化为满 65dp 圆（P2 已记），
+  框取同一 65dp 盒即对等。
+- **SVG 解码能力当前是传递依赖**：`react-native-screens` 显式引了
+  `coil-svg:3.0.4`（其 `android/build.gradle:249-253`），coil3 靠
+  ServiceLoader 自动注册 decoder。显式声明已在 ChatMap 分支 commit
+  `4acf6cd`（「两轨共享前置」，随 PR #42 入 main）—— 在那之前若 RN 侧
+  移除该依赖，框会**静默不渲染**。
+
+#### 第二笔：收尾修正（本节 PR）
+
+1. **鉴权模式契约偏差**：首版用 `AuthMode.NONE`，RN 真值是
+   **`axiosPublic`**（`apis/avatarDecoration.ts:16`）→ 正确映射是
+   `OPPORTUNISTIC`。NONE 恰是 `AuthMode` 类注释点名的 iOS「搜索历史恒空」
+   bug 形状 —— 带不带 token 的行为差异只在服务端，客户端与单测都看不出来。
+   已修并补 `AvatarDecorationApiContractTest`（MockWebServer 真往返，5 条：
+   路径、有 token 必带、无 token 照发、code 查无/`image_url` 空串按无框、
+   空 code 零请求）。
+2. **失败语义对齐 RN**：首版目录拉取失败会把已显示的框清空（日志却写着
+   「保留」），且目录往返**垫在**用户资料落地与 stats/钱包链前面。RN 真值：
+   `useAvatarDecorationConfig` 读 MMKV 持久化的 `config-persist` 目录，
+   瞬时网络失败不掉框。已改为：user 先落 state；框在 `userStatsJob`
+   **子协程**独立解析（登出/新刷新随 job 取消，旧账号在飞解析不残留写回，
+   账号边界仍由 `onAuthChanged` 整表复位兜底）；**拉取失败保留上次 URL**
+   （同钱包/统计「一次网络抖动不清屏」纪律）；code 为空立即清
+   （EditProfile 取消佩戴 → `notifyProfileChanged` 刷新后旧框不能留）；
+   目录返回但查无此 code 也清（目录是真值）。`ProfileViewModelTest`
+   +5 条（合计 46 条）。
+3. 顺带订正 `ProfileHeaderSection` KDoc 里过期的「头像框未做」标题
+   （PR #41 改了正文没改标题）。
+
+#### 第三笔：渠道图标（本节 PR，P7 的另一半）
+
+昵称下方的社交平台图标行（RN `SocialLinksDisplay.tsx`，Discord/Instagram/
+TikTok… 点击开外部浏览器）：
+
+- `CurrentUser` 增 `display_urls` 逐条容错解析（单条残缺跳过不弃整表；
+  `display_status` 缺失按**不可见** —— 状态未知宁可不展示，也不把用户设为
+  HIDDEN 的链接放出来）。
+- `ProfileSocialLinks` 收展示层三层过滤，**顺序照 RN**：
+  ① `display_status == VISIBLE(1)` ② 平台在 9 枚举支持名单（未知平台静默
+  跳过）③ 不在隐藏名单 `[kofi, patreon]`（`socialPlatforms.ts:53-56`，
+  RN 注释"暂时隐藏"—— 名单变了两端一起改）。图标 20dp、行 gap 12、
+  昵称列 gap 6（`ProfileHeader.tsx` styles）；9 个 png 资产已按
+  `ic_profile_social_<platform>` 搬入 `drawable-nodpi`。
+- 点击对齐 RN `WebBrowser.openBrowserAsync`：`ACTION_VIEW` + 捕获
+  `ActivityNotFoundException`（照 `SettingsFragment.openExternalUrl` 先例）。
+- `ProfileSocialLinksTest` 5 条对拍三层过滤 + 原序 + 九平台资产映射完整性；
+  `CurrentUserParserTest` +4 条（合计 9 条）。
+- ⚠️ **新识别偏差（未修）**：RN 的 `ProfileHeader` 自己/他人两个视角**都**渲染
+  这排图标（`useProfile.tsx:223-225`：`isSelf ? store : publicUser.display_urls`），
+  §2.32 的七处偏差审计没覆盖这一条 —— 壳的他人主页头部（`PublicProfile*`）
+  目前**没有**渠道图标。留待他人主页后续包（数据从 `/user/get/public` 的
+  `display_urls` 来，展示层可直接复用 `ProfileSocialLinks`）。
+
+#### 与 RN 的刻意差异
+
+壳不复刻 config-persist 的 hydrate 持久层（§2.19 记过那三个 hydrate
+**静默吞失败**的坑，全新安装必现空框），每次 Profile 刷新链解析一次目录 ——
+代价是每次刷新多一个轻量请求，换来失败可见且不背 MMKV 残留的历史包袱。
+
+#### 验证
+
+- 本机：`ProfileViewModelTest` 46 + `AvatarDecorationApiContractTest` 5 +
+  `ProfileSocialLinksTest` 5 + `CurrentUserParserTest` 9；全套件
+  `testGooglePlayDebugUnitTest` **1005 条 failures=0 / skipped=0** +
+  `:tipsy-auth:testDebugUnitTest` 过 + `lintDirectApkDebug` 过 +
+  `assembleGooglePlayDebug` 过；完整 G1 交 CI（PR #41 自身的 G1 在 PR 上已绿）。
+- 真机/模拟器 **NOT RUN**（按 owner 2026-08-14 决定累积）：待验清单加两条 ——
+  「Profile 头像框实际渲染（含 SVG 图源，ServiceLoader 注册只有设备能证）」、
+  「渠道图标行渲染 + 点击开浏览器」。
 
 ## 3. 横切能力
 

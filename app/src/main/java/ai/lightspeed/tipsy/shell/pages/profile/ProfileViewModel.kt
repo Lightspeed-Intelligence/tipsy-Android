@@ -360,16 +360,10 @@ class ProfileViewModel(
             // 先刷用户信息：statsInfo 需要 userId
             val userInfoRefreshed = userStore.refresh()
             val user = userStore.current.value
-            val decorationUrl = runCatching {
-                avatarDecorationSource?.fetchImageUrl(user?.avatarDecorationCode)
-            }.onFailure {
-                if (it is CancellationException) throw it
-                logWarn("拉取头像框配置失败，保留头像本体", it)
-            }.getOrNull()
-            _state.value = _state.value.copy(
-                user = user,
-                avatarDecorationImageUrl = decorationUrl,
-            )
+            _state.value = _state.value.copy(user = user)
+            // 头像框独立成子协程：随本 job 一起被取消（登出/新刷新不残留旧写回），
+            // 但一个纯装饰目录不得阻塞头像昵称落地，也不得垫在 stats/钱包链前面
+            launch { resolveAvatarDecoration(user?.avatarDecorationCode) }
             val userId = user?.userId
             // EditProfile 的 dirty 只能由一次真正成功的 /user/info 响应确认清除。
             // refresh 失败会保留 CurrentUserStore 的旧值；若只看 user != null，
@@ -399,6 +393,35 @@ class ProfileViewModel(
         }
         userStatsJob = job
         return job
+    }
+
+    /**
+     * 头像框 code → 图片 URL（P7，方案 §8.1 Profile 行）。
+     *
+     * 语义对齐 RN：`useAvatarDecorationConfig` 读的是 MMKV 持久化过的
+     * `config-persist` 目录，**瞬时网络失败不掉框**。所以：
+     * - code 为空 = 明确「未佩戴」，立即清空 —— EditProfile 取消佩戴后
+     *   `notifyProfileChanged` 触发的刷新不能把旧框留在屏上；
+     * - 目录返回但查无此 code / `image_url` 为空 → 清空（目录才是真值）；
+     * - 拉取**失败**保留上次的 URL（同钱包/统计「一次网络抖动不清屏」的纪律）。
+     *
+     * 账号边界不靠这里：登出/换号走 [onAuthChanged] 整表复位 `ProfileState()`，
+     * 且本函数总在 [userStatsJob] 的子协程里跑，旧账号的在飞解析会随 job 取消。
+     */
+    private suspend fun resolveAvatarDecoration(code: String?) {
+        val source = avatarDecorationSource ?: return
+        if (code.isNullOrBlank()) {
+            _state.value = _state.value.copy(avatarDecorationImageUrl = null)
+            return
+        }
+        runCatching { source.fetchImageUrl(code) }
+            .onSuccess { url ->
+                _state.value = _state.value.copy(avatarDecorationImageUrl = url)
+            }
+            .onFailure {
+                if (it is CancellationException) throw it
+                logWarn("拉取头像框目录失败，保留上次头像框", it)
+            }
     }
 
     /**
