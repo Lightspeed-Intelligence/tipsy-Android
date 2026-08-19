@@ -15,6 +15,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.exponentialDecay
+import androidx.compose.animation.core.tween
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -98,13 +106,33 @@ internal fun ChatMapScreen(
         val cardWidth = cardWidthDp.dp
         val cardHeight = cardHeightDp.dp
 
-        // 纵向滚动量（dp）—— 廊道整体的滚动，决定每层的 currIndex 与模式
-        var scrollYDp by remember { mutableFloatStateOf(0f) }
+        // 纵向滚动量（dp）—— 廊道整体的滚动，决定每层的 currIndex 与模式。
+        // ⚠️ RN 用 inverted FlatList，手指下拉看更早 → 与自然滚动同向
+        val scope = rememberCoroutineScope()
+        val scrollYState = remember { mutableFloatStateOf(0f) }
+        val scrollYDp = scrollYState.floatValue
+        val maxScrollYDp = (floors.size - 1).coerceAtLeast(0) * rowHeightDp
 
         // ⚠️ 固定横轴只在 baseX 变化时重建：`solve()` 每帧每卡各调一次，
         // 不复用会每帧产生数十个短命数组（低端机滚动 GC 抖动）
         val baseXDp = remember(windowWidthDp) { ChatMapGeometry.baseXDp(windowWidthDp) }
         val stops = remember(baseXDp) { ChatMapCardLayout.stopsFor(baseXDp) }
+
+        // 纵向拖动层：铺满容器，放在楼层**之下**（zIndex 默认 0 < 楼层的 96~100），
+        // 这样不拦卡片点击 —— 卡片在上层先拿到事件
+        Box(
+            Modifier
+                .matchParentSize()
+                .pointerInput(maxScrollYDp) {
+                    detectVerticalDragGestures { _, dragAmountPx ->
+                        // ⚠️ px → dp：手势给的是 px，solver 全链是 dp。
+                        // `toDp()` 来自 PointerInputScope 的 Density
+                        val deltaDp = dragAmountPx.toDp().value
+                        scrollYState.floatValue = (scrollYState.floatValue - deltaDp)
+                            .coerceIn(0f, maxScrollYDp)
+                    }
+                },
+        )
 
         floors.forEachIndexed { index, floor ->
             // 倒序：index 0（最新）在最底部
@@ -126,7 +154,12 @@ internal fun ChatMapScreen(
                 // ⚠️ **每层独立的横滑状态**，key 用 canonical `floor.key`
                 // （不是下标）—— 分页/跨日后下标会错配，把昨天的横滑位置
                 // 复用给今天。见 ChatMapFloors.DateBucket 的 key 说明
-                var scrollXDp by remember(floor.key) { mutableFloatStateOf(0f) }
+                // ⚠️ 用 Animatable 而不是裸 Float：惯性衰减与吸附都要动画驱动。
+                // 交给 Compose 的 animateDecay / animateTo —— **不自建帧循环**
+                // （iOS 用 CADisplayLink 是因为 UIKit 没有声明式重算，见
+                // ChatMapCardLayout 类注释）
+                val scrollX = remember(floor.key) { Animatable(0f) }
+                val scrollXDp = scrollX.value
 
                 // 楼层模式与展开偏移：currIndex 决定 1/3/5 模式
                 val currIndex = ChatMapFloors.currIndexFor(scrollYDp, rowHeightDp, index)
@@ -145,6 +178,25 @@ internal fun ChatMapScreen(
                 ChatMapFloor(
                     floor = floor,
                     scrollXDp = scrollXDp,
+                    onHorizontalDrag = { deltaDp ->
+                        scope.launch { scrollX.snapTo(scrollX.value + deltaDp) }
+                    },
+                    onHorizontalDragEnd = { velocityDpPerSec ->
+                        scope.launch {
+                            // 1. 惯性衰减（对齐 RN withDecay deceleration 0.998）
+                            val decay = exponentialDecay<Float>(
+                                frictionMultiplier = ChatMapSnap.DECELERATION,
+                            )
+                            scrollX.animateDecay(velocityDpPerSec, decay)
+                            // 2. 停下后吸附 —— 真实卡不足 5 张时会回绕到真实卡
+                            val target = ChatMapSnap.snapTarget(
+                                restX = scrollX.value,
+                                baseX = baseXDp,
+                                realSize = floor.items.size,
+                            )
+                            scrollX.animateTo(target, tween(SNAP_DURATION_MS))
+                        }
+                    },
                     disOut = disOut,
                     stops = stops,
                     cardWidth = cardWidth,
@@ -170,6 +222,10 @@ private fun ChatMapFloor(
     floor: ChatMapFloors.Floor<ChatThread>,
     /** 该层的横向滚动量（dp）—— 每层独立，由调用方按 floor.key 持有。 */
     scrollXDp: Float,
+    /** 横向拖动增量（dp）。 */
+    onHorizontalDrag: (Float) -> Unit,
+    /** 松手速度（dp/s）—— 调用方做惯性 + 吸附。 */
+    onHorizontalDragEnd: (Float) -> Unit,
     /** 该层的楼层模式偏移（`floorOffsets` 产出，5 个 dp 值）。 */
     disOut: FloatArray,
     /** 复用的插值横轴，见 [ChatMapCardLayout.Stops]。 */
@@ -239,6 +295,27 @@ private fun ChatMapFloor(
                 )
                 .wrapContentHeight(align = Alignment.Top, unbounded = true)
                 .testTag(cardRowTag(floor.key))
+                // 横向拖动 + 松手惯性/吸附。⚠️ 只挂在卡叠上，不挂整层 ——
+                // 挂整层会和纵向拖动抢事件
+                .pointerInput(floor.key) {
+                    // ⚠️ 用 VelocityTracker 取真实松手速度 —— 传 0 等于**关掉惯性**，
+                    // 那样 `withDecay(0.998)` 的对等就只是个摆设：手指一松立刻吸附，
+                    // 没有 RN 那种滑一下能连过好几张的手感
+                    val tracker = androidx.compose.ui.input.pointer.util.VelocityTracker()
+                    detectHorizontalDragGestures(
+                        onDragStart = { tracker.resetTracking() },
+                        onDragEnd = {
+                            // px/s → dp/s
+                            val vxDp = tracker.calculateVelocity().x.toDp().value
+                            onHorizontalDragEnd(vxDp)
+                        },
+                        onDragCancel = { onHorizontalDragEnd(0f) },
+                    ) { change, dragAmountPx ->
+                        tracker.addPosition(change.uptimeMillis, change.position)
+                        // ⚠️ px → dp（solver 全链 dp）
+                        onHorizontalDrag(dragAmountPx.toDp().value)
+                    }
+                }
                 .height(cardHeight),
             contentAlignment = Alignment.Center,
         ) {
@@ -302,4 +379,5 @@ internal fun cardRowTag(floorKey: String): String = "chat_map_card_row_$floorKey
 /** 单个卡槽的 testTag —— z-order 测试按槽位取节点。 */
 internal fun cardSlotTag(floorKey: String, slot: Int): String = "chat_map_slot_${floorKey}_$slot"
 
-
+/** 吸附动画时长（对齐 RN `withTiming(..., { duration: 300 })`）。 */
+private const val SNAP_DURATION_MS = 300
