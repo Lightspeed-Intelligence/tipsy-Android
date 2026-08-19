@@ -27,8 +27,12 @@ import androidx.compose.material3.Text
  * ## 本阶段做什么 / 不做什么
  *
  * ✅ 楼层倒序铺排 + 裁剪、楼层标题、卡叠的静态铺位、占位卡。
- * ⛔ **不含 transform**（scale/translateX/zIndex）、不含 pan/惯性/吸附、
- * 不含动图按可见性开关 —— 那些分别是阶段二、三。
+ * ⛔ **不含 solver 驱动的动态 transform**（scale/translateX/动态 zIndex）、
+ * 不含 pan/惯性/吸附、不含动图按可见性开关 —— 那些分别是阶段二、三。
+ *
+ * ⚠️ 当前**已有静态兜底层序**（[ChatMapZOrder]）：楼层 `100-index`、
+ * 卡片 `slotCount-slot`。它不是 solver 值，只是防"远层盖近层""占位盖真卡"
+ * 这两个当前就可见的问题；阶段二接上 solver 的 zIndex 后替换。
  *
  * 所以本阶段**画面是"静止的廊道"**：楼层与卡片都在正确位置，但不会随滚动变形。
  * 这样拆是为了让每一层能单独复审，而不是一次交一个巨包。
@@ -104,7 +108,7 @@ internal fun ChatMapScreen(
                     // Compose 默认按 compose 顺序绘制 → 后 compose 的远层会
                     // 盖住近层。不给 zIndex 的表现是"上面那层压着下面那层"，
                     // 卡越出 row cell 之后尤其明显
-                    .zIndex((FLOOR_Z_BASE - index).toFloat())
+                    .zIndex(ChatMapZOrder.floorZ(index))
                     .testTag("chat_map_floor_${floor.key}"),
             ) {
                 ChatMapFloor(
@@ -209,7 +213,9 @@ private fun ChatMapFloor(
                 // 不给 zIndex 时「1 真卡 + 4 占位」会让占位把真卡完全遮掉。
                 // 阶段二接上 `ChatMapCardLayout.solve().zIndex` 后替换这里。
                 val cardModifier = Modifier
-                    .zIndex((floor.slotCount - slot).toFloat())
+                    .zIndex(ChatMapZOrder.cardZ(slot, floor.slotCount))
+                    // 槽位级 tag：z-order 测试要能逐槽取 bounds/层序
+                    .testTag(cardSlotTag(floor.key, slot))
                     .size(width = cardWidth, height = cardHeight)
                 if (thread == null) {
                     ChatMapPlaceholderCard(modifier = cardModifier)
@@ -236,5 +242,7 @@ private fun ChatMapFloor(
  */
 internal fun cardRowTag(floorKey: String): String = "chat_map_card_row_$floorKey"
 
-/** 楼层 zIndex 基数：`FLOOR_Z_BASE - index`（对齐 RN/iOS 的 `100 - index`）。 */
-private const val FLOOR_Z_BASE = 100
+/** 单个卡槽的 testTag —— z-order 测试按槽位取节点。 */
+internal fun cardSlotTag(floorKey: String, slot: Int): String = "chat_map_slot_${floorKey}_$slot"
+
+

@@ -123,10 +123,12 @@ class ChatMapMeasurementTest {
     }
 
     @Test
-    fun 楼层外壳仍是rowHeight_没有被内层撑大() {
-        // ⚠️ 与"内层真实 230.4"成对：`wrapContentHeight(unbounded)` 对父
-        // **仍上报 rowHeight**，只是把超出的 child 按 Top 放置。
-        // 若外壳也被撑到 230.4，说明约束没截住 —— 楼层间距会整体错乱
+    fun 楼层row高度仍是rowHeight() {
+        // ⚠️ **口径**：这条取的是显式 `.height(rowHeight)` 的
+        // `chat_map_floor_*` 节点 —— 它钉住的是**floor row 本身没被改大**，
+        // **不能**证明 `wrapContentHeight` 对父上报了什么。
+        // 真正拦 wrapper 回归的是另外两条：inner height（230.4）与 relative top（28）。
+        // 保留它是因为"楼层间距整体错乱"也值得有护栏
         setContent()
         val rowHeight = ChatMapGeometry.rowHeightDp(listHeightDp)
         val floorNode = composeRule
