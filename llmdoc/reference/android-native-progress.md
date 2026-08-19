@@ -60,7 +60,7 @@
 
 ## 0. 三十秒速览
 
-- **波次进度**：W0 完成；**W1 完成**（契约层已在 CI 组合验证（§2.22）；**P9 已完成**（§2.36）；§12 关闭链记为已接受偏差）；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 已随 PR #25 并入 main（§2.30）；**Search P1 主链路已实现并完成 directApk 冒烟**（§2.31）；**P2 筛选器已实现**（§2.34，Search 完整对等）；**EditProfile 已完成静态预接/账号隔离/刷新接力**（§2.43），但 production policy 仍关闭；**P7 完成 = 头像框 + 渠道图标**（§2.44，PR #41 + 收尾 PR，含 AuthMode 契约修正与失败保留语义）；**P5 卡片 ⋮ 菜单完成**（§2.45：编辑原始 JSON 透传 `CreateSurface` 编辑态、删除/置顶非乐观 + 重拉对账）—— **Profile 全部批次收口**，W3 业务面仅剩 ChatList P2 Map（PR #42 draft 进行中）。
+- **波次进度**：W0 完成；**W1 完成**（契约层已在 CI 组合验证（§2.22）；**P9 已完成**（§2.36）；§12 关闭链记为已接受偏差）；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 已随 PR #25 并入 main（§2.30）；**Search P1 主链路已实现并完成 directApk 冒烟**（§2.31）；**P2 筛选器已实现**（§2.34，Search 完整对等）；**EditProfile 已完成静态预接/账号隔离/刷新接力**（§2.43），但 production policy 仍关闭；**P7 完成 = 头像框 + 渠道图标**（§2.44，PR #41 + 收尾 PR #43，含 AuthMode 契约修正与失败保留语义）；**P5 卡片 ⋮ 菜单完成**（§2.45，PR #46：编辑原始 JSON 透传 `CreateSurface` 编辑态、删除/置顶非乐观 + 重拉对账；**owner 模拟器冒烟目测 PASS**，2026-08-19）—— **Profile 全部批次收口**，W3 业务面仅剩 ChatList P2 Map（PR #42 draft 进行中）。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`、`pages/chatlist/`、`pages/search/`、`pages/screen/`**；EditProfile 刷新接力落在 `pages/profile/ProfileRefreshHub` 与 `tipsy-auth.notifyProfileChanged`。
 - **submodule**：pin **`4ae2ebc667cf1801a09457156493a9eda7bf887e`**（§2.43 的 EditProfile 账号安全/通知链；前一 pin `da4f65a04` 是 §2.37 autolinking 补丁）。⚠️ `da4f65a` 与 PR #34 的三处壳改动**必须同时存在**：指针回退则 exclude 仍失效，而 styles/lifecycle 两处已让构建变绿 —— 会得到「构建通过但图片仍坏」的假绿。
 - **已验证**：main 上 PR #25 的 G1 Fast Gate 全绿。W3 Search P1 提交前快照的本机证据：`lintDirectApkDebug` 无新增（baseline 5 条）、`assembleGooglePlayDebug`/`assembleDirectApkDebug` 通过、**DirectApk app 单测 695 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿；directApk 真机主链路冒烟 PASS（§2.31）。提交前审查再新增 13 条、扩展 2 条回归测试并修正并发/auth/Router/点击归因/分页去重行为，最终源码预计 708 条；**最终 head 未在本机重跑 Gradle，交 G1 验证**。
@@ -82,7 +82,7 @@
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟢 **完成**：契约层已收口且 CI 已验；**P9 已完成**（§2.36，白名单放开 + 桥桩回填）；§12 关闭链记为**已接受偏差**（owner 2026-08-17）。**冒烟部分兑现**（§2.37 + §2.39）：§9.1 **7 过 / 3 未跑**，业务分流项未验。语言那项的壳缺陷已修（§2.38）且**复跑 PASS（模拟器）**（§2.39） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17/#33 已并） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
-| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：**Profile 全部批次完成**（P1–P7，§2.25–§2.29、§2.44 头像框+渠道图标、§2.45 卡片菜单）；ChatList P1、Search P1/P2、他人主页、Settings 列表/语言均已落；**EditProfile 已完成静态预接、账号隔离与 Profile 刷新接力**（§2.43），但生产 policy 仍关闭。剩 ChatList P2 Map（PR #42 draft 进行中）与 EditProfile §9.1 设备矩阵 | `4ae2ebc667cf1801a09457156493a9eda7bf887e` | —（PR #21–#30、#41 已并；P7 收尾 PR #43、P5 PR 待并） |
+| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：**Profile 全部批次完成**（P1–P7，§2.25–§2.29、§2.44 头像框+渠道图标、§2.45 卡片菜单）；ChatList P1、Search P1/P2、他人主页、Settings 列表/语言均已落；**EditProfile 已完成静态预接、账号隔离与 Profile 刷新接力**（§2.43），但生产 policy 仍关闭。剩 ChatList P2 Map（PR #42 draft 进行中）与 EditProfile §9.1 设备矩阵 | `4ae2ebc667cf1801a09457156493a9eda7bf887e` | —（PR #21–#30、#41、#43、#46 已并；#45 是 #46 的前身，因叠栈 base 删除被 GitHub 自动关闭，内容同 #46） |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | 🟡 **进行中**：Screen P1 数据链（§2.35）与 P2 Media3 有界播放机制（§2.42，PR #39 / `6084df0`）已实现；P2 仍有真实视频/cache 失败/API24–33 层序/audio focus 四项 NOT RUN，故不 production-ready。Tab3 已接 `CreateSurface`（§2.40/§2.41）；剩 Screen next-item/fade/firstInteractive/P3、10 个未启用业务 Surface（含 W3 已预接但未放行的 EditProfile）、系统能力、OTA | `da4f65a04f50bc098c2df3bd9f8fbcc13018f7a5` | `6084df0d401e610d6fbcf26ce88c2bc494025927` |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
 
@@ -3445,7 +3445,10 @@ TikTok… 点击开外部浏览器）：
 - ⚠️ lint 硬门实测抓出 **IconDuplicates**：RN 的 `card_delete.png` 与
   Search 已入库的清除图标是同一张图 —— 已复用 `ic_search_history_clear`
   不重复入库。搬 RN 资产前先查重是个可复用的教训。
-- 真机/模拟器 **NOT RUN**（累积）：待验清单加三条 ——「菜单开合与动作
+- ✅ **模拟器轻量冒烟 PASS**（owner 2026-08-19 目测，directApk）：菜单开合/
+  删除/置顶/编辑主链路无异常。⚠️ 目测不等于逐项验收，且模拟器不作
+  覆盖升级证据（§2.5）。
+- 真机 **NOT RUN**（累积）：待验清单仍留三条 ——「菜单开合与动作
   （含遮罩卡的 ⋮）」「删除/置顶真实往返 + 上限文案」「编辑态进
   CreateSurface 的字段保真（改保存后 `conversation_style` 等不被重置）」。
   编辑保真只有真机能证 —— 单测只能钉 props 形状，钉不了 RN store 预填。
