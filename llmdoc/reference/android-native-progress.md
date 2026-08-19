@@ -18,7 +18,8 @@
 > 与 For You 冷启动种子（§2.24，**抽屉、种子写入门禁、离线渲染种子真机全已验**）。
 > Home 剩 banner / 彩蛋弹窗 / mp4 封面三项（前两项评估留 RN Surface）。
 > **W3 进行中**：Profile 主体完成（§2.25–§2.29；**P7 完成 = 头像框 + 渠道图标**，
-> §2.44，含对 PR #41 两处偏差的收尾修正）；ChatList P1 Grid 主链路
+> §2.44，含对 PR #41 两处偏差的收尾修正；**P5 卡片 ⋮ 菜单完成**，§2.45 ——
+> **Profile 全部批次至此收口**）；ChatList P1 Grid 主链路
 > 已并入 main 且模拟器冒烟 PASS（§2.30）；Search P1 主链路已实现且 directApk
 > 真机冒烟 PASS（§2.31）；**P2 筛选器已实现**（§2.34）。
 > **他人主页已实现并并入 main**（§2.32，PR #28）：`AppRoute.UserProfile` 进白名单，
@@ -59,7 +60,7 @@
 
 ## 0. 三十秒速览
 
-- **波次进度**：W0 完成；**W1 完成**（契约层已在 CI 组合验证（§2.22）；**P9 已完成**（§2.36）；§12 关闭链记为已接受偏差）；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 已随 PR #25 并入 main（§2.30）；**Search P1 主链路已实现并完成 directApk 冒烟**（§2.31）；**P2 筛选器已实现**（§2.34，Search 完整对等）；**EditProfile 已完成静态预接/账号隔离/刷新接力**（§2.43），但 production policy 仍关闭；**P7 完成 = 头像框 + 渠道图标**（§2.44，PR #41 + 收尾 PR，含 AuthMode 契约修正与失败保留语义）—— W3 业务面仅剩 P5 ⋮ 菜单与 ChatList P2 Map（PR #42 draft 进行中）。
+- **波次进度**：W0 完成；**W1 完成**（契约层已在 CI 组合验证（§2.22）；**P9 已完成**（§2.36）；§12 关闭链记为已接受偏差）；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 已随 PR #25 并入 main（§2.30）；**Search P1 主链路已实现并完成 directApk 冒烟**（§2.31）；**P2 筛选器已实现**（§2.34，Search 完整对等）；**EditProfile 已完成静态预接/账号隔离/刷新接力**（§2.43），但 production policy 仍关闭；**P7 完成 = 头像框 + 渠道图标**（§2.44，PR #41 + 收尾 PR，含 AuthMode 契约修正与失败保留语义）；**P5 卡片 ⋮ 菜单完成**（§2.45：编辑原始 JSON 透传 `CreateSurface` 编辑态、删除/置顶非乐观 + 重拉对账）—— **Profile 全部批次收口**，W3 业务面仅剩 ChatList P2 Map（PR #42 draft 进行中）。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`、`pages/chatlist/`、`pages/search/`、`pages/screen/`**；EditProfile 刷新接力落在 `pages/profile/ProfileRefreshHub` 与 `tipsy-auth.notifyProfileChanged`。
 - **submodule**：pin **`4ae2ebc667cf1801a09457156493a9eda7bf887e`**（§2.43 的 EditProfile 账号安全/通知链；前一 pin `da4f65a04` 是 §2.37 autolinking 补丁）。⚠️ `da4f65a` 与 PR #34 的三处壳改动**必须同时存在**：指针回退则 exclude 仍失效，而 styles/lifecycle 两处已让构建变绿 —— 会得到「构建通过但图片仍坏」的假绿。
 - **已验证**：main 上 PR #25 的 G1 Fast Gate 全绿。W3 Search P1 提交前快照的本机证据：`lintDirectApkDebug` 无新增（baseline 5 条）、`assembleGooglePlayDebug`/`assembleDirectApkDebug` 通过、**DirectApk app 单测 695 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿；directApk 真机主链路冒烟 PASS（§2.31）。提交前审查再新增 13 条、扩展 2 条回归测试并修正并发/auth/Router/点击归因/分页去重行为，最终源码预计 708 条；**最终 head 未在本机重跑 Gradle，交 G1 验证**。
@@ -81,7 +82,7 @@
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟢 **完成**：契约层已收口且 CI 已验；**P9 已完成**（§2.36，白名单放开 + 桥桩回填）；§12 关闭链记为**已接受偏差**（owner 2026-08-17）。**冒烟部分兑现**（§2.37 + §2.39）：§9.1 **7 过 / 3 未跑**，业务分流项未验。语言那项的壳缺陷已修（§2.38）且**复跑 PASS（模拟器）**（§2.39） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17/#33 已并） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
-| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1–P4、P6，§2.25–§2.29；**P7 头像框 + 渠道图标 §2.44**）；ChatList P1、Search P1/P2、他人主页、Settings 列表/语言均已落；**EditProfile 已完成静态预接、账号隔离与 Profile 刷新接力**（§2.43），但生产 policy 仍关闭。剩 Profile P5 ⋮ 菜单、ChatList P2 Map（PR #42 draft 进行中）与 EditProfile §9.1 设备矩阵 | `4ae2ebc667cf1801a09457156493a9eda7bf887e` | —（PR #21–#30、#41 已并；EditProfile 外层 PR 待开） |
+| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：**Profile 全部批次完成**（P1–P7，§2.25–§2.29、§2.44 头像框+渠道图标、§2.45 卡片菜单）；ChatList P1、Search P1/P2、他人主页、Settings 列表/语言均已落；**EditProfile 已完成静态预接、账号隔离与 Profile 刷新接力**（§2.43），但生产 policy 仍关闭。剩 ChatList P2 Map（PR #42 draft 进行中）与 EditProfile §9.1 设备矩阵 | `4ae2ebc667cf1801a09457156493a9eda7bf887e` | —（PR #21–#30、#41 已并；P7 收尾 PR #43、P5 PR 待并） |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | 🟡 **进行中**：Screen P1 数据链（§2.35）与 P2 Media3 有界播放机制（§2.42，PR #39 / `6084df0`）已实现；P2 仍有真实视频/cache 失败/API24–33 层序/audio focus 四项 NOT RUN，故不 production-ready。Tab3 已接 `CreateSurface`（§2.40/§2.41）；剩 Screen next-item/fade/firstInteractive/P3、10 个未启用业务 Surface（含 W3 已预接但未放行的 EditProfile）、系统能力、OTA | `da4f65a04f50bc098c2df3bd9f8fbcc13018f7a5` | `6084df0d401e610d6fbcf26ce88c2bc494025927` |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
 
@@ -3374,6 +3375,80 @@ TikTok… 点击开外部浏览器）：
 - 真机/模拟器 **NOT RUN**（按 owner 2026-08-14 决定累积）：待验清单加两条 ——
   「Profile 头像框实际渲染（含 SVG 图源，ServiceLoader 注册只有设备能证）」、
   「渠道图标行渲染 + 点击开浏览器」。
+
+### 2.45 W3 Profile P5：创作卡 ⋮ 菜单 —— 编辑/删除/置顶（2026-08-19）
+
+**Profile 的最后一块业务**（方案 §8.1「卡片菜单」行）。动作矩阵与 iOS 壳
+一致：**角色=编辑/删除/置顶、故事=删除/置顶、游戏=置顶**。
+
+#### RN 真值审计（实现前逐条核实）
+
+- **动作与端点**：置顶是**单端点 toggle** `/character/toggle_pin`
+  （`apis/character.ts:461-470`，`item_id` + `item_type` 三类共用，服务端
+  翻转并回 `is_pinned`）；删除分两端点两字段 —— `/character/delete`
+  （`character_id`）与 `/story/delete`（`story_id`），不可归并。
+- **id 全在嵌套层**：RN 传给卡片的是 `cellItem.character || cellItem`
+  （`CharacterGrid.tsx:568-641`），删除/置顶用的 id 是嵌套对象的
+  `character_id` / `story_id`，**不是顶层 `item_id`**。story 置顶是
+  `item_id || story_id` 兜底链（`StoryItem.tsx:463`）。
+- **语义**：pin/delete 都**非乐观** —— 成功后 `createdMutate` 整列表重拉
+  对账（置顶影响排序，服务端才知道 pinned 组终序）；pin 单飞（`isPinning`
+  门）；成功 Toast 按**响应**的 `is_pinned` 分流；失败按
+  `up to 3 pins allowed` 子串分流上限文案。
+- **遮罩卡也显示 ⋮**（`isSelf &&` 块在 `isMasked` 三元**之外**）——
+  这是用户删除不可用角色的唯一途径，做反的话这类角色永远删不掉。
+- **编辑**（仅 character；story 编辑暂缓、game 无编辑）：
+  `initCharStateUpdate(嵌套对象)` 全量预填 → `CreateSurface` 编辑态。
+  iOS 契约 §3 的硬教训照单全收：**by-id 重拉会在保存时把
+  `conversation_style`/`custom_prompt`/`show_background`/`animated_image`
+  重置（= 数据损坏）**，必须原始 JSON 原封透传。
+
+#### 落地（14 文件）
+
+- **模型**：`ProfileCreatedItem` 增 `deleteId`/`pinId`（嵌套优先、顶层兜底，
+  按类型分流）与 `editPayloadJson()`（取嵌套 `character` 对象**原文**，
+  非 character 返回 null）。
+- **API**：`ProfileApi` 增 `togglePin`/`deleteCharacter`/`deleteStory`
+  （全 REQUIRED）。
+- **ViewModel**：菜单单开互斥（`openMenuKey` 单字段，RN 那套
+  `closeOtherMenu` ref 表不需要）、删除确认二段式（`pendingDelete`）、
+  pin 单飞（`pinningKey`）、成功重拉对账（`reloadCreatedTab` 只动创作 tab）、
+  Toast key 复用 ChatList 的五个词条 + 上限词条（全在 SHELL_KEYS）。
+  ⚠️ **壳补了 RN 没有的失败提示**：RN 删除的 onConfirm 无 try/catch，
+  失败表现为「点了删除、卡片还在、零提示」—— §2.39 那类静默失败不继承。
+- **编辑链**：新 route `AppRoute.EditCharacter(characterJson, characterId)`
+  → 生产白名单 + `ShellNavigator` 分支（**复用 CreateSurface 容器**，
+  与 Create 共用幂等判定与退栈去重解除谓词）→ `SurfaceProps` 产出
+  `editCharacter`（结构化嵌套对象）+ `editCharacterId`（有损兜底；
+  坏 JSON 退化成仅 id —— 仍是编辑态，**绝不静默落创建态**）。
+  props 侧新增 `JsonRouteParams`（JSON→Map 结构转换，显式 null 保留为
+  NULL 哨兵 —— zustand 里「键为 null」与「键缺失」语义不同，丢 null 会让
+  清空过的字段旧值复活；大整数走 Long 不丢精度）＋ `SurfaceContract.putRouteParams`
+  扩 List/null 支持（对象数组走 `putParcelableArrayList`，Bundle 不是
+  Serializable —— 走错 API 平时正常、**进程重建 parcel 时才崩**）。
+- **UI**：⋮ 触发钮（右下 4/12、24dp，**clickable 吃掉事件** —— iOS 装饰
+  View 穿透教训）；卡内浮层（黑 60% scrim 点击关闭 + 两列动作网格照
+  `menuGrid` 布局；**圆形模糊揭开动画刻意不迁**，纯视觉增强）；删除确认
+  弹窗照 `TipsyModal.tsx` Android 分支（80% 宽/圆角 10/三段深色渐变/
+  底部两键等分横排 + 1px 分割线 —— 不是 Material 右对齐按钮）。
+  **Share 刻意不迁**（`ShareCharacter` 427 行 + 分享基建，iOS 壳同样未迁）。
+  他人主页复用 `ProfileGridItem` 不传 `menu` → 无菜单（RN 的 `isSelf &&`）。
+- **埋点**：删除成功发 `delete_character`（camelCase `characterId`，
+  仅 character —— story 的 onConfirm 实测无埋点）。
+
+#### 验证
+
+- 本机：`ProfileViewModelTest` +9（55 条）、`ProfileParserTest` +6、
+  `SurfacePropsTest` +3、`AppRouterTest` +1、新 `JsonRouteParamsTest` 4 条；
+  全套件 **1028 条 failures=0 / skipped=0** + `:tipsy-auth` 过 +
+  `lintDirectApkDebug` 过 + `assembleGooglePlayDebug` 过；G1 交 CI。
+- ⚠️ lint 硬门实测抓出 **IconDuplicates**：RN 的 `card_delete.png` 与
+  Search 已入库的清除图标是同一张图 —— 已复用 `ic_search_history_clear`
+  不重复入库。搬 RN 资产前先查重是个可复用的教训。
+- 真机/模拟器 **NOT RUN**（累积）：待验清单加三条 ——「菜单开合与动作
+  （含遮罩卡的 ⋮）」「删除/置顶真实往返 + 上限文案」「编辑态进
+  CreateSurface 的字段保真（改保存后 `conversation_style` 等不被重置）」。
+  编辑保真只有真机能证 —— 单测只能钉 props 形状，钉不了 RN store 预填。
 
 ## 3. 横切能力
 
