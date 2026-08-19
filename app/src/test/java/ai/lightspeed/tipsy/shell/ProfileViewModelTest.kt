@@ -1,5 +1,6 @@
 package ai.lightspeed.tipsy.shell
 
+import ai.lightspeed.tipsy.shell.pages.profile.AvatarDecorationSource
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileCreatedItem
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileCreatedPage
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileFavoriteItem
@@ -825,6 +826,109 @@ class ProfileViewModelTest {
         assertEquals(ProfileWallet.EMPTY, vm.state.value.wallet)
     }
 
+    // ── 头像框（P7）──────────────────────────────────
+
+    @Test
+    fun `头像框 code 解析成 URL 进 state`() = runTest {
+        val api = FakeProfileApi(pages = listOf(page(items = emptyList(), total = 0)))
+        val vm = viewModel(
+            api,
+            userSource = userWithCode("weekly_champion"),
+            avatarDecorationSource = FakeDecorationSource(
+                urlByCode = mapOf("weekly_champion" to FRAME_URL),
+            ),
+        )
+        vm.onAppear()
+        advanceUntilIdle()
+
+        assertEquals(FRAME_URL, vm.state.value.avatarDecorationImageUrl)
+    }
+
+    @Test
+    fun `头像框目录拉取失败保留上次的框`() = runTest {
+        // 对齐 RN（目录在 MMKV 持久层，瞬时网络失败不掉框），同钱包/统计的保留纪律
+        val source = FakeDecorationSource(urlByCode = mapOf("weekly_champion" to FRAME_URL))
+        val api = FakeProfileApi(pages = List(2) { page(items = emptyList(), total = 0) })
+        val vm = viewModel(
+            api,
+            userSource = userWithCode("weekly_champion"),
+            avatarDecorationSource = source,
+        )
+        vm.onAppear()
+        advanceUntilIdle()
+        assertEquals(FRAME_URL, vm.state.value.avatarDecorationImageUrl)
+
+        source.fail = true
+        vm.onRefresh()
+        advanceUntilIdle()
+
+        assertEquals("失败后要保留旧框", FRAME_URL, vm.state.value.avatarDecorationImageUrl)
+    }
+
+    @Test
+    fun `code 清空后头像框清空且不发目录请求`() = runTest {
+        // EditProfile 取消佩戴 → notifyProfileChanged 定向刷新 → 旧框不能留在屏上
+        var code: String? = "weekly_champion"
+        val userSource = object : UserInfoSource {
+            override suspend fun fetchCurrentUser(): CurrentUser? =
+                CurrentUser(TEST_USER_ID, "昵称", null, null, avatarDecorationCode = code)
+        }
+        val source = FakeDecorationSource(urlByCode = mapOf("weekly_champion" to FRAME_URL))
+        val api = FakeProfileApi(pages = List(2) { page(items = emptyList(), total = 0) })
+        val vm = viewModel(api, userSource = userSource, avatarDecorationSource = source)
+        vm.onAppear()
+        advanceUntilIdle()
+        assertEquals(FRAME_URL, vm.state.value.avatarDecorationImageUrl)
+
+        code = null
+        vm.onProfileChanged()
+        advanceUntilIdle()
+
+        assertNull("未佩戴后必须清框", vm.state.value.avatarDecorationImageUrl)
+        assertEquals("清空是本地判定，不该发目录请求", 1, source.calls)
+    }
+
+    @Test
+    fun `目录查无此 code 时清空头像框`() = runTest {
+        // 与「拉取失败」区分：目录成功返回但没有这个 code = 目录才是真值，框要下线
+        val source = FakeDecorationSource(urlByCode = mapOf("weekly_champion" to FRAME_URL))
+        val api = FakeProfileApi(pages = List(2) { page(items = emptyList(), total = 0) })
+        val vm = viewModel(
+            api,
+            userSource = userWithCode("weekly_champion"),
+            avatarDecorationSource = source,
+        )
+        vm.onAppear()
+        advanceUntilIdle()
+        assertEquals(FRAME_URL, vm.state.value.avatarDecorationImageUrl)
+
+        source.urlByCode = emptyMap()
+        vm.onRefresh()
+        advanceUntilIdle()
+
+        assertNull("目录下线的 code 不能继续画", vm.state.value.avatarDecorationImageUrl)
+    }
+
+    @Test
+    fun `登出清空头像框`() = runTest {
+        val api = FakeProfileApi(pages = listOf(page(items = emptyList(), total = 0)))
+        val vm = viewModel(
+            api,
+            userSource = userWithCode("weekly_champion"),
+            avatarDecorationSource = FakeDecorationSource(
+                urlByCode = mapOf("weekly_champion" to FRAME_URL),
+            ),
+        )
+        vm.onAppear()
+        advanceUntilIdle()
+        assertEquals(FRAME_URL, vm.state.value.avatarDecorationImageUrl)
+
+        vm.onAuthChanged(loggedIn = false)
+        advanceUntilIdle()
+
+        assertNull(vm.state.value.avatarDecorationImageUrl)
+    }
+
     // ── fixtures ────────────────────────────────────
 
     private fun TestScope.viewModel(
@@ -833,6 +937,7 @@ class ProfileViewModelTest {
         failUserInfo: Boolean = false,
         userSource: UserInfoSource? = null,
         walletApi: FakeWalletApi = FakeWalletApi(),
+        avatarDecorationSource: AvatarDecorationSource? = null,
     ): ProfileViewModel {
         val resolvedUserSource = userSource ?: object : UserInfoSource {
             override suspend fun fetchCurrentUser(): CurrentUser? {
@@ -847,7 +952,26 @@ class ProfileViewModelTest {
             languageProvider = language,
             scope = this,
             logWarn = { _, _ -> },
+            avatarDecorationSource = avatarDecorationSource,
         )
+    }
+
+    private fun userWithCode(code: String?): UserInfoSource = object : UserInfoSource {
+        override suspend fun fetchCurrentUser(): CurrentUser? =
+            CurrentUser(TEST_USER_ID, "昵称", null, null, avatarDecorationCode = code)
+    }
+
+    private class FakeDecorationSource(
+        var urlByCode: Map<String, String> = emptyMap(),
+        var fail: Boolean = false,
+    ) : AvatarDecorationSource {
+        var calls = 0
+
+        override suspend fun fetchImageUrl(code: String?): String? {
+            calls++
+            if (fail) throw RuntimeException("catalogue boom")
+            return code?.let { urlByCode[it] }
+        }
     }
 
     private class FakeWalletApi(
@@ -966,5 +1090,6 @@ class ProfileViewModelTest {
 
     private companion object {
         const val TEST_USER_ID = "u-self"
+        const val FRAME_URL = "https://cdn.example/frame_champion.png"
     }
 }
