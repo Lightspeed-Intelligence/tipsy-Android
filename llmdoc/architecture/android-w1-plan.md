@@ -644,9 +644,11 @@ SafeAreaProvider (546) → KeyboardProvider (547) → SWRConfig (548)
 
 ## 12. RNSurfaceFragment 四项机制（主体已落地，真实实例关闭链待收口）
 
-W0 的 `RNSurfaceFragment.kt` 曾是 36 行 stub。UUID、占位、reappear 与 props builder
-均已落地，并曾在 API 37 验证 DebugSurface 挂载、首帧占位与 reappear：
-Surface 挂载正常、首帧占位单次淡出、`onSurfaceReappeared` 实测发射
+W0 的 `RNSurfaceFragment.kt` 曾是 36 行 stub。UUID、首帧宿主、reappear 与 props builder
+均已落地。早期 cover 方案曾在 API 37 验证 DebugSurface 挂载、淡出与 reappear；
+2026-08-19 又在 warm Runtime 二次进入时复现 cover 淡出早于 RN 像素提交、下层 Native
+Tab 透出，因此首帧宿主改为对齐 iOS：不透明 Native 底色 + 透明 RN Root，不再猜 ready。
+`onSurfaceReappeared` 曾实测发射
 （`surface=DebugSurface`，确认是**组件名**而非 instanceId）。
 判定逻辑抽在 `surface/ReappearPolicy.kt`（可单测），契约在 `surface/SurfaceContract.kt`。
 
@@ -667,7 +669,9 @@ Surface 挂载正常、首帧占位单次淡出、`onSurfaceReappeared` 实测�
 
 ### 12.2 首帧协议
 
-ready 前显示原生占位,ready 后**单次淡出**。**不用固定延时猜**(iOS `b2773e1` 处理过同一问题)。
+普通全屏 Surface 由不透明 Native 宿主垫底，透明 RN Root 首帧直接覆盖；不增加
+placeholder，不根据子节点尺寸或固定延时猜 ready。该约束只在 Android 原生宿主层，
+不修改 iOS/Android 共用的 RN Surface。
 G3 Macrobenchmark 会测,§9.1 第 7 列也要它。
 
 ### 12.3 `onSurfaceReappeared`
