@@ -61,18 +61,23 @@ internal fun ChatMapScreen(
             .clipToBounds() // 对齐 RN overflow: hidden
             .testTag("chat_map"),
     ) {
-        val listHeightPx = constraints.maxHeight
-        val rowHeightPx = ChatMapGeometry.rowHeight(listHeightPx)
-        val widthPx = constraints.maxWidth
-
-        // 固定几何一次算：卡尺寸与 baseX 只随宽度变
-        val cardWidthDp = remember(widthPx) { ChatMapGeometry.cardWidth(widthPx) }
-        val cardHeightDp = remember(widthPx) { ChatMapGeometry.cardHeight(widthPx) }
-
         val density = androidx.compose.ui.platform.LocalDensity.current
-        val rowHeightDp = with(density) { rowHeightPx.toDp() }
-        val cardWidth = with(density) { cardWidthDp.toDp() }
-        val cardHeight = with(density) { cardHeightDp.toDp() }
+
+        // ⚠️ **px → dp 必须在这里做完**：`ChatMapGeometry` 的所有量都是 dp
+        // （RN 的 `useWindowDimensions` 单位等价于 dp，常量 300 / -180 /
+        // 样条输出全是 dp 数值）。直接把 `constraints.maxWidth`（px）传进去
+        // 会让卡片在 density=2.625 的设备上放大 2.6 倍、曲线横轴一起错，
+        // 而**编译/单测/lint 全绿** —— 纯数学层不知道单位。阶段一我正是这样写错的。
+        val listHeightDp = with(density) { constraints.maxHeight.toDp().value }
+        val windowWidthDp = with(density) { constraints.maxWidth.toDp().value }
+
+        val rowHeightDp = ChatMapGeometry.rowHeightDp(listHeightDp)
+        val cardWidthDp = remember(windowWidthDp) { ChatMapGeometry.cardWidthDp(windowWidthDp) }
+        val cardHeightDp = remember(windowWidthDp) { ChatMapGeometry.cardHeightDp(windowWidthDp) }
+
+        val rowHeight = rowHeightDp.dp
+        val cardWidth = cardWidthDp.dp
+        val cardHeight = cardHeightDp.dp
 
         floors.forEachIndexed { index, floor ->
             // 倒序：index 0（最新）在最底部
@@ -81,8 +86,8 @@ internal fun ChatMapScreen(
                 Modifier
                     .align(Alignment.BottomStart)
                     .fillMaxWidth()
-                    .height(rowHeightDp)
-                    .offset(y = -(rowHeightDp * fromBottom))
+                    .height(rowHeight)
+                    .offset(y = -(rowHeight * fromBottom))
                     .testTag("chat_map_floor_${floor.key}"),
             ) {
                 ChatMapFloor(

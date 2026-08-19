@@ -30,6 +30,27 @@ package ai.lightspeed.tipsy.shell.pages.chatlist
  */
 internal object ChatMapGeometry {
 
+    /*
+     * ## ⚠️⚠️ 单位契约：本文件的所有输入输出都是 **dp**，不是 px
+     *
+     * RN 侧这些量来自 `useWindowDimensions()`（`ChatMap.tsx:127`）——
+     * React Native 的尺寸单位是**密度无关像素**，等价于 Android 的 dp。
+     * 常量 `300`（[floorHeight] 的偏移）、`-180`（translateY clamp 下界）、
+     * 以及三组样条的输出值（`-70` / `170` / `500` / `-88` / `-180` 等）
+     * **全部是 dp 数值**。
+     *
+     * 所以调用方**必须**先把 `constraints.maxWidth/maxHeight`（**px**）
+     * 经 `with(density) { toDp() }` 转成 dp 再传进来。
+     *
+     * 传 px 的后果（我在阶段一真的写错过）：在 density=2.625 的设备上
+     * 卡片宽度算成 `1080*12/25 = 518` 而正确值是 `411*12/25 = 198` ——
+     * **放大 2.6 倍**；同时 `300` 这个偏移在 px 下只相当于 114dp，
+     * 曲线横轴也一起错。表现是"卡片巨大且动画曲线不对"，
+     * 但**编译、单测、lint 全绿** —— 因为纯数学层不知道单位。
+     *
+     * 参数名统一带 `Dp` 后缀就是为了让调用点看得见这件事。
+     */
+
     // ── 行高（廊道一层的高度）────────────────────────────────────
 
     /**
@@ -39,7 +60,7 @@ internal object ChatMapGeometry {
      * 在 Android 恒 false（见类注释）。参数只留 [listHeight] 一个 ——
      * 刻意不接 `smallScreen: Boolean`，免得有人传 true 进来。
      */
-    fun rowHeight(listHeight: Int): Int = Math.round(listHeight / 3f)
+    fun rowHeightDp(listHeightDp: Float): Float = Math.round(listHeightDp / 3f).toFloat()
 
     /**
      * 样条横轴基准 `floorHeight = (windowHeight - 300) / 3`。
@@ -48,7 +69,7 @@ internal object ChatMapGeometry {
      * 前者是列表里一层的物理高度，这个是动画曲线的横轴基准。混用会让
      * 曲线整体错位 —— 而画面仍然会动，所以不容易看出来。
      */
-    fun floorHeight(windowHeight: Int): Float = (windowHeight - FLOOR_HEIGHT_OFFSET) / 3f
+    fun floorHeightDp(windowHeightDp: Float): Float = (windowHeightDp - FLOOR_HEIGHT_OFFSET_DP) / 3f
 
     /** 底部留白恒 0（`ChatMap.tsx:313` 的 Android 分支）。 */
     const val LIST_BOTTOM_PADDING_DP = 0
@@ -74,34 +95,34 @@ internal object ChatMapGeometry {
     val TRANSLATE_Y_OUTPUT = floatArrayOf(5f, -88f, -180f, -180f, -50f)
 
     /** translateX 样条的横轴：`[0, fh/2, fh, fh*1.5, fh*2, fh*3]`。 */
-    fun translateXInput(floorHeight: Float): FloatArray = floatArrayOf(
+    fun translateXInputDp(floorHeightDp: Float): FloatArray = floatArrayOf(
         0f,
-        floorHeight / 2f,
-        floorHeight,
-        floorHeight * 1.5f,
-        floorHeight * 2f,
-        floorHeight * 3f,
+        floorHeightDp / 2f,
+        floorHeightDp,
+        floorHeightDp * 1.5f,
+        floorHeightDp * 2f,
+        floorHeightDp * 3f,
     )
 
     /** scale 样条的横轴：`[0, fh, fh*2, fh*3]`。 */
-    fun scaleInput(floorHeight: Float): FloatArray = floatArrayOf(
+    fun scaleInputDp(floorHeightDp: Float): FloatArray = floatArrayOf(
         0f,
-        floorHeight,
-        floorHeight * 2f,
-        floorHeight * 3f,
+        floorHeightDp,
+        floorHeightDp * 2f,
+        floorHeightDp * 3f,
     )
 
     /** translateY 插值的横轴：`[-100, 0, fh, fh*2, fh*3]`。 */
-    fun translateYInput(floorHeight: Float): FloatArray = floatArrayOf(
+    fun translateYInputDp(floorHeightDp: Float): FloatArray = floatArrayOf(
         -100f,
         0f,
-        floorHeight,
-        floorHeight * 2f,
-        floorHeight * 3f,
+        floorHeightDp,
+        floorHeightDp * 2f,
+        floorHeightDp * 3f,
     )
 
     /** translateY 前先把 delta clamp 到 `[-180, windowHeight]`（对齐 iOS 端口）。 */
-    const val TRANSLATE_Y_CLAMP_LOWER = -180f
+    const val TRANSLATE_Y_CLAMP_LOWER_DP = -180f
 
     // ── 楼层可见范围 ────────────────────────────────────────────
 
@@ -127,13 +148,13 @@ internal object ChatMapGeometry {
     // ── 卡叠（与 iOS 同构，RN 侧无 Platform 分支）────────────────
 
     /** 卡宽 = `windowWidth * 12 / 25`（`ChatMap.tsx:233`）。 */
-    fun cardWidth(windowWidth: Int): Float = windowWidth * (12f / 25f)
+    fun cardWidthDp(windowWidthDp: Float): Float = windowWidthDp * (12f / 25f)
 
     /** 卡高 = 卡宽 / 0.75（`:234`）。 */
-    fun cardHeight(windowWidth: Int): Float = cardWidth(windowWidth) / 0.75f
+    fun cardHeightDp(windowWidthDp: Float): Float = cardWidthDp(windowWidthDp) / 0.75f
 
     /** `baseX = windowWidth * 1.5 / 5`（`TipsyCarousel.tsx:41`）。 */
-    fun baseX(windowWidth: Int): Float = windowWidth * 1.5f / 5f
+    fun baseXDp(windowWidthDp: Float): Float = windowWidthDp * 1.5f / 5f
 
     /**
      * 卡叠 scale 比例数组（`TipsyCarousel.tsx:43-46,78`）：
@@ -158,5 +179,5 @@ internal object ChatMapGeometry {
     /** 楼层模式数：`i ∈ {1, 3, 5}`（4/2 归 3，见 `getIndex`）。 */
     val FLOOR_MODES = intArrayOf(1, 3, 5)
 
-    private const val FLOOR_HEIGHT_OFFSET = 300
+    private const val FLOOR_HEIGHT_OFFSET_DP = 300
 }
