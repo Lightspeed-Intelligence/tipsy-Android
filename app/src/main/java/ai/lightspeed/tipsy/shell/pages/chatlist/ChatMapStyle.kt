@@ -32,13 +32,42 @@ internal object ChatMapStyle {
     const val SPLIT_LINE_WIDTH_DP = 1
     const val SPLIT_LINE_HEIGHT_DP = 6
 
+    /**
+     * story 标的**三色横向渐变**（`ChatItem.tsx:188-195`）——
+     * ⚠️ 不是纯色：`rgba(157,79,131,0.7)` → `rgba(148,77,64,0.85)`
+     * → `rgba(127,147,54,0.75)`，`start=(0,0)` `end=(1,0)` 即水平方向。
+     */
+    val storyTagGradient = listOf(
+        Color(0xB39D4F83),
+        Color(0xD9944D40),
+        Color(0xBF7F9336),
+    )
+
     /** story 标 9sp / 白 70%，圆角胶囊（`:282-295`）。 */
     const val STORY_TAG_FONT_SP = 9
     const val STORY_TAG_H_PADDING_DP = 8
     const val STORY_TAG_MIN_HEIGHT_DP = 14
 
-    /** 未读红点（`:240-245` `#F35757`，圆角 4）。 */
+    /** story 标圆角 999 → 完全胶囊（`:284`）。 */
+    const val STORY_TAG_CORNER_DP = 999
+
+    /** 消息数图标 12×12（`ChatItem.tsx:205-210`）。 */
+    const val MESSAGE_ICON_SIZE_DP = 12
+
+    /**
+     * 未读红点（`ChatItem.tsx:240-245`）：`#F35757`、圆角 4、8dp。
+     *
+     * ⚠️ **它是 `wrapper` 的直接子节点、在被裁剪的 `chatItem` 之外**
+     * （`:155-158`）—— 所以能**跨出右上角**（`top: -size/2`）。
+     * 放进裁剪容器里会被 `clip` 切掉一半，看起来只是"点小了一点"。
+     */
     val unreadDotColor = Color(0xFFF35757)
+
+    /** 红点直径 8dp（`:135` `const size = 8 * scale`）。 */
+    const val UNREAD_DOT_SIZE_DP = 8
+
+    /** 红点左偏 2dp（`:137` `leftOffset = 2 * scale`）。 */
+    const val UNREAD_DOT_LEFT_DP = 2
 
     /** 卡面文字：白 50%。 */
     val cardTextColor = Color(0x80FFFFFF)
@@ -72,6 +101,12 @@ internal object ChatMapStyle {
      * 同型先例：`ShellTabBar` 的注释也记了 tabbar 在 Android 是纯色而非 blur。
      */
     val placeholderFill = Color(0xE6000000)
+
+    /**
+     * 占位卡圆角 **8dp**（`ChatMap.tsx:240` `borderRadius: 8`）——
+     * ⚠️ **与真实卡的 4dp 不同**，别复用 [CARD_CORNER_DP]。
+     */
+    const val PLACEHOLDER_CORNER_DP = 8
 
     // ── 楼层 ────────────────────────────────────────────────
 

@@ -107,20 +107,33 @@ class ChatMapGeometryTest {
     }
 
     @Test
-    fun `单位契约：输入是 dp —— 传 px 会得到明显放大的结果`() {
-        // ⚠️ 这条守的是我在阶段一真犯过的错：把 `constraints.maxWidth`（px）
-        // 直接传进来。RN 侧这些量来自 `useWindowDimensions`，单位等价 dp。
+    fun `纯乘法的量对单位不敏感 —— 但带常量的不是`() {
+        // ⚠️ 这条记录的是这套 dp 契约**为什么必要**，以及它**不**必要的那部分。
         //
-        // Pixel_10：1080px / density 2.625 = 411dp
-        val widthDp = 411f
+        // cardWidth 是纯乘（*12/25），而乘法与密度换算**可交换** ——
+        // 先 px 算再 toDp() 与先 toDp() 再算完全相同：
+        //   (1080 * 12/25) / 2.625 = 197.49
+        //   (1080 / 2.625) * 12/25 = 197.49
+        // 所以卡尺寸传 px **不会错**（我早前说"阶段一放大 2.6 倍"是错的）。
+        val density = 2.625f
         val widthPx = 1080f
-        assertEquals("dp 输入下卡宽约 197dp", 197.3f, ChatMapGeometry.cardWidthDp(widthDp), 0.5f)
-        // 传 px 会得到 518 —— 放大 2.6 倍。这里显式记下差距，
-        // 让任何"顺手改成 maxWidth"的改动在 review 时能对上号
-        assertEquals(518.4f, ChatMapGeometry.cardWidthDp(widthPx), 0.5f)
+        val widthDp = widthPx / density
+        assertEquals(
+            "纯乘法：px 路径与 dp 路径必须等价",
+            ChatMapGeometry.cardWidthDp(widthPx) / density,
+            ChatMapGeometry.cardWidthDp(widthDp),
+            0.01f,
+        )
+
+        // 但 floorHeight 带常量 300（dp 数值），**不可交换**：
+        val heightPx = 2835f
+        val heightDp = heightPx / density
         assertTrue(
-            "px 输入必须明显大于 dp 输入（说明单位混用不会静默等价）",
-            ChatMapGeometry.cardWidthDp(widthPx) > ChatMapGeometry.cardWidthDp(widthDp) * 2f,
+            "带常量：px 路径与 dp 路径必须不等价（这才是契约的必要性）",
+            Math.abs(
+                ChatMapGeometry.floorHeightDp(heightPx) / density -
+                    ChatMapGeometry.floorHeightDp(heightDp),
+            ) > 1f,
         )
     }
 
@@ -128,7 +141,7 @@ class ChatMapGeometryTest {
     fun `floorHeight 的 300 偏移是 dp 数值`() {
         // 900dp 屏：(900-300)/3 = 200dp
         assertEquals(200f, ChatMapGeometry.floorHeightDp(900f), EPS)
-        // ⚠️ 若调用方传 px（如 2400px），(2400-300)/3 = 700 —— 曲线横轴整体拉长
+        // 传 px 会得到不同的 dp 结果 —— 见上一条的不可交换性
         assertEquals(700f, ChatMapGeometry.floorHeightDp(2400f), EPS)
     }
 

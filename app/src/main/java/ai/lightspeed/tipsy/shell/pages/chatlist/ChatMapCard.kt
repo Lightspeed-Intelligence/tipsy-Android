@@ -8,6 +8,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -51,57 +53,66 @@ internal fun ChatMapCard(
     hasUnread: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(ChatMapStyle.CARD_CORNER_DP.dp))
-            .background(ChatMapStyle.backCardFill)
-            .testTag("chat_map_card_${thread.itemId}"),
-    ) {
-        // 封面。⚠️ 动图（GIF/动画 WebP）靠 coil-gif 解码 —— 缺那个 artifact
-        // 只会显示第一帧且不报错。按楼层可见性开关动图属阶段三
-        AsyncImage(
-            model = thread.imageUrl.takeIf { it.isNotBlank() }
-                ?.let { HomeText.transformImageUrl(it) },
-            contentDescription = thread.itemName,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize(),
-        )
-
-        // 底部黑渐变（`ChatItem.tsx:178` 的 LinearGradient）
+    // ⚠️ **两层结构**：外层不裁剪（承载跨角的未读红点），内层才 clip。
+    // RN 里红点是 `wrapper` 的直接子节点、在被裁剪的 `chatItem` **之外**
+    // （`ChatItem.tsx:155-158`），`top: -size/2` 让它跨出右上角。
+    // 放进裁剪容器里会被切掉一半 —— 看起来只是"点小了点"，不易发现
+    Box(modifier = modifier.testTag("chat_map_card_${thread.itemId}")) {
         Box(
             Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        GRADIENT_START to Color.Transparent,
-                        1f to Color.Black.copy(alpha = GRADIENT_BOTTOM_ALPHA),
-                    ),
-                ),
-        )
+                .clip(RoundedCornerShape(ChatMapStyle.CARD_CORNER_DP.dp))
+                .background(ChatMapStyle.backCardFill),
+        ) {
+            // 封面。⚠️ 动图（GIF/动画 WebP）靠 coil-gif 解码 —— 缺那个 artifact
+            // 只会显示第一帧且不报错。按楼层可见性开关动图属阶段三
+            AsyncImage(
+                model = thread.imageUrl.takeIf { it.isNotBlank() }
+                    ?.let { HomeText.transformImageUrl(it) },
+                contentDescription = thread.itemName,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
 
-        // 未读红点（`:240-245`）
+            // 底部黑渐变（`ChatItem.tsx:178` 的 LinearGradient）
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            GRADIENT_START to Color.Transparent,
+                            1f to Color.Black.copy(alpha = GRADIENT_BOTTOM_ALPHA),
+                        ),
+                    ),
+            )
+
+            // 底部信息区（`:246-252`）
+            Box(
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(ChatMapStyle.CARD_BOTTOM_PADDING_DP.dp),
+            ) {
+                CardFooter(
+                    thread = thread,
+                    messageCountText = messageCountText,
+                    timeText = timeText,
+                )
+            }
+        }
+
+        // 未读红点：**在裁剪容器之外**，跨出右上角（`:133-141` top=-size/2）
         if (hasUnread) {
             Box(
                 Modifier
                     .align(Alignment.TopEnd)
-                    .padding(UNREAD_DOT_MARGIN_DP.dp)
-                    .size(UNREAD_DOT_SIZE_DP.dp)
+                    .offset(
+                        x = -ChatMapStyle.UNREAD_DOT_LEFT_DP.dp,
+                        y = -(ChatMapStyle.UNREAD_DOT_SIZE_DP / 2).dp,
+                    )
+                    .size(ChatMapStyle.UNREAD_DOT_SIZE_DP.dp)
                     .clip(RoundedCornerShape(ChatMapStyle.CARD_CORNER_DP.dp))
                     .background(ChatMapStyle.unreadDotColor)
                     .testTag("chat_map_card_unread"),
-            )
-        }
-
-        // 底部信息区（`:246-252`）
-        Box(
-            Modifier
-                .align(Alignment.BottomStart)
-                .padding(ChatMapStyle.CARD_BOTTOM_PADDING_DP.dp),
-        ) {
-            CardFooter(
-                thread = thread,
-                messageCountText = messageCountText,
-                timeText = timeText,
             )
         }
     }
@@ -113,7 +124,10 @@ private fun CardFooter(
     messageCountText: String,
     timeText: String,
 ) {
-    Box {
+    // ⚠️ **必须是 Column**：RN/iOS 都是名称行 + 消息行**两行竖排**。
+    // 早前写成函数体内并列发两个 composable —— 它们成为外层 Box 的
+    // 两个 sibling、都落在 TopStart，**消息行会盖住名称行**
+    Column(verticalArrangement = Arrangement.spacedBy(META_TOP_GAP_DP.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = thread.itemName,
@@ -130,7 +144,11 @@ private fun CardFooter(
                 Box(
                     Modifier
                         .padding(start = ChatMapStyle.STORY_TAG_H_PADDING_DP.dp)
-                        .height(ChatMapStyle.STORY_TAG_MIN_HEIGHT_DP.dp),
+                        .height(ChatMapStyle.STORY_TAG_MIN_HEIGHT_DP.dp)
+                        .clip(RoundedCornerShape(ChatMapStyle.STORY_TAG_CORNER_DP.dp))
+                        // ⚠️ **三色横向渐变**，不是纯色（`:188-195`）
+                        .background(Brush.horizontalGradient(ChatMapStyle.storyTagGradient))
+                        .padding(horizontal = ChatMapStyle.STORY_TAG_H_PADDING_DP.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
@@ -143,30 +161,38 @@ private fun CardFooter(
                 }
             }
         }
-    }
 
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(META_GAP_DP.dp),
-        modifier = Modifier.padding(top = META_TOP_GAP_DP.dp),
-    ) {
-        Text(
-            text = messageCountText,
-            color = ChatMapStyle.cardTextColor,
-            fontSize = ChatMapStyle.META_FONT_SP.sSp,
-        )
-        // 分隔竖线 1×6（`:272-276`）
-        Box(
-            Modifier
-                .width(ChatMapStyle.SPLIT_LINE_WIDTH_DP.dp)
-                .height(ChatMapStyle.SPLIT_LINE_HEIGHT_DP.dp)
-                .background(ChatMapStyle.cardTextColor),
-        )
-        Text(
-            text = timeText,
-            color = ChatMapStyle.cardTextColor,
-            fontSize = ChatMapStyle.META_FONT_SP.sSp,
-        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(META_GAP_DP.dp),
+        ) {
+            // 消息数图标 12×12（`:205-210`）—— 早前整个漏了。
+            // ⚠️ 复用壳内已有的 `ic_profile_msg_count`（与 RN 的
+            // `profile/message.png` 逐字节相同）—— 另拷一份会被 lint 的
+            // `IconDuplicates` 拦下（实测），且资源体积白涨一倍
+            Image(
+                painter = painterResource(R.drawable.ic_profile_msg_count),
+                contentDescription = null,
+                modifier = Modifier.size(ChatMapStyle.MESSAGE_ICON_SIZE_DP.dp),
+            )
+            Text(
+                text = messageCountText,
+                color = ChatMapStyle.cardTextColor,
+                fontSize = ChatMapStyle.META_FONT_SP.sSp,
+            )
+            // 分隔竖线 1×6（`:272-276`）
+            Box(
+                Modifier
+                    .width(ChatMapStyle.SPLIT_LINE_WIDTH_DP.dp)
+                    .height(ChatMapStyle.SPLIT_LINE_HEIGHT_DP.dp)
+                    .background(ChatMapStyle.cardTextColor),
+            )
+            Text(
+                text = timeText,
+                color = ChatMapStyle.cardTextColor,
+                fontSize = ChatMapStyle.META_FONT_SP.sSp,
+            )
+        }
     }
 }
 
@@ -182,7 +208,8 @@ private fun CardFooter(
 internal fun ChatMapPlaceholderCard(modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(ChatMapStyle.CARD_CORNER_DP.dp))
+            // ⚠️ 圆角 **8** 不是真实卡的 4（`ChatMap.tsx:240`）
+            .clip(RoundedCornerShape(ChatMapStyle.PLACEHOLDER_CORNER_DP.dp))
             .background(ChatMapStyle.placeholderFill)
             .testTag("chat_map_placeholder_card"),
     ) {
@@ -199,7 +226,5 @@ private const val ITEM_TYPE_STORY = "story"
 private const val CHARACTER_TYPE_STORY = 2
 private const val GRADIENT_START = 0.45f
 private const val GRADIENT_BOTTOM_ALPHA = 0.85f
-private const val UNREAD_DOT_SIZE_DP = 8
-private const val UNREAD_DOT_MARGIN_DP = 6
 private const val META_GAP_DP = 4
 private const val META_TOP_GAP_DP = 2
