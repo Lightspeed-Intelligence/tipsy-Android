@@ -51,6 +51,26 @@ RN 侧文档见 `tipsy-app/llmdoc/`；iOS 壳的同构实践见 `../Tipsy-iOS/ll
 
 ## 硬性纪律
 
+### 跨端对齐与根因修复（强制）
+
+遇到 bug、兼容性问题或架构问题时，按以下顺序决策，不能直接从现象出发加补偿逻辑：
+
+1. 先沿实际调用链定位能力 owner 和出错边界（Native、bridge、共享 RN Surface、服务端），
+   再查看 `Tipsy-iOS` 对应实现的代码、生命周期和文件归属；不能只对截图或只看同名文件。
+2. Android 原生层默认对齐 iOS 的**职责边界、生命周期、bridge 契约、领域命名和目录组织**。
+   新增文件应尽量能映射到 iOS 的对应领域；不要为掩盖问题新增 Android 独有的 `Manager`、
+   `Helper` 或补偿状态层。对齐是语义对齐，不是机械翻译 Swift，也不能忽略 §2 的 Android
+   平台硬约束和 RN 现网 Android 的产品行为。
+3. RN Surface 是 iOS 与 Android 共用的同一套代码，且 iOS 已上线验证。若问题只在 Android
+   出现，默认先修 Android Native host、bridge、生命周期、insets 或数据交接，不能先改 RN
+   来适配壳。只有确认问题属于共享实现或共享契约本身缺失时才改 RN；改动必须最小、向后兼容，
+   并同时回归 iOS 壳、Android 壳以及受影响的独立 RN App 路径。
+4. 方案必须消除根因和错误状态来源。固定延时、进入后再纠正 offset/insets、重复导航、先闪回
+   Native 再重开 Surface、复制状态掩盖 owner 冲突等都视为 workaround，不得作为最终修复。
+   如果当前阶段确实只能临时绕过，必须先获得明确批准，并写清适用范围、风险和删除条件。
+5. iOS 与 Android 确有平台差异时可以不一致，但必须给出代码或平台约束证据，说明为什么不能
+   共用同一方案。只在本次范围内调整相关结构，不借修 bug 顺手做无关的大规模目录搬迁。
+
 - **RN 侧改动提交到 `tipsy-app` 的 `feat/android-native` 分支**（2026-08-11 owner 决定：
   Android 迁移相关的 RN 改动**不走 PR**，直接提交该分支）。本仓 PR 中的 submodule
   变更仍**只允许是指针 bump** —— 改动本身要在 `tipsy-app` 的历史里可追溯，
