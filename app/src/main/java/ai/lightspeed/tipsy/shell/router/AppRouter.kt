@@ -57,6 +57,11 @@ object ProductionRoutePolicy {
         // 由 SurfacePropsTest + SurfaceContractTest 钉住。编辑保真（原始 JSON
         // 原封透传）是它单独成 route 的全部理由 —— 见 AppRoute.EditCharacter
         AppRoute.EditCharacter::class.java,
+        // W4 批次 3：Settings 的 7 个直达子屏（§2.41 静态 gate 已预接：
+        // 强类型 Screen enum、微根/微栈机器断言、退栈按类型解除去重）。
+        // 单层容器纪律与 ChatDetail/Create 同一条链 —— SettingsSurface
+        // 不在自身内再开 Surface（12 个微栈目标都是页内导航）
+        AppRoute.SettingsSubScreen::class.java,
     )
 }
 

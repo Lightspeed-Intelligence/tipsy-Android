@@ -40,13 +40,14 @@ import kotlinx.coroutines.launch
 /**
  * Settings 列表的宿主（W3，进度文档 §2.33）。
  *
- * ## 子页出口当前全部被明确拒绝
+ * ## 子页出口已放行（W4 批次 3）
  *
  * 7 个 `SettingsSurface` 子屏（Security/Blacklist/Feedback/About/ContactUs/
- * Delete/Widget）未过 §9.1 矩阵。点击走 Router 的 `rejectNotEnabled`
- * 记明确错误 —— 同 Profile 第一刀的形态，**不留 TODO 让点击无反应**（§8.3）。
+ * Delete/Widget）经 `AppRoute.SettingsSubScreen` 进 `SettingsSurface`，
+ * 共用一个容器（`initialScreen` 平铺 prop 分流初始屏）。§2.41 的静态 gate
+ * （强类型 Screen enum、微根/微栈机器断言、退栈按类型解除去重）先行落地。
  *
- * 三个外部链接行（社区规范/服务条款/官网）不经 Surface，**本刀就能通**。
+ * 三个外部链接行（社区规范/服务条款/官网）不经 Surface。
  *
  * ## 语言页是同一个 ViewModel
  *

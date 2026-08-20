@@ -3552,6 +3552,41 @@ owner 确认无人推进）收尾成完整可用：**ChatList 的 Map 按钮从 
   （>50 天会话的性能缺口，draft 类注释已记）；真机冒烟按 owner 决定
   累积。§9.1 不适用（纯原生页非 Surface）。
 
+### 2.48 W4 批次 3 第一刀：SettingsSurface 七子屏放行（2026-08-20）
+
+`AppRoute.SettingsSubScreen` 进生产白名单 —— Settings 列表的 7 个 Surface
+子屏（Security/Blocked/Delete Account/Feedback/About/ContactUs/Add Widget）
+第一次能点开。**改动极小**（白名单 1 行 + 测试翻转 + KDoc）：§2.41 已把
+静态 gate、`initialScreen` 平铺 prop、`MainActivity` 导航分支与退栈按类型
+解除去重全部预接，本刀只是放行 + 补设备证据。
+
+选它先于 EditProfile/Comments 的理由：**零跨仓改动、零新机制** ——
+SettingsSurface 的 12 个微栈目标全是页内导航（不触发 §12.1 多层容器），
+7 个子屏共用一个容器（单层纪律与 ChatDetail 同链）。
+
+#### §9.1 矩阵（模拟器 Pixel 10 / API 37，directApk；⚠️ 不作覆盖升级证据）
+
+| 项 | 结果 |
+| --- | --- |
+| 初始 route fixture | ✅ 7/7 子屏逐个打开并截图核对：Feedback（单选组/输入框/Submit）、About（版本/Update）、ContactUs（support 邮箱）、Add Widget（角色选择/Apply）、Security（加密说明）、Blocked（双 tab 空态）、Delete Account（完整问卷）—— `initialScreen` 分流全部正确，无 `normalizeScreen` 兜底错屏 |
+| Back/栈底 | ✅ 每个子屏 Back 回列表；栈底不退出 App |
+| 关闭重开（去重解除） | ✅ 同一子屏（Blocked）关闭后立即重开成功 —— `SettingsSubScreen` 按类型解除 lastHandled 生效 |
+| 25 次挂载/卸载 | ✅ Security 开关 25 轮：Activities=1、ViewRootImpl=1、Views=91（无累积）、无崩溃 |
+| 旋转 | ✅ Security 开着横↔竖往返，Surface 存活内容完整 |
+| 进程恢复 | ✅ force-stop 冷启动回 Home 正常，重开子屏成功 |
+| 未登录 | ✅ 游客机（5554）Settings 入口本身在 Profile tab 内，`requiresAuth=true` 由 Router 的 auth gate 排队 —— 未登录根本到不了子屏，路径不可达即安全 |
+| 登录切换 / 语言切换 | ✎ 未跑（Settings 子屏内容与账号/语言的耦合弱；语言切换的壳级机制已由 §2.39 复跑 PASS 覆盖） |
+| OTA N/N-1 | W4 OTA 接入后统一跑 |
+
+#### 落地边界
+
+- 生产白名单从 7 类扩到 **8 类**（+`SettingsSubScreen`）。
+- `AppRouterTest` 翻转旧的反向断言（「子屏被拒绝」→「列表与子屏各自导航」），
+  +1 白名单断言；`SettingsFragment` KDoc 同步。
+- ⚠️ 模拟器证据按 §2.5 纪律**不作真机结论**；真机冒烟继续累积。
+  Widget 子屏的「Apply 后桌面真出现 widget」属 Widget 系统能力（W4 横切，
+  🔴 未开始），本刀只验到 Surface 页本身可用。
+
 
 
 ## 3. 横切能力
