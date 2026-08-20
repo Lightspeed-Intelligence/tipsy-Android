@@ -76,7 +76,7 @@
 - **Tab3 创建入口已接通**（§2.40，2026-08-18，219 行）：`AppRoute.Create` 进白名单，Tab3 的 ➕ 从「只打一行日志」变成挂 `CreateSurface` 直达创建表单 —— **五个 Tab 全部可用**。壳只传 `createEnterSource` 一个 prop，**刻意不复刻** RN tabPress 那四个参数（Surface 自决落地页，§2.30 纪律）。⚠️ 真机抓到**类别性**缺陷并已修：`AppRoute.Create()` 无参 ⇒ 实例恒相等 ⇒ 去重不解除就「只能用一次」，ChatDetail 因每次带不同 characterId 而侥幸未暴露；后续每个无参路由都要配解除。✅ §2.41 已补微根/微栈/注册/bootstrap 机器断言；⚠️ §9.1 的 8 个设备/生命周期验收格仍全 `✎`。
 - **Screen P1 + P2 代码已实现**（§2.35 / §2.42）：P1 落 AB 端点分流、归因、首屏缓存与会话埋点；P2 让 `showcase` 首次接入 Media3、有界播放器池、±1 窗口、RN Android buffer、动态 50MB cache、三轴播放门与声音开关。PR #39 最终 head `13cc633` 的 G1 全绿；⚠️ feed 无 showcase，真实视频/cache 失败/API24–33 层序/audio focus 四项仍 NOT RUN，故**不是 production-ready**。
 - **Search P2 筛选器已实现**（§2.34，4 文件 723 行）：性别/排序/分级抽屉 + 二级标签栏，Search 达成完整对等。`SearchTagOrderTest` **逐条对拍 RN 的 144 行现成单测**。⚠️ 分级筛选的门是「非 GooglePlay && nsfw 开」，与 Settings 的 Limitless（只有 directApk）**不同轴** —— RuStore 在这里算可选。
-- **不存在 / 未验**：Screen P2 已落代码但四项核心验收未跑，next-item/fade/firstInteractive/P3 仍无；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。生产路由白名单 **11 类**（2026-08-20 更新，原「六个」已过期）：三纯原生（Search/UserProfile/Settings）+ 八 Surface/带参目标（ChatDetail/MiniPhoneChat/Create/EditCharacter/SettingsSubScreen/EditProfile/Comments/Letter）。13 个业务 Surface 已启用 **6 个**（ChatDetail/Create/Settings/EditProfile/Comments/Notification），未启用 7 个：GemsSubscription/UserCoins/RoleCard/Onboarding/DeleteAccount/Widget（后两者的独立容器 iOS 已删、走 Settings 子屏，待核实 Android 是否同判）+ Debug 不计。各 Surface 的真机格仍在累积清单。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1）与 **Follow 出口无 Surface 可用**。
+- **不存在 / 未验**：Screen P2 已落代码但四项核心验收未跑，next-item/fade/firstInteractive/P3 仍无；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。生产路由白名单 **13 类**（§2.52 后）：三纯原生（Search/UserProfile/Settings）+ 十 Surface/带参目标（ChatDetail/MiniPhoneChat/Create/EditCharacter/SettingsSubScreen/EditProfile/Comments/Letter/GemsPurchase/UserCoins）。13 个业务 Surface 已启用 **8 个**（ChatDetail/Create/Settings/EditProfile/Comments/Notification/GemsSubscription/UserCoins），未启用 5 个：RoleCard/Onboarding/DeleteAccount/Widget（后两者的独立容器 iOS 已删、走 Settings 子屏，待核实 Android 是否同判）+ Debug 不计。各 Surface 的真机格仍在累积清单。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1）与 **Follow 出口无 Surface 可用**。
 
 ## 1. 波次状态
 
@@ -3761,6 +3761,52 @@ Comments，CommentReport 等二级页同栈可跳）。
 
 互动通知评论卡的 commentId/rootId 定位参数与 `openComments` 桥方法
 都随本刀落地（此前记「等 NotificationSurface 那刀一起」）。
+
+### 2.52 W4 批次 4 第二刀：Gems/UserCoins 双放行（2026-08-20）
+
+`AppRoute.GemsPurchase` + `AppRoute.UserCoins` 进生产白名单（12、13 类）——
+Profile 钱包卡的三个出口（宝石 +/Upgrade/Coins →）与 **402 付费墙兜底**
+全部有下一屏。批次 4 的三个 Surface（Notification/Gems/UserCoins）收口。
+
+#### 落地（零 RN 改动 —— 两个 Surface root 都是现成的）
+
+- **Gems props 六个 + snake_case 别名归一**：iOS 容器
+  （`TipsyRouter.swift:349-363`）对每个键做 camelCase/snake 双读，
+  壳照做 —— 宝石页任务入口传 snake 键时不归一的表现是初始 tab 静默
+  回落 subscription。`preferNextPlan` 按 iOS `boolParam`（1/true/yes，
+  大小写不敏感）转 **Boolean**（RN props 是 boolean，字符串 "false"
+  会被真值判定当 true）。空值键不放。
+- **三入口早已汇到同一 route**：Profile 钱包卡（W3 预定义）、桥
+  `openGemsPurchase`（W1 实现）、402 兜底（`ApiErrorGate` 防抖后）——
+  本刀只是放行 + props 映射，`onNavigateGemsPurchaseRequested` 装配链
+  一行没动。
+- UserCoins 无 props（页面自取 user store）；微栈是 ProfileStack 三页
+  子集（UserCoins/WithdrawExplain/WithdrawStatus，RN 刻意不复用全栈）。
+- 「未启用样本」测试主体 GemsPurchase → `DailyGemEntry`（深链目标）。
+
+#### §9.1 矩阵（模拟器 Pixel 10 / API 37，directApk；⚠️ 不作覆盖升级证据）
+
+| 项 | 结果 |
+| --- | --- |
+| 初始 route fixture | ✅ 三出口逐个实测：宝石 + → Buy Gems tab（`initialTab` 分流对，余额 1234158.9 与 Profile 卡一致，五档价目 + 邀请码 + 任务区全渲染）；Upgrade → Subscription tab（Standard 档卡片 + Yearly/Monthly 价格）；Coins → 金币兑换页（Withdraw Balance + Coins to Gems 表单，「提现仅 Web」提示在位） |
+| Back/栈底 | ✅ 各自回 Profile |
+| 关闭重开 | ✅ 谓词解除生效 |
+| 旋转 | ✅ Gems 开着往返存活 |
+| 12 轮交替开关 | ✅ Gems/Coins 交替 6 轮：Activities=1、ViewRootImpl=1 无泄漏 |
+| 进程恢复 | ✅ Gems 开着 force-stop → 冷启动 → 重开 Coins 成功 |
+| 未登录 | ✅ 同前：游客机即登录页，路径不可达 |
+| **真实购买/订阅** | ✎ **模拟器无 Play Billing，不可测** —— 支付闭环（拉起收银台/回执/余额入账）是真机冒烟**置顶项**，且三渠道各验（GooglePlay=Billing、directApk/RuStore=网页或三方支付的渠道分流） |
+| 402 付费墙实弹 | ✎ 需构造宝石不足的真实请求，留真机 |
+| 语言切换 / OTA | ✎ 同前 |
+
+#### 渠道分流现状说明
+
+矩阵跑在 directApk。`GemsSubscriptionSurface` 内部的渠道分流（Play
+Billing vs 网页支付）由 RN 按构建渠道自决 —— 壳侧无渠道分流代码，
+`X-Download-Channel` header 与 `DOWNLOAD_CHANNEL` BuildConfig 已在
+W1 就位。googlePlay flavor 的同页渲染留真机冒烟一并验。
+
+
 
 
 

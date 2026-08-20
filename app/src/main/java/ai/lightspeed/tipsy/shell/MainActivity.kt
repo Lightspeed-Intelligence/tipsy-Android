@@ -11,9 +11,11 @@ import ai.lightspeed.tipsy.shell.router.AppRouter
 import ai.lightspeed.tipsy.shell.surface.CommentsSurfaceContract
 import ai.lightspeed.tipsy.shell.surface.CreateSurfaceContract
 import ai.lightspeed.tipsy.shell.surface.EditProfileSurfaceContract
+import ai.lightspeed.tipsy.shell.surface.GemsSubscriptionSurfaceContract
 import ai.lightspeed.tipsy.shell.surface.NotificationSurfaceContract
 import ai.lightspeed.tipsy.shell.surface.SettingsSurfaceContract
 import ai.lightspeed.tipsy.shell.surface.SurfaceProps
+import ai.lightspeed.tipsy.shell.surface.UserCoinsSurfaceContract
 import ai.lightspeed.tipsy.shell.tabs.TabHostFragment
 import android.content.Intent
 import android.os.Bundle
@@ -176,6 +178,13 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
             // Letter 带可选 tab 参数，同样谓词版按类型解除
             if (supportFragmentManager.findFragmentByTag(NotificationSurfaceContract.COMPONENT_NAME) == null) {
                 router.onDestinationClosed { route -> route is AppRoute.Letter }
+            }
+            // Gems（带 params map）与 UserCoins（无参 data object）同样谓词版
+            if (supportFragmentManager.findFragmentByTag(GemsSubscriptionSurfaceContract.COMPONENT_NAME) == null) {
+                router.onDestinationClosed { route -> route is AppRoute.GemsPurchase }
+            }
+            if (supportFragmentManager.findFragmentByTag(UserCoinsSurfaceContract.COMPONENT_NAME) == null) {
+                router.onDestinationClosed { route -> route is AppRoute.UserCoins }
             }
             // EditProfile 是无参 data object；若不在容器真正退栈后按类型解除，
             // 第二次点击会永久命中 Router 的 lastHandled 去重（与 Create 同型）。
@@ -353,6 +362,12 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
                 // W4 批次 4：站内信（ChatList 铃铛）
                 is AppRoute.Letter ->
                     openSurface(NotificationSurfaceContract.COMPONENT_NAME, route)
+                // W4 批次 4：宝石购买/订阅（钱包卡 + 402 兜底 + 桥三入口同汇）
+                is AppRoute.GemsPurchase ->
+                    openSurface(GemsSubscriptionSurfaceContract.COMPONENT_NAME, route)
+                // W4 批次 4：金币兑换（钱包卡 Coins →）
+                is AppRoute.UserCoins ->
+                    openSurface(UserCoinsSurfaceContract.COMPONENT_NAME, route)
                 // W3 预接：RN auth-scoped bootstrap 已落地，但专属 §9.1 尚未
                 // 实机验收，生产 policy 仍关闭。组件身份、空 props、容器与关闭
                 // 去重先钉死；后续放行只改集中 policy，不再临场补导航机制。
