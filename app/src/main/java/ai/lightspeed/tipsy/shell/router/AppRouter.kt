@@ -62,6 +62,11 @@ object ProductionRoutePolicy {
         // 单层容器纪律与 ChatDetail/Create 同一条链 —— SettingsSurface
         // 不在自身内再开 Surface（12 个微栈目标都是页内导航）
         AppRoute.SettingsSubScreen::class.java,
+        // W4 批次 3：EditProfile（§2.43 预接的全部机制随本行生效 ——
+        // auth-scoped bootstrap、精确 token + JWT sub 账号闸、进程级
+        // mutation 串行、notifyProfileChanged → ProfileRefreshHub 刷新接力、
+        // 无参路由退栈解除）。§9.1 模拟器矩阵见 §2.49；真机项继续累积
+        AppRoute.EditProfile::class.java,
     )
 }
 

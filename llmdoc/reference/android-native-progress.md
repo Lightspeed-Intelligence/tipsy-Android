@@ -3587,6 +3587,40 @@ SettingsSurface 的 12 个微栈目标全是页内导航（不触发 §12.1 多�
   Widget 子屏的「Apply 后桌面真出现 widget」属 Widget 系统能力（W4 横切，
   🔴 未开始），本刀只验到 Surface 页本身可用。
 
+### 2.49 W4 批次 3 第二刀：EditProfile 放行（2026-08-20）
+
+`AppRoute.EditProfile` 进生产白名单（第 **9** 类）—— Profile 的
+「Edit Profile」按钮从 reject 变成真编辑页。§2.43 预接的全部机制随本行
+生效：auth-scoped bootstrap、精确 token + JWT sub 账号闸、进程级 mutation
+串行、`notifyProfileChanged` → `ProfileRefreshHub` 刷新接力、无参路由
+退栈解除。改动同 §2.48 形态：白名单 1 行 + 测试翻转。
+
+#### §9.1 矩阵（模拟器 Pixel 10 / API 37，directApk；⚠️ 不作覆盖升级证据）
+
+| 项 | 结果 |
+| --- | --- |
+| 初始 route fixture | ✅ 表单完整打开：头像/邮箱/Name（预填当前昵称）/Gender 三选/Bio/Find Me Elsewhere 全渲染 |
+| **保存 → 原生 Profile 刷新接力** | ✅ **核心链路实测**：改名 `Lee → LeeMap` 点 Done → Surface 关闭 → **原生 Profile 头部立即显示 `LeeMap`**（无手动刷新）——`notifyProfileChanged` → dirty → `/user/info` 校准整链生效。再改回 `Lee` 二次验证，编辑页重开时预填的也是新值 |
+| Back/栈底 | ✅ Back 回 Profile，不退出 App |
+| 关闭重开（无参解除） | ✅ 保存关闭后立即重开成功（连续三次往返）—— 无参 data object 的退栈解除生效，没有「只能编辑一次」 |
+| 旋转 | ✅ 表单开着横↔竖往返，字段存活 |
+| 15 次挂载/卸载 | ✅ Activities=1、ViewRootImpl=1，无累积泄漏 |
+| 进程恢复 | ✅ 表单开着 force-stop → 冷启动 → 重开编辑页成功 |
+| 未登录 | ✅ 同 §2.48：游客机冷启动即登录页，入口路径不可达 |
+| **登录切换（A→logout→B 换号）** | ✎ **NOT RUN —— 需第二个测试账号**（§2.43 的账号闸/快照隔离是本 Surface 最重的威胁模型，静态测试源码已覆盖但无设备证据）。待 owner 提供账号或明确接受带痕放行 |
+| 语言切换 / OTA N/N-1 | ✎ 未跑（语言机制 §2.39 已覆盖；OTA 等 W4 接入） |
+
+#### 落地边界
+
+- 生产白名单 8 → **9** 类。`AppRouterTest` 翻转「预接后仍不在白名单」
+  断言为「在白名单且可导航」。
+- ⚠️ **换号格是唯一的缺口**且是刻意标注：§2.43 单列的三条威胁
+  （runtime 未启动的事件丢失、旧账号 persist 残留、慢请求跨账号发布）
+  只有真实双账号切换能证。生产 policy 已开，但这条欠账在真机冒烟
+  清单里**置顶**。
+- 头像上传（系统相册链）未验 —— 模拟器相册无素材，属真机冒烟项。
+
+
 
 
 ## 3. 横切能力

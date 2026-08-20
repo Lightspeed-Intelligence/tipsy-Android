@@ -495,13 +495,13 @@ class AppRouterTest {
     }
 
     /**
-     * EditProfile 已完成 Android 容器与 auth-scoped gate 预接，但专属 §9.1
-     * 尚未实机验收，必须继续由生产 policy 明确拒绝，不能把静态实现误当上线证据。
+     * W4 批次 3：EditProfile 放行 —— §2.43 预接的 auth-scoped bootstrap /
+     * 账号闸 / mutation 串行 / 刷新接力随白名单生效（§9.1 模拟器矩阵 §2.49）。
      */
     @Test
-    fun `EditProfile 预接后仍不在生产白名单`() {
-        assertFalse(
-            "EditProfile 的 fresh-login / 跨账号 / 慢请求 §9.1 未跑，不得进入生产白名单",
+    fun `EditProfile 在生产白名单内且可导航`() {
+        assertTrue(
+            "EditProfile 必须在生产白名单里，否则 Profile 的编辑资料按钮点了只会 reject",
             AppRoute.EditProfile::class.java in ProductionRoutePolicy.enabledRouteTypes,
         )
 
@@ -511,8 +511,8 @@ class AppRouterTest {
         )
         f.router.handle(AppRoute.EditProfile)
 
-        assertEquals("生产路径不该导航", 0, f.navigated.size)
-        assertEquals("必须明确拒绝而不是 silent no-op", 1, f.rejections.size)
+        assertEquals("必须导航", 1, f.navigated.size)
+        assertEquals("不该有拒绝", 0, f.rejections.size)
     }
 
     /** 无参 Surface 关闭后必须解除 lastHandled，否则编辑资料只能打开一次。 */
