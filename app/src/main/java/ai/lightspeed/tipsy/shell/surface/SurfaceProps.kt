@@ -1,6 +1,7 @@
 package ai.lightspeed.tipsy.shell.surface
 
 import ai.lightspeed.tipsy.shell.router.AppRoute
+import ai.lightspeed.tipsy.shell.router.ChatDetailPreload
 import org.json.JSONObject
 
 /**
@@ -41,6 +42,9 @@ object SurfaceProps {
 
     /** mini phone 聊天页的初始屏值（`:118` 注释：对齐 `toChatPage` 的 mini_phone 分支）。 */
     const val CHAT_SCREEN_MINI_PHONE = "MiniPhoneChat"
+
+    /** Screen 头像/角色名直达角色详情（`ChatDetailSurface.tsx:310-314`）。 */
+    const val CHAT_SCREEN_CHARACTER_DETAIL = "CharacterDetail"
 
     /*
      * ── ChatDetail 的判定素材（P9）─────────────────────────
@@ -205,30 +209,20 @@ object SurfaceProps {
             // 首次挂载仍会先显示黑底。都没有就整个 preload 不放：空 preload 会让
             // seedChatPreloadFromShell 走到 `!preload` 提前返回，等价于不传，
             // 但少一个空对象更清楚
-            val preload = buildMap<String, Any> {
-                route.preload?.nickname?.let { put(PRELOAD_NICKNAME, it) }
-                route.preload?.gender?.let { put(PRELOAD_GENDER, it) }
-                route.preload?.imageUrl?.let { put(PRELOAD_IMAGE_URL, it) }
-                route.preload?.faceUrl?.let { put(PRELOAD_FACE_URL, it) }
-                route.preload?.imgPrimaryColor?.let { put(PRELOAD_IMG_PRIMARY_COLOR, it) }
-                route.preload?.nsfw?.let { put(PRELOAD_NSFW, it) }
-                route.preload?.greeting?.let { put(PRELOAD_GREETING, it) }
-                route.preload?.introduction?.let { put(PRELOAD_INTRODUCTION, it) }
-                route.preload?.isTranslated?.let { put(PRELOAD_IS_TRANSLATED, it) }
-                route.preload?.lang?.let { put(PRELOAD_LANG, it) }
-                (route.preload?.characterType ?: route.characterType)?.let {
-                    put(PRELOAD_CHARACTER_TYPE, it)
-                }
-                (route.preload?.contentType ?: route.contentType)?.let {
-                    put(PRELOAD_CONTENT_TYPE, it)
-                }
-                route.preload?.greetingVideoUrl?.let {
-                    put(PRELOAD_GREETING_VIDEO_URL, it)
-                }
-                route.preload?.greetingVideoCoverUrl?.let {
-                    put(PRELOAD_GREETING_VIDEO_COVER_URL, it)
-                }
+            val preload = buildChatPreload(
+                preload = route.preload,
+                fallbackCharacterType = route.characterType,
+                fallbackContentType = route.contentType,
+            )
+            if (preload.isNotEmpty()) put(CHAT_PRELOAD, preload)
+        }
+
+        is AppRoute.CharacterDetail -> buildMap {
+            route.characterId.takeIf { it.isNotBlank() }?.let {
+                put(CHAT_CHARACTER_ID, it)
             }
+            put(CHAT_INITIAL_SCREEN, CHAT_SCREEN_CHARACTER_DETAIL)
+            val preload = buildChatPreload(preload = route.preload)
             if (preload.isNotEmpty()) put(CHAT_PRELOAD, preload)
         }
 
@@ -387,5 +381,30 @@ object SurfaceProps {
         is AppRoute.EditProfile,
         is AppRoute.UserCoins,
         -> emptyMap()
+    }
+
+    private fun buildChatPreload(
+        preload: ChatDetailPreload?,
+        fallbackCharacterType: Int? = null,
+        fallbackContentType: Int? = null,
+    ): Map<String, Any> = buildMap {
+        preload?.nickname?.let { put(PRELOAD_NICKNAME, it) }
+        preload?.gender?.let { put(PRELOAD_GENDER, it) }
+        preload?.imageUrl?.let { put(PRELOAD_IMAGE_URL, it) }
+        preload?.faceUrl?.let { put(PRELOAD_FACE_URL, it) }
+        preload?.imgPrimaryColor?.let { put(PRELOAD_IMG_PRIMARY_COLOR, it) }
+        preload?.nsfw?.let { put(PRELOAD_NSFW, it) }
+        preload?.greeting?.let { put(PRELOAD_GREETING, it) }
+        preload?.introduction?.let { put(PRELOAD_INTRODUCTION, it) }
+        preload?.isTranslated?.let { put(PRELOAD_IS_TRANSLATED, it) }
+        preload?.lang?.let { put(PRELOAD_LANG, it) }
+        (preload?.characterType ?: fallbackCharacterType)?.let {
+            put(PRELOAD_CHARACTER_TYPE, it)
+        }
+        (preload?.contentType ?: fallbackContentType)?.let {
+            put(PRELOAD_CONTENT_TYPE, it)
+        }
+        preload?.greetingVideoUrl?.let { put(PRELOAD_GREETING_VIDEO_URL, it) }
+        preload?.greetingVideoCoverUrl?.let { put(PRELOAD_GREETING_VIDEO_COVER_URL, it) }
     }
 }

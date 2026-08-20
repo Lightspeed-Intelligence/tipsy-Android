@@ -16,11 +16,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
+import ai.lightspeed.tipsy.shell.surface.CommentsSurfaceContract
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Toast
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.statusBars
@@ -74,6 +76,7 @@ class ScreenFragment : Fragment() {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = ScreenViewModel(
                 api = ScreenApi(app.apiClient),
+                interactions = ScreenInteractionApi(app.apiClient),
                 tracker = ScreenSessionTracker(),
                 cache = ScreenFirstScreenCacheStore(
                     MmkvHomeCacheStorage(app.sharedMmkvStore),
@@ -105,11 +108,21 @@ class ScreenFragment : Fragment() {
      */
     private var isCovered = false
 
+    /** 仅记录由本页打开的评论目标；关闭 Surface 后据此刷新权威评论总数。 */
+    private var pendingCommentCountTargetId: String? = null
+    private var commentsSurfaceWasVisible = false
+
     /**
      * Activity back stack 监听：Surface push/pop 后重算遮挡态。
      * **必须在 onDestroyView 反注册** —— 它挂在 Activity 的 FragmentManager 上。
      */
     private val backStackListener = FragmentManager.OnBackStackChangedListener {
+        val commentsVisible = hasVisibleCommentsSurface()
+        if (commentsSurfaceWasVisible && !commentsVisible) {
+            pendingCommentCountTargetId?.let(viewModel::refreshCommentCount)
+            pendingCommentCountTargetId = null
+        }
+        commentsSurfaceWasVisible = commentsVisible
         isCovered = hasVisibleSurface()
         applyVisible(computeVisible())
     }
@@ -196,6 +209,7 @@ class ScreenFragment : Fragment() {
         playerPool = ScreenPlayerPool(requireContext().applicationContext)
         // R1：Surface 遮挡轴。sibling 容器不会让本 Fragment hidden，只能靠 back stack
         isCovered = hasVisibleSurface()
+        commentsSurfaceWasVisible = hasVisibleCommentsSurface()
         requireActivity().supportFragmentManager
             .addOnBackStackChangedListener(backStackListener)
 
@@ -224,6 +238,8 @@ class ScreenFragment : Fragment() {
                     onRefresh = viewModel::onRefresh,
                     onRetry = viewModel::onRetry,
                     onStartChat = ::onStartChat,
+                    onCharacterClick = ::onCharacterClick,
+                    onCreatorClick = ::onCreatorClick,
                     onCardEvent = ::onCardEvent,
                     statusBarPadding = WindowInsets.statusBars
                         .asPaddingValues()
@@ -288,6 +304,10 @@ class ScreenFragment : Fragment() {
         if (container.visibility != android.view.View.VISIBLE) return false
         return fm.fragments.any { it.isAdded && !it.isHidden && it.id == R.id.surface_container }
     }
+
+    private fun hasVisibleCommentsSurface(): Boolean =
+        activity?.supportFragmentManager
+            ?.findFragmentByTag(CommentsSurfaceContract.COMPONENT_NAME) != null
 
     /**
      * 可见性收口：三条轴（Activity 生命周期 / Tab show-hide / Surface 遮挡）
@@ -377,10 +397,31 @@ class ScreenFragment : Fragment() {
         )
     }
 
+    /** 头像/角色名 → ChatDetail 微栈内的角色详情页。 */
+    private fun onCharacterClick(item: ScreenFeedItem) {
+        val app = requireActivity().application as TipsyApplication
+        app.requestRoute(
+            AppRoute.CharacterDetail(
+                characterId = item.characterId,
+                preload = item.toChatDetailPreload(),
+            ),
+            AppRouter.Source.IN_APP,
+        )
+    }
+
+    /** `@creator` → 原生他人主页；空 creatorId 明确不导航。 */
+    private fun onCreatorClick(item: ScreenFeedItem) {
+        val creatorId = item.creatorId?.takeIf { it.isNotBlank() } ?: return
+        val app = requireActivity().application as TipsyApplication
+        app.requestRoute(
+            AppRoute.UserProfile(creatorId),
+            AppRouter.Source.IN_APP,
+        )
+    }
+
     /**
-     * 卡片级事件：埋点全部走 ViewModel（会话内去重在 tracker），
-     * 评论点击额外导航 —— iOS `ScreenViewController:835-845` 同序：
-     * 先埋点、再 `.comments` 路由。
+     * 卡片级事件：埋点全部走 ViewModel（会话内去重在 tracker）。点赞进入
+     * 乐观更新链，评论点击额外导航 —— 两者都保持「先埋点，再业务动作」。
      *
      * targetType 恒 `character`（iOS 硬编码 `CommentTargetType.character`，
      * Screen feed 全是角色卡）；creatorId 传 feed 的创作者 id（删除权限/
@@ -388,17 +429,38 @@ class ScreenFragment : Fragment() {
      */
     private fun onCardEvent(event: ScreenCardEvent) {
         viewModel.onCardEvent(event)
-        if (event == ScreenCardEvent.COMMENT_CLICK) {
-            val item = viewModel.state.value.currentItem ?: return
-            val app = requireActivity().application as TipsyApplication
-            app.requestRoute(
-                AppRoute.Comments(
-                    targetType = AppRoute.Comments.TARGET_TYPE_CHARACTER,
-                    targetId = item.characterId,
-                    creatorId = item.creatorId.orEmpty(),
-                ),
-                AppRouter.Source.IN_APP,
-            )
+        when (event) {
+            ScreenCardEvent.LIKE_CLICK -> {
+                val app = requireActivity().application as TipsyApplication
+                if (app.tokenStore.currentUserId().isNullOrBlank()) {
+                    // RN 这里是提示而不是主动打开登录页；保持同一交互语义。
+                    Toast.makeText(
+                        requireContext(),
+                        L10n.t("Login"),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                } else {
+                    viewModel.toggleCurrentLike()
+                }
+            }
+
+            ScreenCardEvent.COMMENT_CLICK -> {
+                val item = viewModel.state.value.currentItem ?: return
+                pendingCommentCountTargetId = item.characterId
+                val app = requireActivity().application as TipsyApplication
+                app.requestRoute(
+                    AppRoute.Comments(
+                        targetType = AppRoute.Comments.TARGET_TYPE_CHARACTER,
+                        targetId = item.characterId,
+                        creatorId = item.creatorId.orEmpty(),
+                    ),
+                    AppRouter.Source.IN_APP,
+                )
+            }
+
+            ScreenCardEvent.EXPOSURE,
+            ScreenCardEvent.SHARE_CLICK,
+            -> Unit
         }
     }
 

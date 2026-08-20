@@ -26,7 +26,11 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -38,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -85,6 +90,8 @@ fun ScreenScreen(
     onRefresh: () -> Unit,
     onRetry: () -> Unit,
     onStartChat: () -> Unit,
+    onCharacterClick: (ScreenFeedItem) -> Unit,
+    onCreatorClick: (ScreenFeedItem) -> Unit,
     onCardEvent: (ScreenCardEvent) -> Unit,
     statusBarPadding: Dp,
     bottomPadding: Dp,
@@ -119,7 +126,10 @@ fun ScreenScreen(
                 onSoundToggle = onSoundToggle,
                 playerPool = playerPool,
                 onPageChanged = onPageChanged,
+                onRefresh = onRefresh,
                 onStartChat = onStartChat,
+                onCharacterClick = onCharacterClick,
+                onCreatorClick = onCreatorClick,
                 onCardEvent = onCardEvent,
                 statusBarPadding = statusBarPadding,
                 bottomPadding = bottomPadding,
@@ -130,6 +140,7 @@ fun ScreenScreen(
 
 @Composable
 @UnstableApi  // 透传 ScreenPlayerPool
+@OptIn(ExperimentalMaterial3Api::class)
 private fun ScreenPager(
     state: ScreenState,
     isActive: Boolean,
@@ -137,7 +148,10 @@ private fun ScreenPager(
     onSoundToggle: () -> Unit,
     playerPool: ScreenPlayerPool?,
     onPageChanged: (Int) -> Unit,
+    onRefresh: () -> Unit,
     onStartChat: () -> Unit,
+    onCharacterClick: (ScreenFeedItem) -> Unit,
+    onCreatorClick: (ScreenFeedItem) -> Unit,
     onCardEvent: (ScreenCardEvent) -> Unit,
     statusBarPadding: Dp,
     bottomPadding: Dp,
@@ -150,33 +164,45 @@ private fun ScreenPager(
     }
 
     Box(Modifier.fillMaxSize()) {
-        VerticalPager(
-            state = pagerState,
-            // ⚠️ **必须显式设 1**（P1 时是默认 0）：`abs(page-current)<=1` 的
-            // ±1 窗口只在邻页**被组合**时才有意义 —— 默认 0 时邻页压根不组合，
-            // 那个判断永远只对当前页成立，"±1 预热"是空话。
-            //
-            // 这个值就是 OOM 的直接来源，与 [ScreenPlayerPool.capacity]
-            // 共同构成上界：1 表示同时最多 3 页被组合 → 最多 3 个播放器在用，
-            // 池容量 3~5 留出翻页重叠期。**不要往上调**。
-            beyondViewportPageCount = 1,
-            modifier = Modifier.fillMaxSize().testTag("screen_pager"),
-            key = { state.items[it].characterId },
-        ) { page ->
-            ScreenCard(
-                item = state.items[page],
-                // ±1 窗口（对齐 RN `FeedMediaItem.tsx:594` 与 iOS 池）：
-                // 窗口外只渲染封面图，不挂播放器。与池容量共同构成 OOM 上界。
-                isWithinVideoWindow = kotlin.math.abs(page - pagerState.currentPage) <= 1,
-                isCurrentPage = page == pagerState.currentPage,
-                isPageActive = isActive,
-                soundEnabled = soundEnabled,
-                playerPool = playerPool,
-                onStartChat = onStartChat,
-                onCardEvent = onCardEvent,
-                statusBarPadding = statusBarPadding,
-                bottomPadding = bottomPadding,
-            )
+        // 与 Home 共用 M3 下拉刷新。Pager 会先消费向上/向下翻页，只有已经回到
+        // 第 0 张且继续下拉时父层才收到 overscroll，因此不会在中间页误刷新。
+        PullToRefreshBox(
+            isRefreshing = state.isRefreshing,
+            onRefresh = onRefresh,
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            VerticalPager(
+                state = pagerState,
+                // ⚠️ **必须显式设 1**（P1 时是默认 0）：`abs(page-current)<=1` 的
+                // ±1 窗口只在邻页**被组合**时才有意义 —— 默认 0 时邻页压根不组合，
+                // 那个判断永远只对当前页成立，"±1 预热"是空话。
+                //
+                // 这个值就是 OOM 的直接来源，与 [ScreenPlayerPool.capacity]
+                // 共同构成上界：1 表示同时最多 3 页被组合 → 最多 3 个播放器在用，
+                // 池容量 3~5 留出翻页重叠期。**不要往上调**。
+                beyondViewportPageCount = 1,
+                modifier = Modifier.fillMaxSize().testTag("screen_pager"),
+                key = { state.items[it].characterId },
+            ) { page ->
+                val item = state.items[page]
+                ScreenCard(
+                    item = item,
+                    likeState = state.likeStateFor(item),
+                    // ±1 窗口（对齐 RN `FeedMediaItem.tsx:594` 与 iOS 池）：
+                    // 窗口外只渲染封面图，不挂播放器。与池容量共同构成 OOM 上界。
+                    isWithinVideoWindow = kotlin.math.abs(page - pagerState.currentPage) <= 1,
+                    isCurrentPage = page == pagerState.currentPage,
+                    isPageActive = isActive,
+                    soundEnabled = soundEnabled,
+                    playerPool = playerPool,
+                    onStartChat = onStartChat,
+                    onCharacterClick = onCharacterClick,
+                    onCreatorClick = onCreatorClick,
+                    onCardEvent = onCardEvent,
+                    statusBarPadding = statusBarPadding,
+                    bottomPadding = bottomPadding,
+                )
+            }
         }
 
         // 声音开关：右上角覆盖层，**在 Pager 之外**（对齐 RN 的
@@ -233,12 +259,15 @@ private fun SoundToggleButton(
 @UnstableApi  // 透传 ScreenPlayerPool
 private fun ScreenCard(
     item: ScreenFeedItem,
+    likeState: ScreenLikeState,
     isWithinVideoWindow: Boolean,
     isCurrentPage: Boolean,
     isPageActive: Boolean,
     soundEnabled: Boolean,
     playerPool: ScreenPlayerPool?,
     onStartChat: () -> Unit,
+    onCharacterClick: (ScreenFeedItem) -> Unit,
+    onCreatorClick: (ScreenFeedItem) -> Unit,
     onCardEvent: (ScreenCardEvent) -> Unit,
     statusBarPadding: Dp,
     bottomPadding: Dp,
@@ -348,7 +377,13 @@ private fun ScreenCard(
                 )
                 Spacer(Modifier.height(CONTENT_GAP.dp))
             }
-            ScreenMetaBar(item = item, onCardEvent = onCardEvent)
+            ScreenMetaBar(
+                item = item,
+                likeState = likeState,
+                onCharacterClick = onCharacterClick,
+                onCreatorClick = onCreatorClick,
+                onCardEvent = onCardEvent,
+            )
             Spacer(Modifier.height(CONTENT_GAP.dp))
             ChatCta(onClick = onStartChat)
         }
@@ -364,7 +399,13 @@ private fun ScreenCard(
  * 操作栏不能单独占下一行，否则会像旧实现一样落在左下角并把 CTA 整体顶高。
  */
 @Composable
-private fun ScreenMetaBar(item: ScreenFeedItem, onCardEvent: (ScreenCardEvent) -> Unit) {
+private fun ScreenMetaBar(
+    item: ScreenFeedItem,
+    likeState: ScreenLikeState,
+    onCharacterClick: (ScreenFeedItem) -> Unit,
+    onCreatorClick: (ScreenFeedItem) -> Unit,
+    onCardEvent: (ScreenCardEvent) -> Unit,
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -378,7 +419,9 @@ private fun ScreenMetaBar(item: ScreenFeedItem, onCardEvent: (ScreenCardEvent) -
             modifier = Modifier
                 .size(AVATAR_SIZE.dp)
                 .clip(CircleShape)
-                .background(Color.White.copy(alpha = PLACEHOLDER_ALPHA)),
+                .background(Color.White.copy(alpha = PLACEHOLDER_ALPHA))
+                .clickable { onCharacterClick(item) }
+                .testTag("screen_card_avatar"),
         )
         Column(
             modifier = Modifier
@@ -392,7 +435,9 @@ private fun ScreenMetaBar(item: ScreenFeedItem, onCardEvent: (ScreenCardEvent) -
                     fontSize = NICKNAME_FONT.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.testTag("screen_card_nickname"),
+                    modifier = Modifier
+                        .clickable { onCharacterClick(item) }
+                        .testTag("screen_card_nickname"),
                 )
             }
             item.creatorNickname?.let { creatorNickname ->
@@ -402,11 +447,14 @@ private fun ScreenMetaBar(item: ScreenFeedItem, onCardEvent: (ScreenCardEvent) -
                     fontSize = CREATOR_FONT.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .clickable { onCreatorClick(item) }
+                        .testTag("screen_card_creator"),
                 )
             }
         }
         Spacer(Modifier.size(META_BAR_GAP.dp))
-        StatsRow(item = item, onCardEvent = onCardEvent)
+        StatsRow(item = item, likeState = likeState, onCardEvent = onCardEvent)
     }
 }
 
@@ -419,23 +467,40 @@ private fun ScreenMetaBar(item: ScreenFeedItem, onCardEvent: (ScreenCardEvent) -
  * `:349-352` 的容器是 `flexDirection: row` + `gap: 24`，
  * `:369-376` 的计数是 10sp 半粗白字**带阴影**（压在图片上要保可读性）。
  *
- * ⚠️ P1 **不做点赞写入**（初始 `is_liked` 预拉 / echo 对账 / 动画都在方案的
- * 二期清单）—— 点击只报埋点。所以爱心恒为「未选中」态,
- * 复用 Profile 的 `ic_profile_tab_like`；RN 的两个 like 图标是 **SVG**，
- * Coil 不带 SVG decoder（缺 `coil-svg` artifact 时静默不显示）。
+ * 点赞状态与计数来自 [ScreenLikeState]：初始 echo、乐观更新与失败回滚都在
+ * ViewModel，UI 只负责选中图与一次弹跳动画。
  *
  * 分享同样只报埋点：`MediaShareModal` 426 行 + `react-native-share` 原生库属后续包。
  */
 @Composable
-private fun StatsRow(item: ScreenFeedItem, onCardEvent: (ScreenCardEvent) -> Unit) {
+private fun StatsRow(
+    item: ScreenFeedItem,
+    likeState: ScreenLikeState,
+    onCardEvent: (ScreenCardEvent) -> Unit,
+) {
+    val likeScale = remember(item.characterId) { Animatable(1f) }
+    LaunchedEffect(likeState.animationPulse) {
+        if (likeState.animationPulse <= 0L) return@LaunchedEffect
+        likeScale.snapTo(1f)
+        likeScale.animateTo(1.3f, tween(durationMillis = LIKE_BOUNCE_HALF_MS))
+        likeScale.animateTo(1f, tween(durationMillis = LIKE_BOUNCE_HALF_MS))
+    }
     Row(
         horizontalArrangement = Arrangement.spacedBy(ACTION_GAP.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         ActionButton(
-            iconRes = R.drawable.ic_profile_tab_like,
-            label = HomeText.formatMessageCount(item.likeCount),
+            iconRes = if (likeState.isLiked) {
+                R.drawable.ic_profile_tab_like_press
+            } else {
+                R.drawable.ic_profile_tab_like
+            },
+            label = HomeText.formatMessageCount(likeState.count),
             testTag = "screen_card_like",
+            iconModifier = Modifier.graphicsLayer {
+                scaleX = likeScale.value
+                scaleY = likeScale.value
+            },
             onClick = { onCardEvent(ScreenCardEvent.LIKE_CLICK) },
         )
         ActionButton(
@@ -459,6 +524,7 @@ private fun ActionButton(
     iconRes: Int,
     label: String,
     testTag: String,
+    iconModifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     Column(
@@ -471,7 +537,7 @@ private fun ActionButton(
             painter = painterResource(iconRes),
             // 语义由相邻计数与 testTag 承载；图标本身是装饰
             contentDescription = null,
-            modifier = Modifier.size(ACTION_ICON_SIZE.dp),
+            modifier = iconModifier.size(ACTION_ICON_SIZE.dp),
         )
         Text(
             text = label,
@@ -600,6 +666,7 @@ private const val ACTION_ICON_SIZE = 32
 private const val ACTION_COUNT_GAP = 2
 /** `countText.fontSize: s(10)`（`:371`）。 */
 private const val ACTION_COUNT_FONT = 10
+private const val LIKE_BOUNCE_HALF_MS = 150
 private const val COUNT_SHADOW_ALPHA = 0.45f
 private const val COUNT_SHADOW_DY = 1f
 private const val COUNT_SHADOW_BLUR = 2f
