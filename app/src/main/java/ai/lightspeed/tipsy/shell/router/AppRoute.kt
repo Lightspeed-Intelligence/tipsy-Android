@@ -117,6 +117,35 @@ sealed interface AppRoute {
         override val requiresAuth = true
     }
 
+    /**
+     * `chat/comments` —— 评论页 → `CommentsSurface`（W4 批次 3）。
+     *
+     * 对齐 iOS `TipsyRoute.comments`（`TipsyRoute.swift:186-194`）。
+     * 复用整条 ChatDetail 栈、初始屏 Comments（CommentReport 等二级页
+     * 同栈可跳）—— **ChatDetail 内点评论不走本 route**（那是微栈内导航），
+     * 本 route 服务 Surface 外入口：Screen 评论按钮、互动通知评论卡。
+     *
+     * @param targetType 1=角色 2=故事 3=World（`CommentTargetType`）。
+     *   ⚠️ RN 侧 route param 是**字符串**（Surface root 里 `String(...)` 归一），
+     *   但 props 传数字或字符串都行 —— 壳传 Int 对齐 iOS 容器
+     * @param creatorId 删除权限/创作者徽章；Screen 入口传 feed 的 creatorId
+     * @param commentId 定位到具体评论（互动通知入口透传；Screen 入口不传）
+     */
+    data class Comments(
+        val targetType: Int,
+        val targetId: String,
+        val creatorId: String = "",
+        val commentId: String? = null,
+        val rootId: String? = null,
+    ) : AppRoute {
+        override val requiresAuth = true
+
+        companion object {
+            /** `CommentTargetType.character`（iOS 同名枚举 rawValue）。 */
+            const val TARGET_TYPE_CHARACTER = 1
+        }
+    }
+
     /** `create/profile-detail` —— 创建流程里的角色详情。 */
     data class CreateProfileDetail(val characterId: String? = null) : AppRoute {
         override val requiresAuth = true

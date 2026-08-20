@@ -123,6 +123,13 @@ object SurfaceProps {
     const val EDIT_CHARACTER = "editCharacter"
     const val EDIT_CHARACTER_ID = "editCharacterId"
 
+    /** `CommentsSurface.tsx:16-24` 的五个 props（camelCase；targetType 是 Int）。 */
+    const val COMMENTS_TARGET_TYPE = "targetType"
+    const val COMMENTS_TARGET_ID = "targetId"
+    const val COMMENTS_CREATOR_ID = "creatorId"
+    const val COMMENTS_COMMENT_ID = "commentId"
+    const val COMMENTS_ROOT_ID = "rootId"
+
     /**
      * 把 route 转成业务 props。
      *
@@ -232,6 +239,20 @@ object SurfaceProps {
          * （原封喂 `initCharStateUpdate` 才不丢字段），届时单开 route。
          */
         is AppRoute.Create -> mapOf(CREATE_ENTER_SOURCE to route.enterSource)
+
+        /*
+         * `CommentsSurface`（W4 批次 3）。props 形状照 iOS 容器
+         * `CommentsSurfaceViewController.swift:56-62`：targetType 是 **Int**
+         * （Surface root 里 `String(props.targetType)` 归一进 route param），
+         * commentId/rootId 仅有值时下发（缺省与不传等价，可选 props）。
+         */
+        is AppRoute.Comments -> buildMap {
+            put(COMMENTS_TARGET_TYPE, route.targetType)
+            put(COMMENTS_TARGET_ID, route.targetId)
+            put(COMMENTS_CREATOR_ID, route.creatorId)
+            route.commentId?.takeIf { it.isNotBlank() }?.let { put(COMMENTS_COMMENT_ID, it) }
+            route.rootId?.takeIf { it.isNotBlank() }?.let { put(COMMENTS_ROOT_ID, it) }
+        }
 
         /*
          * `CreateSurface` 编辑态（P5，Profile 创作卡 ⋮ 菜单「编辑」）。

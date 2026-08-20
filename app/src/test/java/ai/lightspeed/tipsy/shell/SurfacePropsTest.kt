@@ -393,6 +393,36 @@ class SurfacePropsTest {
         assertFalse(props.containsKey("createEnterSource"))
     }
 
+    // ── W4 批次 3：Comments ─────────────────────────
+
+    @Test
+    fun `Comments 的 targetType 是数字且可选定位参数只在有值时下发`() {
+        // props 形状照 iOS CommentsSurfaceViewController:56-62（camelCase、
+        // targetType Int）；RN root 里 String(props.targetType) 归一
+        val full = SurfaceProps.forRoute(
+            AppRoute.Comments(
+                targetType = 1,
+                targetId = "char-1",
+                creatorId = "u9",
+                commentId = "cm-5",
+                rootId = "rt-2",
+            ),
+        )
+        assertEquals(1, full["targetType"])
+        assertEquals("char-1", full["targetId"])
+        assertEquals("u9", full["creatorId"])
+        assertEquals("cm-5", full["commentId"])
+        assertEquals("rt-2", full["rootId"])
+
+        val minimal = SurfaceProps.forRoute(
+            AppRoute.Comments(targetType = 1, targetId = "char-1"),
+        )
+        // creatorId 恒下发（iOS 恒传，缺省空串 —— 删除权限走 RN 兜底请求）
+        assertEquals("", minimal["creatorId"])
+        assertFalse("无定位参数不放键", minimal.containsKey("commentId"))
+        assertFalse(minimal.containsKey("rootId"))
+    }
+
     @Test
     fun `纯业务 key 不触发守卫`() {
         // 不该误报：这些都是 RN 侧真实 props 名
