@@ -224,7 +224,7 @@ class ScreenFragment : Fragment() {
                     onRefresh = viewModel::onRefresh,
                     onRetry = viewModel::onRetry,
                     onStartChat = ::onStartChat,
-                    onCardEvent = viewModel::onCardEvent,
+                    onCardEvent = ::onCardEvent,
                     statusBarPadding = WindowInsets.statusBars
                         .asPaddingValues()
                         .calculateTopPadding(),
@@ -376,6 +376,31 @@ class ScreenFragment : Fragment() {
             ),
             AppRouter.Source.IN_APP,
         )
+    }
+
+    /**
+     * 卡片级事件：埋点全部走 ViewModel（会话内去重在 tracker），
+     * 评论点击额外导航 —— iOS `ScreenViewController:835-845` 同序：
+     * 先埋点、再 `.comments` 路由。
+     *
+     * targetType 恒 `character`（iOS 硬编码 `CommentTargetType.character`，
+     * Screen feed 全是角色卡）；creatorId 传 feed 的创作者 id（删除权限/
+     * 创作者徽章）；commentId/rootId 是互动通知入口的定位参数，这里不传。
+     */
+    private fun onCardEvent(event: ScreenCardEvent) {
+        viewModel.onCardEvent(event)
+        if (event == ScreenCardEvent.COMMENT_CLICK) {
+            val item = viewModel.state.value.currentItem ?: return
+            val app = requireActivity().application as TipsyApplication
+            app.requestRoute(
+                AppRoute.Comments(
+                    targetType = AppRoute.Comments.TARGET_TYPE_CHARACTER,
+                    targetId = item.characterId,
+                    creatorId = item.creatorId.orEmpty(),
+                ),
+                AppRouter.Source.IN_APP,
+            )
+        }
     }
 
     /**

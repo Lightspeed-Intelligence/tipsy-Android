@@ -257,6 +257,33 @@ class AppRouterTest {
     }
 
     /**
+     * W4 批次 3：`Comments` 进白名单 —— Screen 评论按钮有下一屏。
+     * ⚠️ ChatDetail 内点评论不经此 route（Comments 屏在其微栈内），
+     * 单层容器纪律不因本 route 改变。
+     */
+    @Test
+    fun `Comments 在生产白名单内且关闭后可重开`() {
+        assertTrue(
+            "Comments 必须在生产白名单里，否则 Screen 评论按钮点了只会 reject",
+            AppRoute.Comments::class.java in ProductionRoutePolicy.enabledRouteTypes,
+        )
+
+        val f = fixture(
+            loggedIn = true,
+            enabled = listOf(AppRoute.Comments::class.java),
+        )
+        val route = AppRoute.Comments(targetType = 1, targetId = "c1", creatorId = "u9")
+        f.router.handle(route)
+        f.router.handle(route)
+        assertEquals("容器还在时重复点击应去重", 1, f.navigated.size)
+
+        // 带参 route：容器退栈后按类型解除（MainActivity 的谓词版）
+        f.router.onDestinationClosed { it is AppRoute.Comments }
+        f.router.handle(route)
+        assertEquals("容器退栈后同一作品评论页必须能重开", 2, f.navigated.size)
+    }
+
+    /**
      * Create 要求登录：未登录时**排队**而不是直接打开。
      *
      * 创建流程的每个接口都要 token，未登录直接挂 Surface 的表现是

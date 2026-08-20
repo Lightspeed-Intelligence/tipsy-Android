@@ -3620,6 +3620,59 @@ SettingsSurface 的 12 个微栈目标全是页内导航（不触发 §12.1 多�
   清单里**置顶**。
 - 头像上传（系统相册链）未验 —— 模拟器相册无素材，属真机冒烟项。
 
+### 2.50 W4 批次 3 第三刀：CommentsSurface 启用 —— Screen 评论出口解锁（2026-08-20）
+
+`AppRoute.Comments` 进生产白名单（第 **10** 类），Screen 大屏页的评论按钮
+从「只发埋点」变成打开真评论页 —— **批次 3 的三个 Surface 全部启用**。
+
+#### 前提修正解锁了这一刀（§12.1 核实，见「未决问题」）
+
+原以为 Comments 要先根治实例关闭链（多层容器），核实后不成立：
+`ChatDetailSurface` 微栈**本就含 Comments 屏**（微栈内导航不叠层）；
+本 route 只服务 **Surface 外**入口（Screen 评论按钮、将来的互动通知
+评论卡），单层容器纪律不变。iOS 同构先例：`.comments` 路由 →
+`CommentsSurfaceViewController`（复用整条 ChatDetail 栈、初始屏
+Comments，CommentReport 等二级页同栈可跳）。
+
+#### 落地（零 RN 改动 —— Surface root/注册/微栈全是现成的）
+
+- `AppRoute.Comments(targetType/targetId/creatorId/commentId?/rootId?)`
+  照 iOS `TipsyRoute.comments` 五参；props 形状照 iOS 容器（camelCase、
+  targetType **Int**、定位参数仅有值时下发）。
+- `CommentsSurfaceContract` + checklist `COMMENTS` 八项微根 +
+  `CommentsSurfaceContractTest` 5 条静态 gate（注册语句、微根开标签
+  双向序比对、**复用 ChatDetailStackNavigator + 初始屏 Comments** 的
+  结构断言、props 键与 RN root 消费一一对应）。
+- `MainActivity`：导航分支走通用 `openSurface` 链 + 带参谓词版退栈
+  解除（同 ChatDetail）。
+- Screen 侧：`onCardEvent` 上移到 Fragment —— 埋点仍全走 ViewModel
+  （会话内去重在 tracker），`COMMENT_CLICK` 额外发 `AppRoute.Comments`
+  （iOS `ScreenViewController:835-845` 同序：先埋点后路由）。
+  targetType 恒 `character`（iOS 硬编码，Screen feed 全角色卡）。
+  Surface 盖住时视频自动暂停 —— `hasVisibleSurface()` 是容器级通用判定，
+  无需新逻辑。
+
+#### §9.1 矩阵（模拟器 Pixel 10 / API 37，directApk；⚠️ 不作覆盖升级证据）
+
+| 项 | 结果 |
+| --- | --- |
+| 初始 route fixture | ✅ Screen 点评论 → 评论页完整打开：标题计数与卡片一致（Comments(2)）、真实评论数据（文本 + 图片）、翻译/回复/点赞/输入框全渲染 |
+| Back/栈底 | ✅ Back 回 Screen，视频恢复播放 |
+| 关闭重开（带参解除） | ✅ 同一作品评论页关闭后立即重开成功 |
+| 旋转 | ✅ 横↔竖往返评论页存活 |
+| 15 次挂载/卸载 | ✅ Activities=1、ViewRootImpl=1，无累积泄漏 |
+| 进程恢复 | ✅ 评论页开着 force-stop → 冷启动 → 重开成功 |
+| 未登录 | ✅ 同 §2.48/49：游客机冷启动即登录页，入口路径不可达 |
+| 语言切换 / OTA N/N-1 | ✎ 未跑（同前两刀的理由） |
+| 发评论/删评论真实往返 | ✎ 真机冒烟项（不污染测试账号的评论区） |
+
+#### 未做
+
+- 互动通知评论卡入口（`NotificationSurface` 未启用，届时 commentId/rootId
+  定位参数才有消费方）；`openComments` 桥方法（Surface 内跨栈出口）——
+  当前无调用场景，等 NotificationSurface 那刀一起。
+
+
 
 
 
@@ -3699,10 +3752,19 @@ RN→Native Profile 刷新接力（§2.43），但相关测试并未执行，
 - **§12.3 QA 分发形态**仍需发布阶段定案，但 W0 已完成，不能继续写成“阻塞 W0”。
 - **§12.1 Surface 实例关闭链**（`popSurface` 的 instanceId）✅ **已定为可接受偏差**
   （owner 2026-08-17，§2.36）：TS 契约无参、Android 桥固定传 `null`，实例比对
-  恒短路。**单层容器下弹不错**，故不改跳仓。⚠️ **多层容器出现前必须根治** ——
-  第一个会触发的场景是 ChatDetail 内再开 `CommentsSurface`（§8.3 批次 3）。
-  根治成本：RN 侧 9 个 `popSurface()` 调用点带上 instanceId + 双壳回归
-  （`index.surfaces.js` 系文件 iOS 共用）。壳侧已下发该字段，RN 侧无人读。
+  恒短路。**单层容器下弹不错**，故不改跳仓。⚠️ **多层容器出现前必须根治**。
+  ⚠️ **两条前提已重新核实**（2026-08-20）：
+  1. 原记「第一个触发场景是 ChatDetail 内再开 CommentsSurface」**不成立** ——
+     `ChatDetailSurface` 微栈挂的是完整 `ChatDetailStackNavigator`，
+     **`Comments` 屏就在栈内**（`ChatDetailStackNavigator.tsx:130`），
+     ChatDetail 内点评论是微栈内导航、不出容器不叠层。iOS 的 `openComments`
+     桥（TS 已声明可选方法）服务的是 **Surface 外**入口：互动通知评论卡 →
+     单层 CommentsSurface、Screen 评论按钮 → 同前。∴ **启用 CommentsSurface
+     不触发多层容器**，§12.1 不是它的前置；真正会叠层的场景（Surface 内经桥
+     再开 Surface）当前一个都没有。
+  2. 原记「RN 侧 9 个调用点」**已过期** —— 当前 **29 文件 / 38 处**无参
+     `TipsyAuth?.popSurface()` 直调（无 JS 封装层）。将来根治时逐点带参
+     不再可行，应走集中封装（JS 包装 or 新桥方法 `.v2`）+ 双壳回归。
 
 当前仍需 owner 结论的 W1 项：
 

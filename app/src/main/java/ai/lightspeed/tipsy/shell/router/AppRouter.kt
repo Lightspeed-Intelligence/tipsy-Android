@@ -67,6 +67,10 @@ object ProductionRoutePolicy {
         // mutation 串行、notifyProfileChanged → ProfileRefreshHub 刷新接力、
         // 无参路由退栈解除）。§9.1 模拟器矩阵见 §2.49；真机项继续累积
         AppRoute.EditProfile::class.java,
+        // W4 批次 3：Comments（Screen 评论按钮 / 互动通知评论卡的落点）。
+        // ⚠️ ChatDetail 内点评论**不经这里**（Comments 屏在 ChatDetail 微栈内，
+        // §12.1 核实 2026-08-20）—— 本 route 只从原生页进入，单层容器纪律不变
+        AppRoute.Comments::class.java,
     )
 }
 

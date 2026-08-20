@@ -8,6 +8,7 @@ import ai.lightspeed.tipsy.shell.pages.search.SearchFragment
 import ai.lightspeed.tipsy.shell.pages.settings.SettingsFragment
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
+import ai.lightspeed.tipsy.shell.surface.CommentsSurfaceContract
 import ai.lightspeed.tipsy.shell.surface.CreateSurfaceContract
 import ai.lightspeed.tipsy.shell.surface.EditProfileSurfaceContract
 import ai.lightspeed.tipsy.shell.surface.SettingsSurfaceContract
@@ -165,6 +166,11 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
             // 把 Blacklist 等同容器入口留在 lastHandled 里。
             if (supportFragmentManager.findFragmentByTag(SettingsSurfaceContract.COMPONENT_NAME) == null) {
                 router.onDestinationClosed { route -> route is AppRoute.SettingsSubScreen }
+            }
+            // Comments 带参（targetType/targetId），同 ChatDetail 用谓词版：
+            // 容器出栈后按类型解除，否则同一作品的评论页只能打开一次
+            if (supportFragmentManager.findFragmentByTag(CommentsSurfaceContract.COMPONENT_NAME) == null) {
+                router.onDestinationClosed { route -> route is AppRoute.Comments }
             }
             // EditProfile 是无参 data object；若不在容器真正退栈后按类型解除，
             // 第二次点击会永久命中 Router 的 lastHandled 去重（与 Create 同型）。
@@ -335,6 +341,10 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
                 // 所以创建页开着时编辑请求会被忽略 —— 这正是单层容器纪律要的
                 is AppRoute.EditCharacter ->
                     openSurface(CreateSurfaceContract.COMPONENT_NAME, route)
+                // W4 批次 3：评论页（Screen 评论按钮 / 互动通知评论卡）。
+                // 通用链：幂等判定、平铺 props、popSurface 收口同 ChatDetail
+                is AppRoute.Comments ->
+                    openSurface(CommentsSurfaceContract.COMPONENT_NAME, route)
                 // W3 预接：RN auth-scoped bootstrap 已落地，但专属 §9.1 尚未
                 // 实机验收，生产 policy 仍关闭。组件身份、空 props、容器与关闭
                 // 去重先钉死；后续放行只改集中 policy，不再临场补导航机制。

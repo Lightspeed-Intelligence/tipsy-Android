@@ -136,6 +136,25 @@ object SurfaceDependencyChecklist {
         Requirement("SurfaceToastHost", "提交反馈等结果只写 toast store，界面无提示"),
     )
 
+    /**
+     * `CommentsSurface` 的微根（`CommentsSurface.tsx:44-81`，与 Settings 同构：
+     * 八项、无具名 PortalHost 群）。
+     *
+     * ⚠️ 它复用**整条 `ChatDetailStackNavigator`**、初始屏 `Comments`
+     * （`initialParams.screen`）—— 微栈目标即 [CHAT_DETAIL_STACK_TARGETS]，
+     * 评论页内部跳转（CommentReport 等）同栈可用，不单列一份清单。
+     */
+    val COMMENTS: List<Requirement> = listOf(
+        Requirement("SafeAreaProvider", "安全区失效（内容顶到状态栏/挖孔下）"),
+        Requirement("KeyboardProvider", "键盘避让失效 —— 评论输入框被键盘盖住"),
+        Requirement("SWRConfig", "缓存与 revalidate 语义和现网不一致"),
+        Requirement("GestureHandlerRootView", "手势返回与页内拖拽失效"),
+        Requirement("PortalProvider", "评论页弹层（删除确认等）没有 portal 宿主"),
+        Requirement("NavigationContainer", "ChatDetail 栈无法挂载"),
+        Requirement("Stack.Navigator", "初始屏 Comments 与二级页都不可达"),
+        Requirement("SurfaceToastHost", "评论提交/删除结果只写 toast store，界面无提示"),
+    )
+
     /** 原生列表可直达的入口；真值来自强类型路由，测试再与 RN 白名单双向比对。 */
     val SETTINGS_DIRECT_SCREENS: List<String> =
         AppRoute.SettingsSubScreen.Screen.entries.map { it.rnName }
