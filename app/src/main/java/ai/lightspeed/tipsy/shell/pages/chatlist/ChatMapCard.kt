@@ -6,6 +6,7 @@ import ai.lightspeed.tipsy.shell.pages.home.HomeText
 import ai.lightspeed.tipsy.shell.ui.sSp
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
@@ -42,6 +43,12 @@ import coil3.compose.AsyncImage
  * [ChatMapCardLayout] 解算，在阶段二经 `graphicsLayer` 接线。
  * 这里只负责"一张卡长什么样"。
  *
+ * 点击（P2 入口接线）：整卡 Pressable（`ChatItem.tsx:150`），链路与 Grid
+ * 行完全同构 —— 素材透传给 `onThreadClick`，分流由 Fragment/Router/Surface
+ * 自决。RN 的 `'corridor'` 只影响**返回时回到哪个视图**（`chatListEntryType`，
+ * RN 侧自持），`chatEnterSource` 两个视图**同为 `chat_list`**
+ * （`useChatNavigation.ts:47-50` 的归一），壳不需要新值。
+ *
  * 仍后置（对齐 iOS 端口注释的"仍后置"清单）：mp4 动态封面、NSFW 模糊、
  * 长按删除/置顶。
  */
@@ -51,13 +58,19 @@ internal fun ChatMapCard(
     messageCountText: String,
     timeText: String,
     hasUnread: Boolean,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     // ⚠️ **两层结构**：外层不裁剪（承载跨角的未读红点），内层才 clip。
     // RN 里红点是 `wrapper` 的直接子节点、在被裁剪的 `chatItem` **之外**
     // （`ChatItem.tsx:155-158`），`top: -size/2` 让它跨出右上角。
     // 放进裁剪容器里会被切掉一半 —— 看起来只是"点小了点"，不易发现
-    Box(modifier = modifier.testTag("chat_map_card_${thread.itemId}")) {
+    Box(
+        modifier = modifier
+            // 点击挂外层：红点区域也可点（RN Pressable 是 wrapper 层）
+            .clickable(onClick = onClick)
+            .testTag("chat_map_card_${thread.itemId}"),
+    ) {
         Box(
             Modifier
                 .fillMaxSize()

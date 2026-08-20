@@ -86,6 +86,7 @@ class ChatMapMeasurementTest {
                     messageCountText = { "12" },
                     timeText = { "10:00" },
                     hasUnread = { false },
+                    onThreadClick = {},
                 )
             }
         }

@@ -4,6 +4,8 @@ import ai.lightspeed.tipsy.shell.BuildConfig
 import ai.lightspeed.tipsy.shell.TipsyApplication
 import ai.lightspeed.tipsy.shell.auth.AuthStateHub
 import ai.lightspeed.tipsy.shell.i18n.L10n
+import ai.lightspeed.tipsy.shell.i18n.rememberCurrentLanguage
+import ai.lightspeed.tipsy.shell.pages.home.HomeText
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
 import ai.lightspeed.tipsy.shell.tabs.HOME_LIST_BOTTOM_EXTRA
@@ -23,6 +25,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.ViewCompositionStrategy
@@ -34,6 +37,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
+import java.util.TimeZone
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
@@ -128,6 +135,9 @@ class ChatListFragment : Fragment() {
                     ((HOME_LIST_BOTTOM_EXTRA + TAB_BAR_CONTENT_HEIGHT) * scale +
                         androidTabBarBottomInsetDp(safeBottomDp, scale)).dp
 
+                // 语言的响应式读取：Map 楼层标题（Today/Yesterday）要随切语言重建
+                val currentLanguage by rememberCurrentLanguage()
+
                 ChatListScreen(
                     state = state,
                     isGooglePlay = BuildConfig.DOWNLOAD_CHANNEL == CHANNEL_GOOGLE_PLAY,
@@ -145,6 +155,26 @@ class ChatListFragment : Fragment() {
                     onDeleteConfirm = viewModel::confirmDelete,
                     onDeleteDismiss = viewModel::dismissDelete,
                     onGameCardExposed = viewModel::onGameCardExposed,
+                    // Map 廊道（P2）。楼层只在 threads/语言变化时重算 ——
+                    // groupByDay + build 是纯函数但不便宜（分桶 + 补位），
+                    // 不 remember 会让每次滚动重组都重跑。
+                    // ⚠️ key 带 language：Today/Yesterday 走词表，切语言要重建标题
+                    mapFloors = remember(state.threads, currentLanguage) {
+                        ChatMapSource.floorsFor(
+                            state = state,
+                            timeZone = TimeZone.getDefault(),
+                            nowMillis = System.currentTimeMillis(),
+                            localize = L10n::t,
+                            formatDate = ::formatMapDateTitle,
+                        )
+                    },
+                    mapMessageCountText = { HomeText.formatMessageCount(it.messageNum) },
+                    mapTimeText = { thread ->
+                        ChatListText.formatMapCardTime(
+                            timestampMs = thread.latestTimeSeconds * 1000L,
+                            relativeToday = ::mapCardRelativeTime,
+                        )
+                    },
                 )
             }
         }
@@ -207,6 +237,56 @@ class ChatListFragment : Fragment() {
         val app = requireActivity().application as TipsyApplication
         app.requestRoute(route, AppRouter.Source.IN_APP)
     }
+
+    /**
+     * Map 楼层日期标题的格式化侧（分支判定在 [ChatMapSource.titleFor]，
+     * 这里只负责渲染）。RN 两形态：同年 `D MMMM`（`12 August`）、
+     * 跨年 `MMM D, YYYY`（`Aug 12, 2025`）—— dayjs 会随 locale 换月份名，
+     * 这里用 [SimpleDateFormat] + 壳当前语言的 locale 同义。
+     */
+    private fun formatMapDateTitle(title: ChatMapSource.DateTitle): String {
+        val cal = Calendar.getInstance().apply {
+            set(title.year, title.month - 1, title.dayOfMonth)
+        }
+        val pattern = if (title.includeYear) "MMM d, yyyy" else "d MMMM"
+        return SimpleDateFormat(pattern, currentLocale()).format(cal.time)
+    }
+
+    /**
+     * Map 卡片"今天"分支的相对时间（RN dayjs `fromNow()`）。
+     *
+     * 用 `android.icu.text.RelativeDateTimeFormatter`（API 24+，随 locale
+     * 本地化）—— dayjs 的相对文案来自它自带的 locale 包，26 语言词表里
+     * 都没有对应词条，手工拼会漏掉 25 种语言。措辞粒度与 dayjs 略有出入
+     * （同 iOS 用 `RelativeDateTimeFormatter` 的既有偏差），可接受。
+     */
+    private fun mapCardRelativeTime(elapsedMs: Long): String {
+        val formatter = android.icu.text.RelativeDateTimeFormatter.getInstance(
+            android.icu.util.ULocale.forLocale(currentLocale()),
+        )
+        val minutes = elapsedMs / 60_000L
+        return when {
+            // dayjs 44 秒内是 "a few seconds ago"；icu 无该档，用 0 分钟档同义
+            minutes < 1 -> formatter.format(
+                0.0,
+                android.icu.text.RelativeDateTimeFormatter.Direction.LAST,
+                android.icu.text.RelativeDateTimeFormatter.RelativeUnit.MINUTES,
+            )
+            minutes < 60 -> formatter.format(
+                minutes.toDouble(),
+                android.icu.text.RelativeDateTimeFormatter.Direction.LAST,
+                android.icu.text.RelativeDateTimeFormatter.RelativeUnit.MINUTES,
+            )
+            else -> formatter.format(
+                (minutes / 60).toDouble(),
+                android.icu.text.RelativeDateTimeFormatter.Direction.LAST,
+                android.icu.text.RelativeDateTimeFormatter.RelativeUnit.HOURS,
+            )
+        }
+    }
+
+    /** 壳当前语言 → Locale（月份名/相对时间的本地化输入；`zh-tw` 这类带地区）。 */
+    private fun currentLocale(): Locale = Locale.forLanguageTag(L10n.current)
 
     companion object {
         private const val TAG = "ChatListFragment"

@@ -19,6 +19,8 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.calculateTargetValue
 import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.rememberCoroutineScope
@@ -78,6 +80,7 @@ internal fun ChatMapScreen(
     messageCountText: (ChatThread) -> String,
     timeText: (ChatThread) -> String,
     hasUnread: (ChatThread) -> Boolean,
+    onThreadClick: (ChatThread) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     BoxWithConstraints(
@@ -98,6 +101,14 @@ internal fun ChatMapScreen(
         val listHeightDp = with(density) { constraints.maxHeight.toDp().value }
         val windowWidthDp = with(density) { constraints.maxWidth.toDp().value }
 
+        // ⚠️ 楼层动画曲线的横轴基准用**窗口高**（RN `useWindowDimensions().height`，
+        // iOS 端口同），不是列表容器高 —— 两者差一个顶栏 + tabbar。
+        // `containerSize` 即 RN window 的对等物（lint 点名弃用
+        // Configuration.screenHeightDp：insets 语义随 targetSdk 变且有取整）
+        val windowHeightDp = with(density) {
+            androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.height.toDp().value
+        }
+
         val rowHeightDp = ChatMapGeometry.rowHeightDp(listHeightDp)
         val cardWidthDp = remember(windowWidthDp) { ChatMapGeometry.cardWidthDp(windowWidthDp) }
         val cardHeightDp = remember(windowWidthDp) { ChatMapGeometry.cardHeightDp(windowWidthDp) }
@@ -107,50 +118,152 @@ internal fun ChatMapScreen(
         val cardHeight = cardHeightDp.dp
 
         // 纵向滚动量（dp）—— 廊道整体的滚动，决定每层的 currIndex 与模式。
-        // ⚠️ RN 用 inverted FlatList，手指下拉看更早 → 与自然滚动同向
+        // ⚠️ **符号约定对齐 RN/iOS：初始 0，手指下拉（看更早）→ 变负**
+        // （iOS `ChatMapView.swift:283`：`scrollY = contentOffset.y - maxOffset`，
+        // RN onScroll 是 `-offsetY`）。搞反的表现是滚动方向反 + 曲线整段错位。
+        // 用 Animatable：RN 侧纵向有 `snapToInterval={height}`（一层一档吸附），
+        // 松手要走惯性 + 吸附动画
         val scope = rememberCoroutineScope()
-        val scrollYState = remember { mutableFloatStateOf(0f) }
-        val scrollYDp = scrollYState.floatValue
-        val maxScrollYDp = (floors.size - 1).coerceAtLeast(0) * rowHeightDp
+        val scrollY = remember { Animatable(0f) }
+        val scrollYDp = scrollY.value
+        // 行程 = contentSize − 视口（iOS：contentView 高 rowHeight*N，视口装 3 层）
+        // = rowHeight * (N - 3)。按 N-1 算会让最后几档滚出全空屏
+        val minScrollYDp = -((floors.size - VISIBLE_FLOORS).coerceAtLeast(0) * rowHeightDp)
 
         // ⚠️ 固定横轴只在 baseX 变化时重建：`solve()` 每帧每卡各调一次，
         // 不复用会每帧产生数十个短命数组（低端机滚动 GC 抖动）
         val baseXDp = remember(windowWidthDp) { ChatMapGeometry.baseXDp(windowWidthDp) }
         val stops = remember(baseXDp) { ChatMapCardLayout.stopsFor(baseXDp) }
 
-        // 纵向拖动层：铺满容器，放在楼层**之下**（zIndex 默认 0 < 楼层的 96~100），
-        // 这样不拦卡片点击 —— 卡片在上层先拿到事件
+        // ⚠️ 纵向手势挂在楼层的**祖先容器**上，楼层是它的 children ——
+        // 不能做成垫底的 sibling 层：Compose 的 hit-test 对 sibling 不共享
+        // 指针（sharePointerInputWithSiblings 默认 false），楼层（zIndex
+        // 96~100）几乎铺满容器，垫底 sibling 永远收不到事件，表现是
+        // 「怎么拖都不滚」。祖先链上的 pointerInput 则总在 hit path 里；
+        // 卡叠的横滑/点击在子层各自消费，竖向拖动到达这里，两轴互不抢
         Box(
             Modifier
                 .matchParentSize()
-                .pointerInput(maxScrollYDp) {
-                    detectVerticalDragGestures { _, dragAmountPx ->
+                .pointerInput(minScrollYDp, rowHeightDp) {
+                    val tracker = androidx.compose.ui.input.pointer.util.VelocityTracker()
+                    detectVerticalDragGestures(
+                        onDragStart = { tracker.resetTracking() },
+                        onDragEnd = {
+                            val vyDp = tracker.calculateVelocity().y.toDp().value
+                            scope.launch {
+                                // snapToInterval 对等：惯性投影 → 吸到最近档。
+                                // 目标档按「衰减后的静止位置」取整 —— 直接用
+                                // animateDecay 会停在层间，RN 的 FlatList 不会
+                                val decay = exponentialDecay<Float>(
+                                    frictionMultiplier = ChatMapSnap.DECELERATION,
+                                )
+                                val projected = decay.calculateTargetValue(
+                                    scrollY.value,
+                                    // 下拉（vy>0）→ scrollY 变负，与 onDrag 同向
+                                    -vyDp,
+                                )
+                                val target = (Math.round(projected / rowHeightDp) * rowHeightDp)
+                                    .coerceIn(minScrollYDp, 0f)
+                                scrollY.animateTo(target, tween(SNAP_DURATION_MS))
+                            }
+                        },
+                        onDragCancel = {
+                            scope.launch {
+                                val target = (Math.round(scrollY.value / rowHeightDp) * rowHeightDp)
+                                    .coerceIn(minScrollYDp, 0f)
+                                scrollY.animateTo(target, tween(SNAP_DURATION_MS))
+                            }
+                        },
+                    ) { change, dragAmountPx ->
+                        tracker.addPosition(change.uptimeMillis, change.position)
                         // ⚠️ px → dp：手势给的是 px，solver 全链是 dp。
-                        // `toDp()` 来自 PointerInputScope 的 Density
+                        // 下拉（delta>0）→ scrollY 变负（看更早），对齐 iOS 符号
                         val deltaDp = dragAmountPx.toDp().value
-                        scrollYState.floatValue = (scrollYState.floatValue - deltaDp)
-                            .coerceIn(0f, maxScrollYDp)
+                        scope.launch {
+                            scrollY.snapTo(
+                                (scrollY.value - deltaDp).coerceIn(minScrollYDp, 0f),
+                            )
+                        }
                     }
                 },
-        )
+        ) {
+            // 楼层动画曲线（floorHeight 是曲线横轴基准，≠ rowHeight，见 Geometry）。
+            // 样条构造有解三对角的成本，只在窗口尺寸变化时重建
+            val floorHeightDp = remember(windowHeightDp) {
+                ChatMapGeometry.floorHeightDp(windowHeightDp)
+            }
+            val translateXSpline = remember(floorHeightDp) {
+                CubicSpline(
+                    ChatMapGeometry.translateXInputDp(floorHeightDp),
+                    ChatMapGeometry.TRANSLATE_X_OUTPUT,
+                )
+            }
+            val scaleSpline = remember(floorHeightDp) {
+                CubicSpline(
+                    ChatMapGeometry.scaleInputDp(floorHeightDp),
+                    ChatMapGeometry.SCALE_OUTPUT,
+                )
+            }
+            val translateYInput = remember(floorHeightDp) {
+                ChatMapGeometry.translateYInputDp(floorHeightDp)
+            }
 
-        floors.forEachIndexed { index, floor ->
-            // 倒序：index 0（最新）在最底部
-            val fromBottom = index
-            Box(
-                Modifier
-                    .align(Alignment.BottomStart)
-                    .fillMaxWidth()
-                    .height(rowHeight)
-                    .offset(y = -(rowHeight * fromBottom))
-                    // ⚠️ **两级层序的第一级**：`100 - index`（对齐 RN/iOS）。
-                    // index 0 是最新层、在最底部，**必须画在最上面**。
-                    // Compose 默认按 compose 顺序绘制 → 后 compose 的远层会
-                    // 盖住近层。不给 zIndex 的表现是"上面那层压着下面那层"，
-                    // 卡越出 row cell 之后尤其明显
-                    .zIndex(ChatMapZOrder.floorZ(index))
-                    .testTag("chat_map_floor_${floor.key}"),
-            ) {
+            floors.forEachIndexed { index, floor ->
+                // 楼层模式与展开偏移：currIndex 决定 1/3/5 模式
+                val currIndex = ChatMapFloors.currIndexFor(scrollYDp, rowHeightDp, index)
+                // 可见范围 [-1, 3] 之外整层不 compose（RN scale 0 / iOS isHidden 等价；
+                // 不画就不发图片请求，比 alpha 0 更接近虚拟化的目标）
+                if (!ChatMapFloors.isFloorVisible(currIndex)) return@forEachIndexed
+
+                // delta = scrollY + rowHeight*index：该层相对「视口底部档位」的
+                // 名义偏移（iOS FloorView.update 的同名量）。它身兼两职：
+                // 1. **物理位置** —— iOS 楼层是 scrollView cell、随滚动真实移动，
+                //    Compose 对应物即 offset(-delta)（scrollY=0 时 index0 在底档、
+                //    index1 在上一档…下拉后各层下移、最底层滑出被 clip 裁掉）；
+                // 2. **曲线横轴** —— translateX/scale/translateY 三条曲线都吃它
+                val deltaDp = scrollYDp + rowHeightDp * index
+                val translateYDp = ChatMapMath.interpolate(
+                    ChatMapMath.clamp(
+                        deltaDp,
+                        ChatMapGeometry.TRANSLATE_Y_CLAMP_LOWER_DP,
+                        windowHeightDp,
+                    ),
+                    translateYInput,
+                    ChatMapGeometry.TRANSLATE_Y_OUTPUT,
+                )
+                val floorTranslateXDp = translateXSpline.valueAt(
+                    ChatMapMath.clamp(deltaDp, 0f, windowHeightDp),
+                )
+                val floorScale = scaleSpline.valueAt(
+                    ChatMapMath.clamp(deltaDp, 0f, windowHeightDp),
+                )
+
+                Box(
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth()
+                        .height(rowHeight)
+                        // 物理滚动位置（见 delta 注释职责 1）
+                        .offset(y = -deltaDp.dp)
+                        // ⚠️ **两级层序的第一级**：`100 - index`（对齐 RN/iOS）。
+                        // index 0 是最新层、在最底部，**必须画在最上面**。
+                        // Compose 默认按 compose 顺序绘制 → 后 compose 的远层会
+                        // 盖住近层。不给 zIndex 的表现是"上面那层压着下面那层"，
+                        // 卡越出 row cell 之后尤其明显
+                        .zIndex(ChatMapZOrder.floorZ(index))
+                        // 楼层 transform（RN `[{scale},{translateX},{translateY}]` 左乘：
+                        // 平移**被 scale 缩放** —— 越远的层 scale 越小、上移量同比
+                        // 收住，三层才叠得紧。graphicsLayer 的 translation 作用在
+                        // 缩放后图层上，语义相反，所以这里**预乘 scale**（对齐 iOS
+                        // 「先 scale 再 translatedBy」的同一结论）
+                        .graphicsLayer {
+                            scaleX = floorScale
+                            scaleY = floorScale
+                            translationX = floorTranslateXDp * floorScale * density.density
+                            translationY = translateYDp * floorScale * density.density
+                        }
+                        .testTag("chat_map_floor_${floor.key}"),
+                ) {
                 // ⚠️ **每层独立的横滑状态**，key 用 canonical `floor.key`
                 // （不是下标）—— 分页/跨日后下标会错配，把昨天的横滑位置
                 // 复用给今天。见 ChatMapFloors.DateBucket 的 key 说明
@@ -161,15 +274,14 @@ internal fun ChatMapScreen(
                 val scrollX = remember(floor.key) { Animatable(0f) }
                 val scrollXDp = scrollX.value
 
-                // 楼层模式与展开偏移：currIndex 决定 1/3/5 模式
-                val currIndex = ChatMapFloors.currIndexFor(scrollYDp, rowHeightDp, index)
+                // 楼层模式与展开偏移（currIndex 已在可见性判定处算过）
                 val mode = ChatMapCardLayout.floorMode(currIndex, floor.slotCount)
                 val nextMode = ChatMapCardLayout.floorMode(currIndex + 1, floor.slotCount)
                 val disOut = ChatMapCardLayout.floorOffsets(
                     mode = mode,
                     nextMode = nextMode,
-                    // 该层相对当前档的纵向偏移
-                    offsetYDp = scrollYDp - currIndex * rowHeightDp,
+                    // 该层相对当前档的纵向偏移（iOS：delta.rounded() - currIndex*rowHeight）
+                    offsetYDp = deltaDp - currIndex * rowHeightDp,
                     windowWidthDp = windowWidthDp,
                     cardWidthDp = cardWidthDp,
                     cardHeightDp = cardHeightDp,
@@ -177,6 +289,8 @@ internal fun ChatMapScreen(
 
                 ChatMapFloor(
                     floor = floor,
+                    // 标题淡出（currIndex >= 2，RN textStyle / iOS titleLabel.alpha）
+                    isTitleHidden = ChatMapFloors.isTitleHidden(currIndex),
                     scrollXDp = scrollXDp,
                     onHorizontalDrag = { deltaDp ->
                         scope.launch { scrollX.snapTo(scrollX.value + deltaDp) }
@@ -204,8 +318,10 @@ internal fun ChatMapScreen(
                     messageCountText = messageCountText,
                     timeText = timeText,
                     hasUnread = hasUnread,
+                    onThreadClick = onThreadClick,
                 )
             }
+        }
         }
     }
 }
@@ -220,6 +336,8 @@ internal fun ChatMapScreen(
 @Composable
 private fun ChatMapFloor(
     floor: ChatMapFloors.Floor<ChatThread>,
+    /** 标题淡出（`currIndex >= 2`，与楼层缩小同步）。 */
+    isTitleHidden: Boolean,
     /** 该层的横向滚动量（dp）—— 每层独立，由调用方按 floor.key 持有。 */
     scrollXDp: Float,
     /** 横向拖动增量（dp）。 */
@@ -235,6 +353,7 @@ private fun ChatMapFloor(
     messageCountText: (ChatThread) -> String,
     timeText: (ChatThread) -> String,
     hasUnread: (ChatThread) -> Boolean,
+    onThreadClick: (ChatThread) -> Unit,
 ) {
     // ⚠️ **不用受限的 Column** —— 见下面 gap 那段。
     // 楼层内部布局：标题占 18dp、gap 10dp、然后是**完整**卡高。
@@ -243,6 +362,12 @@ private fun ChatMapFloor(
     Box(modifier = Modifier.fillMaxWidth()) {
         // 标题（跑道层没有标题）
         if (floor.kind == ChatMapFloors.FloorKind.CHAT) {
+            // 淡出用 animateFloatAsState（RN 是 withTiming）；不移除节点 ——
+            // 标题占位参与卡叠 offset，移除会让卡跳位
+            val titleAlpha by animateFloatAsState(
+                targetValue = if (isTitleHidden) 0f else 1f,
+                label = "floorTitleAlpha",
+            )
             Text(
                 text = floor.title,
                 color = ChatMapStyle.floorTitleColor,
@@ -251,6 +376,7 @@ private fun ChatMapFloor(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(ChatMapStyle.FLOOR_TITLE_HEIGHT_DP.dp)
+                    .graphicsLayer { alpha = titleAlpha }
                     .testTag("chat_map_floor_title"),
             )
         }
@@ -359,6 +485,7 @@ private fun ChatMapFloor(
                         messageCountText = messageCountText(thread),
                         timeText = timeText(thread),
                         hasUnread = hasUnread(thread),
+                        onClick = { onThreadClick(thread) },
                         modifier = cardModifier,
                     )
                 }
@@ -381,3 +508,6 @@ internal fun cardSlotTag(floorKey: String, slot: Int): String = "chat_map_slot_$
 
 /** 吸附动画时长（对齐 RN `withTiming(..., { duration: 300 })`）。 */
 private const val SNAP_DURATION_MS = 300
+
+/** 视口同时装的楼层数（`rowHeight = listHeight/3` 的那一个 3）。 */
+private const val VISIBLE_FLOORS = 3

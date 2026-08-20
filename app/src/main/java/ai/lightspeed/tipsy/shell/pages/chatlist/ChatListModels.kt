@@ -33,6 +33,13 @@ data class ChatThread(
     val lastMessageContent: String?,
     /** Unix **秒**（展示时 ×1000，`ChatListItem.tsx:473`）。 */
     val latestTimeSeconds: Long,
+    /**
+     * 消息数（`message_num`，Map 卡片底部展示 `ChatItem.tsx:212`；Grid 行
+     * 不显示它）。⚠️ wire 类型标注是 **string**（`types/chat.ts:281`），
+     * RN 用 `Number(...)` 转 —— 走 ScalarCoercion 的宽容解析同义。
+     * 带默认值：既有构造点（测试 fixture）不受字段追加影响
+     */
+    val messageNum: Long = 0L,
     val isPinned: Boolean,
     val isPushMessage: Boolean,
     val isPushMessageViewed: Boolean,
@@ -142,6 +149,7 @@ data class ChatThread(
                 greeting = ScalarCoercion.optString(json, "greeting"),
                 lastMessageContent = ScalarCoercion.optString(json, "last_message_content"),
                 latestTimeSeconds = ScalarCoercion.optLong(json, "latest_time") ?: 0L,
+                messageNum = ScalarCoercion.optLong(json, "message_num") ?: 0L,
                 isPinned = ScalarCoercion.optBoolean(json, "is_pinned") ?: false,
                 isPushMessage = ScalarCoercion.optBoolean(json, "is_push_message") ?: false,
                 isPushMessageViewed = ScalarCoercion.optBoolean(json, "is_push_message_viewed")

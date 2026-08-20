@@ -218,4 +218,48 @@ class ChatListTextTest {
         creatorId = null,
         versionChange = false,
     )
+
+    // ── formatMapCardTime（Map 卡时间，func.ts:322-340 / iOS formatChatGridTime）──
+
+    @Test
+    fun `Map 卡时间今天走注入的相对时间`() {
+        val now = msOf(2026, 8, 12, 20, 0)
+        val ts = msOf(2026, 8, 12, 18, 30)
+        val out = ChatListText.formatMapCardTime(
+            timestampMs = ts,
+            nowMs = now,
+            locale = java.util.Locale.US,
+            relativeToday = { elapsed -> "rel:${elapsed / 60_000}m" },
+        )
+        assertEquals("今天分支必须走 relativeToday 且传对 elapsed", "rel:90m", out)
+    }
+
+    @Test
+    fun `Map 卡时间今年是 d MMM 跨年是 MMM d yyyy`() {
+        val now = msOf(2026, 8, 12, 20, 0)
+        // ⚠️ 与 formatRowTime（Grid 行尾恒数字 03/07）不是同一个格式
+        assertEquals(
+            "7 Mar",
+            ChatListText.formatMapCardTime(
+                msOf(2026, 3, 7, 9, 0), now, java.util.Locale.US, relativeToday = { "x" },
+            ),
+        )
+        assertEquals(
+            "Mar 7, 2025",
+            ChatListText.formatMapCardTime(
+                msOf(2025, 3, 7, 9, 0), now, java.util.Locale.US, relativeToday = { "x" },
+            ),
+        )
+    }
+
+    @Test
+    fun `Map 卡时间的月份名跟 locale 走`() {
+        // RN dayjs 随 locale 换月份名（formatChatGridTime 开头 dayjs.locale(...)）；
+        // 恒 US 会让非英语用户在卡片上看到英文月份
+        val now = msOf(2026, 8, 12, 20, 0)
+        val out = ChatListText.formatMapCardTime(
+            msOf(2026, 3, 7, 9, 0), now, java.util.Locale.FRENCH, relativeToday = { "x" },
+        )
+        assertEquals("7 mars", out)
+    }
 }
