@@ -29,9 +29,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
-import coil3.compose.LocalPlatformContext
-import coil3.request.ImageRequest
-import coil3.request.transformations
 
 /**
  * 记忆 tab 的单列大卡（`PlotItem.tsx` 的展示部分）。
@@ -50,7 +47,7 @@ import coil3.request.transformations
  * 高 340 / 圆角 10 / 底 margin 8；背景图 = `character.image_url` 全出血；
  * RN 的两层压暗渐变（`159-167`）近似成一层三段渐变，目的一样 ——
  * 白字在任意封面上可读。`!nsfw偏好 && plot.nsfw` 时背景模糊
- * （`PlotItem.tsx:47,170`，P4 起与创作卡同一套 [CoverBlurTransformation]，
+ * （`PlotItem.tsx:47,170`，P4 起与创作卡同一套 [ProfileCoverImage]，
  * nsfw 偏好恒 false → 18+ 记忆一律模糊）。审核状态点的 SVG 资产未搬，本刀文字版。
  */
 @Composable
@@ -66,18 +63,10 @@ fun ProfileMemoryCard(item: ProfileMemoryItem, modifier: Modifier = Modifier) {
         // 背景图用 image_url —— face_url 是头像位，两个字段别混（见 item KDoc）
         if (!item.characterImageUrl.isNullOrBlank()) {
             val url = HomeText.transformImageUrl(item.characterImageUrl)
-            AsyncImage(
-                model = if (item.nsfw) {
-                    ImageRequest.Builder(LocalPlatformContext.current)
-                        .data(url)
-                        .transformations(CoverBlurTransformation())
-                        .build()
-                } else {
-                    url
-                },
+            ProfileCoverImage(
+                url = url,
                 contentDescription = item.title,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
+                shouldBlur = item.nsfw,
             )
         }
         Box(

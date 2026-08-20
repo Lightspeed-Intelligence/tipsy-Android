@@ -9,6 +9,7 @@ import ai.lightspeed.tipsy.shell.pages.screen.ScreenEndpointResolver
 import ai.lightspeed.tipsy.shell.pages.screen.ScreenFeedItem
 import ai.lightspeed.tipsy.shell.pages.screen.ScreenFirstScreenFeed
 import ai.lightspeed.tipsy.shell.pages.screen.ScreenMediaSourceType
+import ai.lightspeed.tipsy.shell.pages.screen.toChatDetailPreload
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -310,12 +311,29 @@ class ScreenAttributionTest {
             mediaSourceType = ScreenMediaSourceType.SHOWCASE,
             backgroundUrl = "https://cdn/v.mp4",
             thumbnailUrl = "https://cdn/cover.jpg",
+            imageUrl = "https://cdn/character.jpg",
+            gender = "female",
+            nsfw = false,
+            lang = "en",
         )
         cache.put("sig", showcase)
         val readBack = cache.get("sig")
         assertEquals(ScreenMediaSourceType.SHOWCASE, readBack?.mediaSourceType)
         assertEquals("https://cdn/v.mp4", readBack?.backgroundUrl)
         assertEquals("https://cdn/cover.jpg", readBack?.thumbnailUrl)
+        assertEquals(
+            "视频封面不能冒充影院首帧角色图",
+            "https://cdn/character.jpg",
+            readBack?.imageUrl,
+        )
+        assertEquals("female", readBack?.gender)
+        assertEquals(false, readBack?.nsfw)
+        assertEquals("en", readBack?.lang)
+
+        val chatPreload = showcase.toChatDetailPreload()
+        assertEquals("https://cdn/character.jpg", chatPreload.imageUrl)
+        assertEquals("https://cdn/v.mp4", chatPreload.greetingVideoUrl)
+        assertEquals("https://cdn/cover.jpg", chatPreload.greetingVideoCoverUrl)
 
         val animated = item("a").copy(
             mediaSourceType = ScreenMediaSourceType.ANIMATED_IMAGE,
@@ -383,6 +401,7 @@ class ScreenAttributionTest {
         mediaSourceType = ScreenMediaSourceType.STATIC_IMAGE,
         backgroundUrl = null,
         thumbnailUrl = null,
+        imageUrl = null,
         tagline = "",
         greeting = "",
         nickname = id,
@@ -394,7 +413,10 @@ class ScreenAttributionTest {
         commentCount = 0,
         totalMessages = 0,
         primaryColor = null,
+        gender = null,
+        nsfw = null,
         isTranslated = false,
+        lang = null,
         characterType = null,
         contentType = null,
     )

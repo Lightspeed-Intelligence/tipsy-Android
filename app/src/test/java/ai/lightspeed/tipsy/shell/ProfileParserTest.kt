@@ -5,6 +5,7 @@ import ai.lightspeed.tipsy.shell.pages.profile.ProfileCreatedPage
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileItemType
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileReviewBadge
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileStats
+import ai.lightspeed.tipsy.shell.pages.profile.supportsRealtimeProfileCoverBlur
 import ai.lightspeed.tipsy.shell.user.CurrentUser
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -366,6 +367,15 @@ class ProfileParserTest {
                     "character":{"nsfw":false,"review_stage":"pass"}}""",
             ).shouldBlurCover,
         )
+    }
+
+    @Test
+    fun `实时模糊仅 Android 12 起启用`() {
+        assertFalse(
+            "API 30 的 Modifier blur 是 no-op，必须走位图降级",
+            supportsRealtimeProfileCoverBlur(30),
+        )
+        assertTrue(supportsRealtimeProfileCoverBlur(31))
     }
 
     @Test

@@ -1,6 +1,7 @@
 package ai.lightspeed.tipsy.shell.pages.screen
 
 import ai.lightspeed.tipsy.shell.network.ScalarCoercion
+import ai.lightspeed.tipsy.shell.router.ChatDetailPreload
 import org.json.JSONObject
 
 /**
@@ -31,6 +32,8 @@ import org.json.JSONObject
  * @property characterId 也是列表 stable key（`toFeedMediaItem` 的 `id`）
  * @property thumbnailUrl `greeting_video.cover_url` 优先，回落 `character.image_url`
  *   （`:34`）—— ⚠️ 与 [backgroundUrl] 的回落链**不同**，别复用
+ * @property imageUrl 角色静态图 `character.image_url`。聊天首帧背景必须用它，
+ *   showcase 不能误用 [backgroundUrl]（视频）或 [thumbnailUrl]（视频封面）。
  */
 data class ScreenFeedItem(
     val characterId: String,
@@ -39,6 +42,7 @@ data class ScreenFeedItem(
     val backgroundUrl: String?,
     /** 封面图 —— showcase 首帧前、播放器不可用、播完或出错时显示。 */
     val thumbnailUrl: String?,
+    val imageUrl: String?,
     /** `character.introduction`，空串而非 null（对齐 `tagline: ... || ''`）。 */
     val tagline: String,
     /** `character.greeting`。 */
@@ -54,7 +58,10 @@ data class ScreenFeedItem(
     val totalMessages: Long,
     /** `character.img_primary_color` —— 加载中的占位底色。 */
     val primaryColor: String?,
+    val gender: String?,
+    val nsfw: Boolean?,
     val isTranslated: Boolean,
+    val lang: String?,
     /** `character.character_type`：CTA 四路分流要用（1/2 有特殊含义）。 */
     val characterType: Int?,
     /** `character.content_type`：同上（`type===1 && content===2` → html）。 */
@@ -111,6 +118,7 @@ data class ScreenFeedItem(
                     ?.let { ScalarCoercion.optString(it, FIELD_COVER_URL) }
                     ?.takeIf { it.isNotBlank() }
                     ?: imageUrl,
+                imageUrl = imageUrl,
                 tagline = ScalarCoercion.optString(character, FIELD_INTRODUCTION).orEmpty(),
                 greeting = ScalarCoercion.optString(character, FIELD_GREETING).orEmpty(),
                 nickname = ScalarCoercion.optString(character, FIELD_NICKNAME)
@@ -133,7 +141,12 @@ data class ScreenFeedItem(
                     ?: 0L,
                 primaryColor = ScalarCoercion.optString(character, FIELD_IMG_PRIMARY_COLOR)
                     ?.takeIf { it.isNotBlank() },
+                gender = ScalarCoercion.optString(character, FIELD_GENDER)
+                    ?.takeIf { it.isNotBlank() },
+                nsfw = ScalarCoercion.optBoolean(character, FIELD_NSFW),
                 isTranslated = ScalarCoercion.optBoolean(character, FIELD_IS_TRANSLATED) ?: false,
+                lang = ScalarCoercion.optString(character, FIELD_LANG)
+                    ?.takeIf { it.isNotBlank() },
                 characterType = ScalarCoercion.optInt(character, FIELD_CHARACTER_TYPE),
                 contentType = ScalarCoercion.optInt(character, FIELD_CONTENT_TYPE),
             )
@@ -159,11 +172,39 @@ data class ScreenFeedItem(
         private const val FIELD_COMMENT_COUNT = "comment_count"
         private const val FIELD_TOTAL_MESSAGES = "total_messages"
         private const val FIELD_IMG_PRIMARY_COLOR = "img_primary_color"
+        private const val FIELD_GENDER = "gender"
+        private const val FIELD_NSFW = "nsfw"
         private const val FIELD_IS_TRANSLATED = "is_translated"
+        private const val FIELD_LANG = "lang"
         private const val FIELD_CHARACTER_TYPE = "character_type"
         private const val FIELD_CONTENT_TYPE = "content_type"
     }
 }
+
+/**
+ * Screen 列表项 → ChatDetail Surface 首帧预载。
+ *
+ * 集中在这里是为了把三个图字段的语义锁死：影院背景用 [ScreenFeedItem.imageUrl]，
+ * greeting video 与 cover 只进各自的 greeting 字段，不能互相回落。
+ */
+internal fun ScreenFeedItem.toChatDetailPreload() = ChatDetailPreload(
+    nickname = nickname,
+    gender = gender,
+    imageUrl = imageUrl,
+    faceUrl = avatarUrl,
+    imgPrimaryColor = primaryColor,
+    nsfw = nsfw,
+    greeting = greeting,
+    introduction = tagline,
+    isTranslated = isTranslated,
+    lang = lang,
+    characterType = characterType,
+    contentType = contentType,
+    greetingVideoUrl = backgroundUrl
+        .takeIf { mediaSourceType == ScreenMediaSourceType.SHOWCASE },
+    greetingVideoCoverUrl = thumbnailUrl
+        .takeIf { mediaSourceType == ScreenMediaSourceType.SHOWCASE },
+)
 
 /** 媒体形态（`media_source_type`）。**值是接口契约**，也进埋点。 */
 enum class ScreenMediaSourceType(val wire: String) {

@@ -73,20 +73,28 @@ object SurfaceProps {
     /** story 标记（`:76` `isStory?: boolean`）。平铺。 */
     const val CHAT_IS_STORY = "isStory"
 
-    /**
-     * 壳侧列表数据子集（`:57` `ChatDetailSurfacePreload`）。**嵌套对象**。
-     *
-     * 声明了 14 个可选字段，壳当前只喂分流必需的两个 —— 其余
-     * （nickname/imageUrl/imgPrimaryColor 等）是首帧背景优化，属独立包。
-     * RN 侧对缺省字段有 `?? state` 逐字段保旧，少传不会抹掉已有值。
-     */
+    /** 壳侧列表数据子集（`:57` `ChatDetailSurfacePreload`）。**嵌套对象**。 */
     const val CHAT_PRELOAD = "preload"
+
+    const val PRELOAD_NICKNAME = "nickname"
+    const val PRELOAD_GENDER = "gender"
+    const val PRELOAD_IMAGE_URL = "imageUrl"
+    const val PRELOAD_FACE_URL = "faceUrl"
+    const val PRELOAD_IMG_PRIMARY_COLOR = "imgPrimaryColor"
+    const val PRELOAD_NSFW = "nsfw"
+    const val PRELOAD_GREETING = "greeting"
+    const val PRELOAD_INTRODUCTION = "introduction"
+    const val PRELOAD_IS_TRANSLATED = "isTranslated"
+    const val PRELOAD_LANG = "lang"
 
     /** `preload.characterType`（`2` = 多角色）。 */
     const val PRELOAD_CHARACTER_TYPE = "characterType"
 
     /** `preload.contentType`（配合 `characterType == 1` 判 html 富文本）。 */
     const val PRELOAD_CONTENT_TYPE = "contentType"
+
+    const val PRELOAD_GREETING_VIDEO_URL = "greetingVideoUrl"
+    const val PRELOAD_GREETING_VIDEO_COVER_URL = "greetingVideoCoverUrl"
 
     // ── 通用 ────────────────────────────────────────────────
 
@@ -166,14 +174,34 @@ object SurfaceProps {
             // 少一个键让 props 更能反映「壳到底判定了什么」
             if (route.isStory) put(CHAT_IS_STORY, true)
 
-            // ⚠️ 这两个**必须进嵌套 preload** —— resolveInitialParams 读的是
-            // preload store，不是顶层 props（见上方对照表）。
-            // 都没有就整个 preload 不放：空 preload 会让
+            // ⚠️ 分流与首帧素材都**必须进嵌套 preload**。Screen 的 imageUrl
+            // 会被 MultiCinema 用作 useState 初值；漏传时详情请求虽然后到，
+            // 首次挂载仍会先显示黑底。都没有就整个 preload 不放：空 preload 会让
             // seedChatPreloadFromShell 走到 `!preload` 提前返回，等价于不传，
             // 但少一个空对象更清楚
             val preload = buildMap<String, Any> {
-                route.characterType?.let { put(PRELOAD_CHARACTER_TYPE, it) }
-                route.contentType?.let { put(PRELOAD_CONTENT_TYPE, it) }
+                route.preload?.nickname?.let { put(PRELOAD_NICKNAME, it) }
+                route.preload?.gender?.let { put(PRELOAD_GENDER, it) }
+                route.preload?.imageUrl?.let { put(PRELOAD_IMAGE_URL, it) }
+                route.preload?.faceUrl?.let { put(PRELOAD_FACE_URL, it) }
+                route.preload?.imgPrimaryColor?.let { put(PRELOAD_IMG_PRIMARY_COLOR, it) }
+                route.preload?.nsfw?.let { put(PRELOAD_NSFW, it) }
+                route.preload?.greeting?.let { put(PRELOAD_GREETING, it) }
+                route.preload?.introduction?.let { put(PRELOAD_INTRODUCTION, it) }
+                route.preload?.isTranslated?.let { put(PRELOAD_IS_TRANSLATED, it) }
+                route.preload?.lang?.let { put(PRELOAD_LANG, it) }
+                (route.preload?.characterType ?: route.characterType)?.let {
+                    put(PRELOAD_CHARACTER_TYPE, it)
+                }
+                (route.preload?.contentType ?: route.contentType)?.let {
+                    put(PRELOAD_CONTENT_TYPE, it)
+                }
+                route.preload?.greetingVideoUrl?.let {
+                    put(PRELOAD_GREETING_VIDEO_URL, it)
+                }
+                route.preload?.greetingVideoCoverUrl?.let {
+                    put(PRELOAD_GREETING_VIDEO_COVER_URL, it)
+                }
             }
             if (preload.isNotEmpty()) put(CHAT_PRELOAD, preload)
         }

@@ -1705,6 +1705,22 @@ cancel。被打断且未完成首屏的 tab **整体复位**（否则 `isInitial
   （无命中数据）、game 卡（账号无 game）—— 判定全部有 JVM 覆盖，纯数据分支
 - 注①：story 卡的创作者名是 P4 前已有的底行内容，本包未动它
 
+#### 2026-08-20：封面模糊视觉收尾
+
+模拟器复查发现 P4 的低版本兼容方案被所有系统版本共用：封面先缩到 1/16 再逐级
+放大，虽然不会 fail-open，但人物轮廓出现明显糊块，与 RN/iOS 的实时材质模糊不同。
+RN `BlurView intensity=40` 在 Android 经默认 reduction factor 4 后实际约 10px；
+iOS 当前 `CoverBlurView` 使用 `systemUltraThinMaterialDark`，另叠 8% 黑色安全盖板。
+
+现改为双轨：API 31+ 用 Compose `RenderEffect` 实时模糊，并把 RN 的约 10px 半径
+按设备 density 换算为 dp；API 24–30 继续用 Coil 位图变换保证合规不露图，但降采样
+由 1/16 调整为 1/8、cache key 升 v4，减少像素块。两轨统一叠 iOS 同款 8% 暗色
+fail-safe。没有照搬 RN 各卡片 Android 样式里的 50%–90% 黑底；放进 Compose
+会让暗色层主导、几乎看不出实时模糊，不是 iOS 当前的轻磨砂目标观感。
+
+新增 JVM 断言钉死 API 30 走位图降级、API 31 起走实时模糊，但**本刀未跑
+Gradle / 真机**；`git diff --check` 通过，现代/低版本两轨均待设备截图验收。
+
 ### 2.29 W3 Profile P6：角色卡/收藏/点赞三 tab（2026-08-12）
 
 五个内容 tab 全部接通真实数据源，"Coming soon" 占位与 `isImplemented`
@@ -2510,9 +2526,11 @@ ExoPlayerImplInternal.shouldContinueLoading`，多个 ExoPlayer 并存时
   **归因不进缓存**（请求级数据，存了读出就是过期归因）。
 - **复用 `HomeCacheStorage` 接缝**而不是直接吃 `LegacyMmkvStore`
   （后者是 final class，测试无法替身）。两处需求相同，没必要造第二个接口。
-- **CTA 只透传 characterId，不复刻 `resolveChatEntryScreen`** ——
-  与 ChatList 同一条纪律（§2.30：由 `ChatDetailSurface` 自决入口屏）。
-  这是相对 Screen 的 RN 代码（页面内四路分流）的**有意偏差**。
+- **CTA 不复刻 `resolveChatEntryScreen`** —— 与 ChatList 同一条纪律（§2.30：
+  由 `ChatDetailSurface` 自决入口屏）。2026-08-20 首进影院黑屏修复后，Screen
+  会同时透传列表已有的 `ChatDetailPreload`（见 §2.36），但那仍是判定/首帧
+  **素材**，不是壳侧指定目标屏。这是相对 Screen 的 RN 代码（页面内四路分流）
+  的**有意偏差**。
 - **`TabPlaceholderFragment` 现已无调用方**，但刻意保留：W4 还有页面要接，
   届时目标未就绪时它比空白或崩溃都好。
 
@@ -2523,9 +2541,9 @@ artifact，当前只显示首帧）、tagline 展开（`FeedMediaTaglineOverlay`
 真输入框（`AppChatBar` 1,400 行，P1 简化成按钮）、点赞写入与 echo 对账、
 分享、`layout.ts` 的 iOS inset 数学（Android 不适用）。
 
-⚠️ CTA 文案**复用既有词条 `Send`** 而不是新增 `Chat` —— P1 这个按钮是过渡
-形态，接真输入框后会消失。为将被替换的占位 UI bump submodule 不值得。
-**本刀零词条新增、零 submodule 改动**（pin 仍 `a6b9fc56a`）。
+⚠️ CTA 仍是接真输入框前的过渡形态；视觉收尾时已对齐 RN/iOS，改回既有词条
+`Let Your Story Begin`，并采用 40 高、20 圆角、15% 白色材质底。该词条已随后续
+shell locale 导出进入 26 个语言，故本次无需新增词条或 bump submodule。
 
 #### 验证
 
@@ -2632,7 +2650,7 @@ P9 前 `openSurface(componentName)` 只传组件名，**`SurfaceProps.forRoute`
 
 #### 去重必须用谓词版
 
-`ChatDetail` 带参（characterId + 三个素材），相等判定拿不到那些值就永远
+`ChatDetail` 带参（characterId + 入口/判定/preload 素材），相等判定拿不到那些值就永远
 不成立 —— 表现是「退出聊天后再点同一个角色永远打不开」（`UserProfile`
 踩过同型，§2.32）。判据用「栈里已无 `ChatDetailSurface` 容器」而不是比对
 characterId：两个 route 共用同一容器（同 componentName），壳内不叠两层聊天页。
@@ -2649,19 +2667,41 @@ TS 侧 `popSurface()` **无参**，Android 桥固定传 `null`
 `popSurface()` 调用点让它们带上 instanceId，且 `index.surfaces.js` 系文件
 是双壳共用，需 iOS 回归。
 
-#### 未做（明确边界）
+#### 2026-08-20：Screen 首进影院黑屏根治（完整 preload 契约第一处接入）
 
-`preload` 只喂分流必需的两个字段。RN 声明了 14 个（nickname / imageUrl /
-imgPrimaryColor / greeting 等），其余是**首帧背景优化**（免去 mount 后
-`getCharacterAuth` 往返才拿到背景 URL 的等待），要求四个页面各自把列表
-子集喂进来，属独立包。RN 侧对缺省字段逐字段 `?? state` 保旧，少传不会
-抹掉已有值。
+现象：从大屏 CTA 第一次进入同一多角色影院，UI/顶栏已出现但背景全黑；退出后
+第二次进入正常。根因不在图片组件或 Surface 转场，而在首帧数据契约：Android
+此前只把 `characterType/contentType` 放进 `preload`，没有把 Screen 列表已有的
+`character.image_url` 带过去。RN `ChatDetailSurface` 会在子树首渲前同步 seed
+preload，`MultiCinema` 又只在组件初始化时用 route `imageUrl` 创建
+`initialBackground`；首次为空便先渲黑底。第一次 mount 后的
+`getCharacterAuth` 把 runtime store / 图片缓存预热，因此第二次看似自愈。
+
+已按 RN `ChatDetailSurfacePreload` 与 iOS `ChatDetailPreload` 的同一 14 字段契约
+新增壳侧类型，并让 `SurfaceProps` 继续以嵌套 `initialProperties.preload` 透传：
+`nickname/gender/imageUrl/faceUrl/imgPrimaryColor/nsfw/greeting/introduction/
+isTranslated/lang/characterType/contentType/greetingVideoUrl/
+greetingVideoCoverUrl`。Screen CTA 现在传完整列表子集；其中 `imageUrl` 单独保留
+`character.image_url`，不能复用 showcase 的 `backgroundUrl`（视频）或
+`thumbnailUrl`（视频 cover）。首屏缓存也按该语义写回，避免冷启动把 cover
+误当角色静态图。
+
+这次没有加延时、二次刷新或 RN 页面特判：详情请求仍作为 `isPartial` 的全量回填，
+首次背景则由入口已有数据直接满足。Home / ChatList / Search 仍只传现有分流子集，
+后续可复用同一 `ChatDetailPreload` 类型逐入口补齐，不影响本次 Screen 根修。
+
+回归断言已补两层：`SurfacePropsTest` 钉死 14 字段全部位于嵌套 `preload` 且
+Boolean/Int 类型不丢；`ScreenAttributionTest` 钉死 showcase 的角色静态图、视频 URL、
+视频 cover 三者映射及首屏缓存往返。**本刀按 owner 既定节奏未跑 Gradle / 真机**，
+仅完成 `git diff --check`；影院首进背景仍待设备冒烟确认。
+
+#### 未做（明确边界）
 
 其余仍未接：`CHATTED_LIST_REFRESH` 跨容器刷新（发送方在 ChatDetail 深栈，
 现在才第一次有真实发送方）、`RELATIONSHIP_LEVEL_UPDATED` 徽章重拉、
 ChatList 点击的 `recommendTracking` 透传。
 
-#### 验证
+#### P9 原始验证（2026-08-17；非本次回归）
 
 - app 单测 **891 条**（+15：`SurfacePropsTest` +9 含 preload 嵌套/数字类型/
   入口来源取值对拍 RN 联合类型；`AppRouterTest` +2；`ShellAuthProviderTest`

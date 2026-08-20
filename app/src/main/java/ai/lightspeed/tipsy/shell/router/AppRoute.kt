@@ -1,6 +1,33 @@
 package ai.lightspeed.tipsy.shell.router
 
 /**
+ * 原生列表进入 [AppRoute.ChatDetail] 时已有的角色数据子集。
+ *
+ * 字段名逐字对齐 RN `ChatDetailSurfacePreload`，经
+ * `initialProperties.preload` 在 RN 子树首渲前写入 chat preload store。
+ * 这样背景图、主色和标题不必等待 mount 后的 `getCharacterAuth` 才出现。
+ *
+ * 所有字段都可空：不同列表接口拥有的子集不同，RN 会把这份数据标为
+ * `isPartial`，并保留详情请求的全量回填链路。
+ */
+data class ChatDetailPreload(
+    val nickname: String? = null,
+    val gender: String? = null,
+    val imageUrl: String? = null,
+    val faceUrl: String? = null,
+    val imgPrimaryColor: String? = null,
+    val nsfw: Boolean? = null,
+    val greeting: String? = null,
+    val introduction: String? = null,
+    val isTranslated: Boolean? = null,
+    val lang: String? = null,
+    val characterType: Int? = null,
+    val contentType: Int? = null,
+    val greetingVideoUrl: String? = null,
+    val greetingVideoCoverUrl: String? = null,
+)
+
+/**
  * 壳内所有可导航目标的**类型化**表示（W1-P4，方案 §4.7）。
  *
  * ## 为什么用 sealed class 而不是 String
@@ -45,7 +72,7 @@ sealed interface AppRoute {
      *
      * `characterId` 可空：RN 侧该路由的参数是可选的（进去后恢复上次会话）。
      *
-     * ## 其余三个参数是**判定素材**，不是目标屏（P9）
+     * ## 其余参数是**判定 / 首帧素材**，不是目标屏（P9）
      *
      * 壳**刻意不复刻** `resolveChatEntryMode` / `resolveChatEntryScreen` 的分流：
      * 只把素材透传给 `ChatDetailSurface`，由它挂载时 `resolveInitialParams`
@@ -66,6 +93,9 @@ sealed interface AppRoute {
      *   on-mount 兜底纠偏，所以壳传 null 是安全的。
      * @param contentType 与 `characterType == 1` 合起来判 html 富文本
      *   （`1 + 2` → `ChatDetailHtml`）。
+     * @param preload 来源列表已有的角色子集。Screen 等列表入口应优先传它，
+     *   让影院背景与标题首帧可用；深链没有列表数据时传 null，RN 请求兜底。
+     *   [characterType] / [contentType] 暂时保留给尚未迁到完整 preload 的入口。
      */
     data class ChatDetail(
         val characterId: String? = null,
@@ -73,6 +103,7 @@ sealed interface AppRoute {
         val isStory: Boolean = false,
         val characterType: Int? = null,
         val contentType: Int? = null,
+        val preload: ChatDetailPreload? = null,
     ) : AppRoute {
         override val requiresAuth = true
     }
