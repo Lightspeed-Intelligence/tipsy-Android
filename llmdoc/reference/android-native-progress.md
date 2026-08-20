@@ -1,6 +1,6 @@
 # Tipsy Android 原生化迁移：现状（唯一状态真值）
 
-> 更新：2026-08-19 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
+> 更新：2026-08-20 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
 > **G1 CI 已激活且在 main 上真绿**（§2.10 / §2.22）
 >
 > **W1 基本收尾**（细化方案见 [`../architecture/android-w1-plan.md`](../architecture/android-w1-plan.md)）：
@@ -20,8 +20,10 @@
 > **W3 进行中**：Profile 主体完成（§2.25–§2.29；**P7 完成 = 头像框 + 渠道图标**，
 > §2.44，含对 PR #41 两处偏差的收尾修正；**P5 卡片 ⋮ 菜单完成**，§2.45 ——
 > **Profile 全部批次至此收口**）；ChatList P1 Grid 主链路
-> 已并入 main 且模拟器冒烟 PASS（§2.30）；Search P1 主链路已实现且 directApk
-> 真机冒烟 PASS（§2.31）；**P2 筛选器已实现**（§2.34）。
+> 已并入 main 且模拟器冒烟 PASS（§2.30）；**P2 ChatMap 已生产接线**（§2.47，
+> 2026-08-20，模拟器全链路实测，PR #42 待脱 draft）；Search P1 主链路已实现且
+> directApk 真机冒烟 PASS（§2.31）；**P2 筛选器已实现**（§2.34）。
+> **W3 业务面全部落地。**
 > **他人主页已实现并并入 main**（§2.32，PR #28）：`AppRoute.UserProfile` 进白名单，
 > 搜索 → 创作者 → 主页成为**壳的第一条端到端可用路径**；真机冒烟未跑。
 > **Settings 列表 + 语言页已实现**（§2.33）：`AppRoute.Settings` 进白名单，
@@ -60,9 +62,9 @@
 
 ## 0. 三十秒速览
 
-- **波次进度**：W0 完成；**W1 完成**（契约层已在 CI 组合验证（§2.22）；**P9 已完成**（§2.36）；§12 关闭链记为已接受偏差）；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 已随 PR #25 并入 main（§2.30）；**Search P1 主链路已实现并完成 directApk 冒烟**（§2.31）；**P2 筛选器已实现**（§2.34，Search 完整对等）；**EditProfile 已完成静态预接/账号隔离/刷新接力**（§2.43），但 production policy 仍关闭；**P7 完成 = 头像框 + 渠道图标**（§2.44，PR #41 + 收尾 PR #43，含 AuthMode 契约修正与失败保留语义）；**P5 卡片 ⋮ 菜单完成**（§2.45，PR #46：编辑原始 JSON 透传 `CreateSurface` 编辑态、删除/置顶非乐观 + 重拉对账；**owner 模拟器冒烟目测 PASS**，2026-08-19）—— **Profile 全部批次收口**，W3 业务面仅剩 ChatList P2 Map（PR #42 draft 进行中）。
+- **波次进度**：W0 完成；**W1 完成**（契约层已在 CI 组合验证（§2.22）；**P9 已完成**（§2.36）；§12 关闭链记为已接受偏差）；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 已随 PR #25 并入 main（§2.30）；**Search P1 主链路已实现并完成 directApk 冒烟**（§2.31）；**P2 筛选器已实现**（§2.34，Search 完整对等）；**EditProfile 已完成静态预接/账号隔离/刷新接力**（§2.43），但 production policy 仍关闭；**P7 完成 = 头像框 + 渠道图标**（§2.44，PR #41 + 收尾 PR #43，含 AuthMode 契约修正与失败保留语义）；**P5 卡片 ⋮ 菜单完成**（§2.45，PR #46：编辑原始 JSON 透传 `CreateSurface` 编辑态、删除/置顶非乐观 + 重拉对账；**owner 模拟器冒烟目测 PASS**，2026-08-19）；**ChatList P2 ChatMap 已生产接线**（§2.47，2026-08-20：接手 #42 draft 收尾 —— 纵向滚动/连续楼层/卡片点击/四词条 + bump pin，模拟器全链路实测）—— **W3 业务面全部落地**，剩 EditProfile §9.1 设备矩阵与累积真机冒烟。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`、`pages/chatlist/`、`pages/search/`、`pages/screen/`**；EditProfile 刷新接力落在 `pages/profile/ProfileRefreshHub` 与 `tipsy-auth.notifyProfileChanged`。
-- **submodule**：pin **`5ba22c8bbbade8d726ef2c5921b76a221a50be79`**（§2.46 的账号缓存清理 + Android KeyboardProvider inset 修复；前一 pin `4ae2ebc667` 是 §2.43 EditProfile 账号安全/通知链）。⚠️ `da4f65a` 与 PR #34 的三处壳改动**必须同时存在**：指针回退则 exclude 仍失效，而 styles/lifecycle 两处已让构建变绿 —— 会得到「构建通过但图片仍坏」的假绿。
+- **submodule**：pin **`93c8647f3`**（§2.47 的 ChatMap 四词条，基于 §2.46 的 `5ba22c8bb` 之上 —— 后者是账号缓存清理 + KeyboardProvider inset patch；前一 pin `4ae2ebc667` 是 §2.43 EditProfile 账号安全/通知链）。⚠️ `da4f65a` 与 PR #34 的三处壳改动**必须同时存在**：指针回退则 exclude 仍失效，而 styles/lifecycle 两处已让构建变绿 —— 会得到「构建通过但图片仍坏」的假绿。
 - **已验证**：main 上 PR #25 的 G1 Fast Gate 全绿。W3 Search P1 提交前快照的本机证据：`lintDirectApkDebug` 无新增（baseline 5 条）、`assembleGooglePlayDebug`/`assembleDirectApkDebug` 通过、**DirectApk app 单测 695 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿；directApk 真机主链路冒烟 PASS（§2.31）。提交前审查再新增 13 条、扩展 2 条回归测试并修正并发/auth/Router/点击归因/分页去重行为，最终源码预计 708 条；**最终 head 未在本机重跑 Gradle，交 G1 验证**。
 - **他人主页已实现**（§2.32，2026-08-14）：6 文件 1,469 行，`AppRoute.UserProfile` 进白名单 —— **搜索 → 创作者 → 他人主页是壳的第一条端到端可用路径**。审计推翻了「复用自己视角」的前提（七处偏差）：只有 **1 个 tab**（RN 注释说两个，代码是一个）、数据源另有四条、`size` **200 且不翻页**、`/user/get/public` 走 `axiosAuth` 会对游客弹登录页、`/plot/list/creator` **现网从未被调用**、关注按钮在 `ProfileHeader.tsx` 而非 `user-profile.tsx`。真机冒烟 **NOT RUN**。
 - **Settings 列表 + 语言页已实现**（§2.33，8 文件 1,501 行）：补上了真实功能缺失 —— 此前**壳内没有任何入口能改语言**。审计订正三处：语言页**要原生实现**（RN 与 iOS 双证据）、`supportedLanguages` 壳内**恒为空**必须自己拉、Limitless 开关是 `nsfw` 的**唯一写方**且仅 directApk 可见。渠道 gating 收在 `SettingsRow` 并对三渠道各有单测。7 个 Surface 子屏（`AppRoute.SettingsSubScreen`）仍被明确拒绝。真机冒烟 **NOT RUN**。
@@ -83,7 +85,7 @@
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟢 **完成**：契约层已收口且 CI 已验；**P9 已完成**（§2.36，白名单放开 + 桥桩回填）；§12 关闭链记为**已接受偏差**（owner 2026-08-17）。**冒烟部分兑现**（§2.37 + §2.39）：§9.1 **7 过 / 3 未跑**，业务分流项未验。语言那项的壳缺陷已修（§2.38）且**复跑 PASS（模拟器）**（§2.39） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17/#33 已并） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
-| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：**Profile 全部批次完成**（P1–P7，§2.25–§2.29、§2.44 头像框+渠道图标、§2.45 卡片菜单）；ChatList P1、Search P1/P2、他人主页、Settings 列表/语言均已落；**EditProfile 已完成静态预接、账号隔离与 Profile 刷新接力**（§2.43），会话/Surface 稳定性收口见 §2.46，但 production policy 仍关闭。剩 ChatList P2 Map（PR #42 draft 进行中）与 EditProfile §9.1 设备矩阵 | `5ba22c8bbbade8d726ef2c5921b76a221a50be79` | —（PR #21–#30、#41、#43、#46 已并；#44 待合，#45 是 #46 的前身，因叠栈 base 删除被 GitHub 自动关闭，内容同 #46） |
+| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **业务面全部落地**：**Profile 全部批次完成**（P1–P7，§2.25–§2.29、§2.44、§2.45）；ChatList P1 + **P2 ChatMap**（§2.47）、Search P1/P2、他人主页、Settings 列表/语言均已落；**EditProfile 已完成静态预接、账号隔离与 Profile 刷新接力**（§2.43），会话/Surface 稳定性收口见 §2.46，但生产 policy 仍关闭。剩 EditProfile §9.1 设备矩阵与累积真机冒烟 | `93c8647f3`（§2.47 bump，含 §2.46 的 `5ba22c8bb`） | —（PR #21–#30、#41、#43、#44、#46 已并；ChatMap PR #42 已脱 draft 待并；#45 是 #46 的前身，因叠栈 base 删除被自动关闭） |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | 🟡 **进行中**：Screen P1 数据链（§2.35）与 P2 Media3 有界播放机制（§2.42，PR #39 / `6084df0`）已实现；P2 仍有真实视频/cache 失败/API24–33 层序/audio focus 四项 NOT RUN，故不 production-ready。Tab3 已接 `CreateSurface`（§2.40/§2.41）；剩 Screen next-item/fade/firstInteractive/P3、10 个未启用业务 Surface（含 W3 已预接但未放行的 EditProfile）、系统能力、OTA | `da4f65a04f50bc098c2df3bd9f8fbcc13018f7a5` | `6084df0d401e610d6fbcf26ce88c2bc494025927` |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
 
@@ -3486,6 +3488,71 @@ Android submodule 固定到 `5ba22c8bbbade8d726ef2c5921b76a221a50be79`。
 反向应用检查 PASS。Android 新增静态/单元测试源码覆盖 Profile padding、inset 补丁、
 完整字段/信封、generation/subject 闸门、登录必需镜像与 token 删除回调；PR #44 首轮
 G1 Fast Gate 已 PASS，解决 main 冲突后的 merge head 仍以新一轮 G1 为准。
+
+### 2.47 W3 ChatList P2：ChatMap「時光長廊」生产接线（2026-08-20）
+
+接手 PR #42 draft（23 commit 的解算层/静态铺排/横滑，另一条线 8-19 停更，
+owner 确认无人推进）收尾成完整可用：**ChatList 的 Map 按钮从 Coming soon
+换成真廊道，W3 最后一块业务落地**。
+
+#### 接手时的处置
+
+- rebase 到最新 main（此前基线 `c8fea47` 落后五个合并），剔掉分支上
+  已随 PR #41 单独入 main 的一对 P7 commit+revert（--skip 两次）。
+- **四词条补齐**（方案 §8.1 早点名的欠账）：`Today`/`Yesterday`/`Chats`/
+  `Story` 进 `SHELL_KEYS`（RN 侧 `93c8647f3`），重跑导出 26 语言全命中
+  （en 198/198），**bump pin `5ba22c8bb` → `93c8647f3`**（前者即 §2.46
+  那笔，四词条 commit 直接基于其上，pin 单调前进无跳跃）。
+
+#### 本包新落的（draft 只有横滑，纵向/入口/点击全缺）
+
+- **纵向滚动**：符号对齐 iOS（`scrollY = 0` 初始、下拉看更早 → 变负，
+  `ChatMapView.swift:283`）；行程 `rowHeight*(N-3)`（contentSize − 视口
+  —— 按 N-1 算会滚出全空屏，模拟器实测）；`snapToInterval` 对等 =
+  惯性 `calculateTargetValue` 投影后取整到档位再 `animateTo`。
+- **楼层连续滚动**：物理位置 `offset(-delta)`（iOS 楼层是 scrollView
+  cell 随滚动真实移动；draft 是固定铺位 + transform 跳档，表现为
+  **拖动画面纹丝不动**，实测）；三条样条曲线接 `graphicsLayer`，
+  平移**预乘 scale**（RN transform 数组左乘序，iOS 端口同结论）；
+  可见范围 `[-1,3]` 外整层不 compose；标题 `currIndex>=2` 淡出。
+- **卡片点击**：与 Grid 完全同链路（判定素材透传 `onThreadClick` →
+  Router → ChatDetailSurface，模拟器实测直达真会话）。⚠️ RN 的
+  `'corridor'` 参数只是**返回视图标记**（RN 自持的 `chatListEntryType`），
+  `chatEnterSource` 两视图**同为 `chat_list`**（`useChatNavigation.ts:47-50`
+  归一）—— 壳不需要新枚举值。
+- **卡片文案**：`ChatThread` 补 `message_num`（wire 类型是 **string**，
+  `types/chat.ts:281`，走 ScalarCoercion）；`formatMapCardTime` 三分支
+  （今天 = 相对时间、今年 `d MMM`、跨年 `MMM d, yyyy`）——
+  ⚠️ 与 Grid 行尾 `formatRowTime`（恒数字 `03/07`）**不是同一个函数**，
+  RN 就是两个；相对时间用 `android.icu.text.RelativeDateTimeFormatter`
+  （API 24+ 随 locale 本地化 —— dayjs 的相对文案来自它自带 locale 包，
+  26 语言词表里没有，手工拼会漏 25 种语言）。楼层日期标题
+  `formatMapDateTitle`（同年 `D MMMM` / 跨年 `MMM D, YYYY`）。
+
+#### 两个实测才抓到的 Compose 陷阱（记下来防复发）
+
+1. **垫底 sibling 收不到手势**：纵向手势层做成 zIndex 0 的 sibling，
+   楼层（zIndex 96~100）全覆盖时 hit-test 不共享指针 —— 表现「怎么拖
+   都不滚」。手势必须挂**楼层的祖先容器**（hit path 上游）。
+2. **曲线横轴是窗口高不是容器高**：`useWindowDimensions().height` 是
+   全窗口（差一个顶栏 + tabbar）；且 `Configuration.screenHeightDp`
+   被 lint 硬门拦（insets 语义随 targetSdk 变 + 取整），
+   用 `LocalWindowInfo.containerSize`。
+
+#### 验证
+
+- 模拟器（Pixel 10 / API 37，directApk）实测：Grid↔Map 切换、三层透视
+  廊道渲染、纵向滚动 + 档位吸附 + 边界、楼层标题（Yesterday/11 July
+  等四分支都出现）、剪影补位卡、卡片点击直达 ChatDetail、返回不崩。
+- 本机门禁：全套件 **1101 条 failures=0 / skipped=0**（ChatListTextTest
+  +3）+ `:tipsy-auth` 过 + `lintDirectApkDebug` 过（顺带抓了
+  ConfigurationScreenWidthHeight 一条真问题）+ assemble 过；G1 交 CI。
+- **NOT RUN / 后续**：横滑吸附的视觉细校（solver 值已有 380 条对拍，
+  但滑动手感只有真机能证）；动图按可见性开关（阶段三）；楼层虚拟化
+  （>50 天会话的性能缺口，draft 类注释已记）；真机冒烟按 owner 决定
+  累积。§9.1 不适用（纯原生页非 Surface）。
+
+
 
 ## 3. 横切能力
 

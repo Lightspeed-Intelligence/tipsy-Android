@@ -1,6 +1,9 @@
 package ai.lightspeed.tipsy.shell.pages.chatlist
 
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 /**
  * ChatList 的纯文本处理（全部从 RN 移植，都有对应单测）。
@@ -106,4 +109,43 @@ internal object ChatListText {
     private val OPTIONS_PATTERN = Regex("""<options>[\s\S]*?</options>""")
     private val VOICEOVER_PATTERN = Regex("""<voiceover>([\s\S]*?)</voiceover>""")
     private val DIALOG_PATTERN = Regex("""<dialog>([\s\S]*?)</dialog>""")
+
+    /**
+     * Map 卡片的时间（`formatChatGridTime`，`func.ts:322-340`；Map 卡消费点
+     * `ChatItem.tsx:217`）。⚠️ 与 [formatRowTime]（Grid 行尾，恒数字格式）
+     * **不是同一个函数**，别合并 —— RN 侧就是两个。
+     *
+     * 三分支照 iOS 端口（`ChatListFormat.formatChatGridTime`）：
+     * - 今天 → 相对时间（RN dayjs `fromNow()`、iOS `RelativeDateTimeFormatter`）。
+     *   ⚠️ 相对时间由 [relativeToday] **注入**：对等物是
+     *   `android.icu.text.RelativeDateTimeFormatter`（API 24+，随 locale
+     *   本地化），但它是 Android API —— JVM 单测里是抛异常的桩，且这类
+     *   本地化文案没有 i18next 词条可拼（dayjs 的相对时间是它自带的
+     *   locale 包，26 语言词表里都没有）。生产实现见
+     *   `ChatListFragment.mapCardRelativeTime`
+     * - 今年 → `d MMM`（dayjs `D MMM`，如 `7 Mar`）
+     * - 跨年 → `MMM d, yyyy`（dayjs `ll` 的 en 形状，如 `Mar 7, 2025`）
+     *
+     * @param locale 月份名的 locale；生产传 `L10n` 当前语言对应 locale，
+     *   测试注入固定值（同 iOS `dateFormatter` 用 `currentLocale()`）
+     */
+    fun formatMapCardTime(
+        timestampMs: Long,
+        nowMs: Long = System.currentTimeMillis(),
+        locale: Locale = Locale.getDefault(),
+        relativeToday: (elapsedMs: Long) -> String,
+    ): String {
+        val cal = Calendar.getInstance().apply { timeInMillis = timestampMs }
+        val now = Calendar.getInstance().apply { timeInMillis = nowMs }
+
+        val sameDay = cal.get(Calendar.YEAR) == now.get(Calendar.YEAR) &&
+            cal.get(Calendar.DAY_OF_YEAR) == now.get(Calendar.DAY_OF_YEAR)
+        if (sameDay) return relativeToday(nowMs - timestampMs)
+
+        return if (cal.get(Calendar.YEAR) == now.get(Calendar.YEAR)) {
+            SimpleDateFormat("d MMM", locale).format(Date(timestampMs))
+        } else {
+            SimpleDateFormat("MMM d, yyyy", locale).format(Date(timestampMs))
+        }
+    }
 }

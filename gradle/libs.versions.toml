@@ -59,7 +59,19 @@ fragment = "1.8.5"
 # ── 测试 ──
 junit = "4.13.2"
 androidxJunit = "1.2.1"
-espressoCore = "3.6.1"
+# ⚠️ **3.7.0 是必需的，不是"顺手升级"**：3.6.1 的 Espresso 对
+# `InputManager.getInstance` 的**反射查找在 API 36/37 上失败**
+# （⚠️ 不是 AOSP 删了方法，是应用侧反射不可用）—— 表现是
+# `NoSuchMethodException`，**基于 `createComposeRule` 的测试**起不来
+# （实测 Pixel_10/android-37.1）。
+# ⚠️ 范围仅限这类测试：`MmkvInteropTest` 不碰 Compose，同设备上一直是过的。
+# 官方 3.7.0 release notes 有逐字对应的修复：
+# "Use getSystemService instead of reflective InputManager.getInstance"。
+#
+# ⚠️ 它**只在 `androidTestImplementation`**（已核实 app/build.gradle:314），
+# 不进 app/RN runtime，所以与 mmkv/coroutines/media3 那类**耦合约束不同性质** ——
+# 那几条是「升了会顶掉 RN 的运行时版本」，这条纯粹是测试基础设施。
+espressoCore = "3.7.0"
 # ⚠️ **与 RN 侧的耦合约束，不是「越新越好」的普通依赖**（同 mmkv 的性质）。
 # `expo-modules-core/android/build.gradle:191-192` 用 `api` 暴露 coroutines **1.7.3**，
 # 它是壳运行时实际加载的版本。这里声明更高版本会通过 Gradle 的版本冲突解析
@@ -82,6 +94,23 @@ coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" 
 # 共享同一个 OkHttpClient 的理由见 ApiClient 注释。
 #noinspection NewerVersionAvailable
 coil-network-okhttp = { module = "io.coil-kt.coil3:coil-network-okhttp", version.ref = "coil" }
+# 动图解码（GIF / 动画 WebP）。**Map 卡片的动态封面依赖它** ——
+# decoder 由 coil3 经 `META-INF/services/coil3.util.DecoderServiceLoaderTarget`
+# **自动注册**，不需要手写 `.components { add(GifDecoder.Factory()) }`
+# （已核实 aar 内含该 service 条目）。R8 侧无需额外 keep ——
+# `ServiceLoaderComponentRegistry` 的 `ServiceLoader.load(...).iterator().asSequence()`
+# 写法是 Coil 刻意为之，源码注释原文「written intentionally so R8 can optimize it」。
+# ⚠️ 缺它时 Coil 只渲染**第一帧且不报错**，表现是"动图变静图"，没人会报。
+# ⚠️ 与 svg 不同，这个是**真新增**：react-native-screens 只引了 coil / network-okhttp
+# / svg 三个（已核实 android/build.gradle:249-253），**没有 gif**。
+#noinspection NewerVersionAvailable
+coil-gif = { module = "io.coil-kt.coil3:coil-gif", version.ref = "coil" }
+# SVG 解码。**这是 Profile P7（头像框）的跨轨前置，本刀不消费它**。
+# ⚠️ 它其实**已在依赖树里** —— react-native-screens 显式引了
+# `coil-svg:3.0.4`（android/build.gradle:253）。这里显式声明只是把
+# 隐式传递变成可见依赖，避免 RN 侧将来去掉它时壳静默失去 SVG 能力。
+#noinspection NewerVersionAvailable
+coil-svg = { module = "io.coil-kt.coil3:coil-svg", version.ref = "coil" }
 # Media3 ExoPlayer（Screen P2 的 showcase mp4 播放）。**不是新增依赖** ——
 # react-native-video 已引入整套 media3 1.8.0，见上方 [versions] 的说明。
 # 只声明 exoplayer + ui：

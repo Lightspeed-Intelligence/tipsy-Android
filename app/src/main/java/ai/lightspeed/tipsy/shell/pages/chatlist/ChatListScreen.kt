@@ -88,6 +88,11 @@ internal fun ChatListScreen(
     onDeleteConfirm: () -> Unit,
     onDeleteDismiss: () -> Unit,
     onGameCardExposed: (ChatThread) -> Unit,
+    /** Map 廊道的楼层（[ChatMapSource.floorsFor] 产出；P2）。 */
+    mapFloors: List<ChatMapFloors.Floor<ChatThread>> = emptyList(),
+    /** Map 卡片的消息数/时间文案（Fragment 注入 —— 纯函数层不碰 L10n/locale）。 */
+    mapMessageCountText: (ChatThread) -> String = { "" },
+    mapTimeText: (ChatThread) -> String = { "" },
 ) {
     Column(
         modifier = Modifier
@@ -114,7 +119,21 @@ internal fun ChatListScreen(
                 onGameCardExposed = onGameCardExposed,
             )
 
-            ChatPageType.MAP -> MapPlaceholder()
+            // P2：時光長廊。空态沿用 Grid 的空列表插画语义 —— RN 的 Map
+            // `if (!data) return null`（数据没到不画廊道），已到但为空时
+            // 廊道自身会铺 RUNWAY + 剪影层
+            ChatPageType.MAP -> ChatMapScreen(
+                floors = mapFloors,
+                messageCountText = mapMessageCountText,
+                timeText = mapTimeText,
+                // 未读点判定同 Grid（`ChatItem.tsx:147`）：
+                // is_push_message && !is_push_message_viewed
+                hasUnread = { it.isPushMessage && !it.isPushMessageViewed },
+                onThreadClick = onThreadClick,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = listBottomPadding),
+            )
         }
     }
 
@@ -413,24 +432,6 @@ private fun ErrorState(message: String, onRetry: () -> Unit) {
         TextButton(onClick = onRetry) {
             LocalizedText(key = "Retry", color = Color.White, fontSize = 14.sSp)
         }
-    }
-}
-
-/** Map 视图占位（P2 落地即删；同 Profile 未接 tab 的 Coming soon 先例）。 */
-@Composable
-private fun MapPlaceholder() {
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .fillMaxSize()
-            .testTag("chat_list_map_placeholder"),
-    ) {
-        // 壳专属占位，刻意不进 SHELL_KEYS（fallback 到 key 本身，P2 即删）
-        Text(
-            text = "Coming soon",
-            color = ChatListStyle.emptyTextColor,
-            fontSize = 14.sSp,
-        )
     }
 }
 
