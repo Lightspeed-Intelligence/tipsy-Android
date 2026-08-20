@@ -1,9 +1,12 @@
 package ai.lightspeed.tipsy.shell
 
+import ai.lightspeed.tipsy.shell.network.ApiException
+import ai.lightspeed.tipsy.shell.pages.profile.AvatarDecorationSource
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileCreatedItem
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileCreatedPage
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileFavoriteItem
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileFavoritePage
+import ai.lightspeed.tipsy.shell.pages.profile.ProfileItemType
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileMemoryItem
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileMemoryPage
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileRoleCardItem
@@ -825,6 +828,261 @@ class ProfileViewModelTest {
         assertEquals(ProfileWallet.EMPTY, vm.state.value.wallet)
     }
 
+    // ── 头像框（P7）──────────────────────────────────
+
+    @Test
+    fun `头像框 code 解析成 URL 进 state`() = runTest {
+        val api = FakeProfileApi(pages = listOf(page(items = emptyList(), total = 0)))
+        val vm = viewModel(
+            api,
+            userSource = userWithCode("weekly_champion"),
+            avatarDecorationSource = FakeDecorationSource(
+                urlByCode = mapOf("weekly_champion" to FRAME_URL),
+            ),
+        )
+        vm.onAppear()
+        advanceUntilIdle()
+
+        assertEquals(FRAME_URL, vm.state.value.avatarDecorationImageUrl)
+    }
+
+    @Test
+    fun `头像框目录拉取失败保留上次的框`() = runTest {
+        // 对齐 RN（目录在 MMKV 持久层，瞬时网络失败不掉框），同钱包/统计的保留纪律
+        val source = FakeDecorationSource(urlByCode = mapOf("weekly_champion" to FRAME_URL))
+        val api = FakeProfileApi(pages = List(2) { page(items = emptyList(), total = 0) })
+        val vm = viewModel(
+            api,
+            userSource = userWithCode("weekly_champion"),
+            avatarDecorationSource = source,
+        )
+        vm.onAppear()
+        advanceUntilIdle()
+        assertEquals(FRAME_URL, vm.state.value.avatarDecorationImageUrl)
+
+        source.fail = true
+        vm.onRefresh()
+        advanceUntilIdle()
+
+        assertEquals("失败后要保留旧框", FRAME_URL, vm.state.value.avatarDecorationImageUrl)
+    }
+
+    @Test
+    fun `code 清空后头像框清空且不发目录请求`() = runTest {
+        // EditProfile 取消佩戴 → notifyProfileChanged 定向刷新 → 旧框不能留在屏上
+        var code: String? = "weekly_champion"
+        val userSource = object : UserInfoSource {
+            override suspend fun fetchCurrentUser(): CurrentUser? =
+                CurrentUser(TEST_USER_ID, "昵称", null, null, avatarDecorationCode = code)
+        }
+        val source = FakeDecorationSource(urlByCode = mapOf("weekly_champion" to FRAME_URL))
+        val api = FakeProfileApi(pages = List(2) { page(items = emptyList(), total = 0) })
+        val vm = viewModel(api, userSource = userSource, avatarDecorationSource = source)
+        vm.onAppear()
+        advanceUntilIdle()
+        assertEquals(FRAME_URL, vm.state.value.avatarDecorationImageUrl)
+
+        code = null
+        vm.onProfileChanged()
+        advanceUntilIdle()
+
+        assertNull("未佩戴后必须清框", vm.state.value.avatarDecorationImageUrl)
+        assertEquals("清空是本地判定，不该发目录请求", 1, source.calls)
+    }
+
+    @Test
+    fun `目录查无此 code 时清空头像框`() = runTest {
+        // 与「拉取失败」区分：目录成功返回但没有这个 code = 目录才是真值，框要下线
+        val source = FakeDecorationSource(urlByCode = mapOf("weekly_champion" to FRAME_URL))
+        val api = FakeProfileApi(pages = List(2) { page(items = emptyList(), total = 0) })
+        val vm = viewModel(
+            api,
+            userSource = userWithCode("weekly_champion"),
+            avatarDecorationSource = source,
+        )
+        vm.onAppear()
+        advanceUntilIdle()
+        assertEquals(FRAME_URL, vm.state.value.avatarDecorationImageUrl)
+
+        source.urlByCode = emptyMap()
+        vm.onRefresh()
+        advanceUntilIdle()
+
+        assertNull("目录下线的 code 不能继续画", vm.state.value.avatarDecorationImageUrl)
+    }
+
+    @Test
+    fun `登出清空头像框`() = runTest {
+        val api = FakeProfileApi(pages = listOf(page(items = emptyList(), total = 0)))
+        val vm = viewModel(
+            api,
+            userSource = userWithCode("weekly_champion"),
+            avatarDecorationSource = FakeDecorationSource(
+                urlByCode = mapOf("weekly_champion" to FRAME_URL),
+            ),
+        )
+        vm.onAppear()
+        advanceUntilIdle()
+        assertEquals(FRAME_URL, vm.state.value.avatarDecorationImageUrl)
+
+        vm.onAuthChanged(loggedIn = false)
+        advanceUntilIdle()
+
+        assertNull(vm.state.value.avatarDecorationImageUrl)
+    }
+
+    // ── P5 卡片 ⋮ 菜单 ──────────────────────────────
+
+    @Test
+    fun `菜单单开互斥`() = runTest {
+        val api = FakeProfileApi(pages = listOf(page(items = listOf(item("a"), item("b")), total = 2)))
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+
+        vm.onMenuOpen(item("a"))
+        assertEquals("a", vm.state.value.openMenuKey)
+        vm.onMenuOpen(item("b"))
+        assertEquals("换卡开菜单要顶掉上一张", "b", vm.state.value.openMenuKey)
+        vm.onMenuDismiss()
+        assertNull(vm.state.value.openMenuKey)
+    }
+
+    @Test
+    fun `删除 character 走确认弹窗且成功后重拉对账`() = runTest {
+        val api = FakeProfileApi(pages = List(2) { page(items = listOf(item("a")), total = 1) })
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        assertEquals(1, api.createdCalls.size)
+
+        vm.onDeleteRequested(item("a"))
+        assertEquals("请求删除只挂弹窗不发请求", 0, api.deletedCharacterIds.size)
+        assertNull("菜单要先关", vm.state.value.openMenuKey)
+        assertEquals("a", vm.state.value.pendingDelete?.itemId)
+
+        vm.onDeleteConfirmed()
+        advanceUntilIdle()
+
+        assertEquals(listOf("a"), api.deletedCharacterIds)
+        assertNull("确认后弹窗要收", vm.state.value.pendingDelete)
+        assertEquals("成功后重拉第 0 页对账（RN createdMutate）", 2, api.createdCalls.size)
+        assertNull("RN 删除成功不弹 Toast", vm.state.value.toastKey)
+    }
+
+    @Test
+    fun `删除 story 走 story 端点`() = runTest {
+        val api = FakeProfileApi(pages = List(2) { page(items = emptyList(), total = 0) })
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+
+        vm.onDeleteRequested(storyItem("s1"))
+        vm.onDeleteConfirmed()
+        advanceUntilIdle()
+
+        assertEquals(listOf("s1"), api.deletedStoryIds)
+        assertEquals("character 端点不该被调", 0, api.deletedCharacterIds.size)
+    }
+
+    @Test
+    fun `删除失败弹 Toast 且列表不动`() = runTest {
+        // RN 的 onConfirm 没有 try/catch —— 失败静默。壳刻意补 Toast（§2.44 纪律）
+        val api = FakeProfileApi(pages = listOf(page(items = listOf(item("a")), total = 1)))
+        api.failDelete = true
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+
+        vm.onDeleteRequested(item("a"))
+        vm.onDeleteConfirmed()
+        advanceUntilIdle()
+
+        assertEquals(ProfileViewModel.KEY_DELETE_FAILED, vm.state.value.toastKey)
+        assertEquals("失败不重拉", 1, api.createdCalls.size)
+        assertEquals("失败不动列表", 1, vm.state.value.items.size)
+    }
+
+    @Test
+    fun `置顶成功按响应分流 Toast 并重拉`() = runTest {
+        val api = FakeProfileApi(pages = List(2) { page(items = listOf(item("a")), total = 1) })
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+
+        vm.onMenuOpen(item("a"))
+        api.pinResult = true
+        vm.onTogglePin(item("a"))
+        advanceUntilIdle()
+
+        assertEquals(listOf(FakeProfileApi.PinCall("a", ProfileItemType.CHARACTER)), api.pinCalls)
+        assertNull("点击即关菜单", vm.state.value.openMenuKey)
+        assertEquals(ProfileViewModel.KEY_PIN_OK, vm.state.value.toastKey)
+        assertEquals("成功后重拉对账", 2, api.createdCalls.size)
+        assertNull(vm.state.value.pinningKey)
+    }
+
+    @Test
+    fun `取消置顶的 Toast 按响应 is_pinned 为 false 分流`() = runTest {
+        val api = FakeProfileApi(pages = List(2) { page(items = listOf(item("a")), total = 1) })
+        api.pinResult = false
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+
+        vm.onTogglePin(item("a"))
+        advanceUntilIdle()
+
+        assertEquals(ProfileViewModel.KEY_UNPIN_OK, vm.state.value.toastKey)
+    }
+
+    @Test
+    fun `置顶上限的服务端 msg 映射专属文案`() = runTest {
+        val api = FakeProfileApi(pages = listOf(page(items = listOf(item("a")), total = 1)))
+        api.failPin = true
+        api.pinFailure = ApiException.Business(
+            code = 1,
+            serverMessage = "Sorry, up to 3 pins allowed for now.",
+        )
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+
+        vm.onTogglePin(item("a"))
+        advanceUntilIdle()
+
+        assertEquals(ProfileViewModel.KEY_PIN_LIMIT, vm.state.value.toastKey)
+        assertEquals("失败不重拉", 1, api.createdCalls.size)
+    }
+
+    @Test
+    fun `置顶在飞时二次点击被忽略`() = runTest {
+        val api = FakeProfileApi(pages = listOf(page(items = listOf(item("a"), item("b")), total = 2)))
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+
+        // 不 advance —— 第一个请求仍在飞
+        vm.onTogglePin(item("a"))
+        vm.onTogglePin(item("b"))
+        advanceUntilIdle()
+
+        assertEquals("单飞门禁（RN isPinning）", 1, api.pinCalls.size)
+    }
+
+    @Test
+    fun `game 卡置顶用 game_id 与 game 类型`() = runTest {
+        val api = FakeProfileApi(pages = List(2) { page(items = emptyList(), total = 0) })
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+
+        vm.onTogglePin(gameItem("g1"))
+        advanceUntilIdle()
+
+        assertEquals(listOf(FakeProfileApi.PinCall("g1", ProfileItemType.GAME)), api.pinCalls)
+    }
+
     // ── fixtures ────────────────────────────────────
 
     private fun TestScope.viewModel(
@@ -833,6 +1091,7 @@ class ProfileViewModelTest {
         failUserInfo: Boolean = false,
         userSource: UserInfoSource? = null,
         walletApi: FakeWalletApi = FakeWalletApi(),
+        avatarDecorationSource: AvatarDecorationSource? = null,
     ): ProfileViewModel {
         val resolvedUserSource = userSource ?: object : UserInfoSource {
             override suspend fun fetchCurrentUser(): CurrentUser? {
@@ -847,7 +1106,26 @@ class ProfileViewModelTest {
             languageProvider = language,
             scope = this,
             logWarn = { _, _ -> },
+            avatarDecorationSource = avatarDecorationSource,
         )
+    }
+
+    private fun userWithCode(code: String?): UserInfoSource = object : UserInfoSource {
+        override suspend fun fetchCurrentUser(): CurrentUser? =
+            CurrentUser(TEST_USER_ID, "昵称", null, null, avatarDecorationCode = code)
+    }
+
+    private class FakeDecorationSource(
+        var urlByCode: Map<String, String> = emptyMap(),
+        var fail: Boolean = false,
+    ) : AvatarDecorationSource {
+        var calls = 0
+
+        override suspend fun fetchImageUrl(code: String?): String? {
+            calls++
+            if (fail) throw RuntimeException("catalogue boom")
+            return code?.let { urlByCode[it] }
+        }
     }
 
     private class FakeWalletApi(
@@ -878,12 +1156,23 @@ class ProfileViewModelTest {
     ) : ProfileSource {
         data class CreatedCall(val page: Int, val languageCode: String)
 
+        data class PinCall(val itemId: String, val itemType: ProfileItemType)
+
         val createdCalls = mutableListOf<CreatedCall>()
         val memoryCalls = mutableListOf<Int>()
         val roleCardCalls = mutableListOf<Int>()
         val favoriteCalls = mutableListOf<Int>()
         val likedCalls = mutableListOf<Int>()
         val statsCalls = mutableListOf<String>()
+
+        // P5 动作
+        val pinCalls = mutableListOf<PinCall>()
+        val deletedCharacterIds = mutableListOf<String>()
+        val deletedStoryIds = mutableListOf<String>()
+        var pinResult: Boolean? = true
+        var failPin: Boolean = false
+        var pinFailure: Throwable = RuntimeException("pin boom")
+        var failDelete: Boolean = false
 
         /** 置一个未完成的 Deferred 可让记忆请求挂起（测「切走取消在飞链」用）。 */
         var memoryGate: CompletableDeferred<Unit>? = null
@@ -937,6 +1226,22 @@ class ProfileViewModelTest {
                 result ?: ProfileFavoritePage(emptyList(), 0L)
             }
         }
+
+        override suspend fun togglePin(itemId: String, itemType: ProfileItemType): Boolean? {
+            pinCalls += PinCall(itemId, itemType)
+            if (failPin) throw pinFailure
+            return pinResult
+        }
+
+        override suspend fun deleteCharacter(characterId: String) {
+            if (failDelete) throw RuntimeException("delete boom")
+            deletedCharacterIds += characterId
+        }
+
+        override suspend fun deleteStory(storyId: String) {
+            if (failDelete) throw RuntimeException("delete boom")
+            deletedStoryIds += storyId
+        }
     }
 
     private fun page(items: List<ProfileCreatedItem>, total: Long) =
@@ -948,6 +1253,18 @@ class ProfileViewModelTest {
     private fun item(id: String): ProfileCreatedItem =
         ProfileCreatedItem.parse(
             JSONObject().put("item_type", "character").put("item_id", id).put("nickname", id),
+        )!!
+
+    private fun storyItem(id: String): ProfileCreatedItem =
+        ProfileCreatedItem.parse(
+            JSONObject().put("item_type", "story").put("item_id", id)
+                .put("story", JSONObject().put("story_id", id).put("title", id)),
+        )!!
+
+    private fun gameItem(id: String): ProfileCreatedItem =
+        ProfileCreatedItem.parse(
+            JSONObject().put("item_type", "game").put("game_id", id)
+                .put("game", JSONObject().put("title", id)),
         )!!
 
     private fun memoryItem(id: String): ProfileMemoryItem =
@@ -966,5 +1283,6 @@ class ProfileViewModelTest {
 
     private companion object {
         const val TEST_USER_ID = "u-self"
+        const val FRAME_URL = "https://cdn.example/frame_champion.png"
     }
 }

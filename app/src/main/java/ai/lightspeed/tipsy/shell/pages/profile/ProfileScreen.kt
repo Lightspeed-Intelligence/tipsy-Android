@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -27,6 +28,7 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Text
@@ -39,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
@@ -53,6 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import coil3.compose.AsyncImage
 
 /**
@@ -102,6 +106,15 @@ fun ProfileScreen(
     /** 状态栏高度；与 `HomeScreen` 一样是实际 dp，不参与 `.s` 缩放。 */
     statusBarPadding: Dp,
     avatarDecorationImageUrl: String? = null,
+    onSocialLinkClick: (String) -> Unit = {},
+    /** P5 卡片 ⋮ 菜单（全部经 ViewModel/Fragment，本层零决策）。 */
+    onMenuOpen: (ProfileCreatedItem) -> Unit = {},
+    onMenuDismiss: () -> Unit = {},
+    onMenuEdit: (ProfileCreatedItem) -> Unit = {},
+    onMenuDelete: (ProfileCreatedItem) -> Unit = {},
+    onMenuTogglePin: (ProfileCreatedItem) -> Unit = {},
+    onDeleteConfirm: () -> Unit = {},
+    onDeleteDismiss: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val gridState = rememberLazyGridState()
@@ -174,6 +187,12 @@ fun ProfileScreen(
                             onFollowersClick = onFollowersClick,
                             onFollowingClick = onFollowingClick,
                             onWalletAction = onWalletAction,
+                            onSocialLinkClick = onSocialLinkClick,
+                            onMenuOpen = onMenuOpen,
+                            onMenuDismiss = onMenuDismiss,
+                            onMenuEdit = onMenuEdit,
+                            onMenuDelete = onMenuDelete,
+                            onMenuTogglePin = onMenuTogglePin,
                         )
                         if (showFloatingTabBar) {
                             ProfileTabBar(
@@ -186,6 +205,114 @@ fun ProfileScreen(
                             )
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // P5：删除确认（TipsyModal 的对应物，character/story 标题不同）
+    state.pendingDelete?.let { target ->
+        DeleteConfirmDialog(
+            target = target,
+            onConfirm = onDeleteConfirm,
+            onDismiss = onDeleteDismiss,
+        )
+    }
+}
+
+/**
+ * 删除确认弹窗（`CharacterGridItem.tsx:824-840` / `StoryItem.tsx:832-846` 的
+ * `TipsyModal`，样式照 `TipsyModal.tsx` 的 Android 分支）：80% 宽、圆角 10、
+ * 三段深色渐变底（`:207-210`）、标题 18 / 正文 16、底部两键**等分横排**
+ * （56 高、白字 16、顶部与中缝 1px 白 10% 分割线）—— 不是 Material 的
+ * 右对齐按钮排，也没有红色实心确认键。标题按类型分流：character =
+ * `Delete This Character?`、story = `Delete This Multi-character?`。
+ * RN 的 onConfirm 先关弹窗再发请求（非乐观、无 loading 态），壳照此。
+ */
+@Composable
+private fun DeleteConfirmDialog(
+    target: ProfileCreatedItem,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val titleKey = if (target.type == ProfileItemType.STORY) {
+        "Delete This Multi-character?"
+    } else {
+        "Delete This Character?"
+    }
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier
+                .fillMaxWidth(DELETE_DIALOG_WIDTH_FRACTION)
+                .clip(RoundedCornerShape(DELETE_DIALOG_RADIUS.dp))
+                .background(Brush.verticalGradient(DELETE_DIALOG_GRADIENT))
+                .padding(top = DELETE_DIALOG_PADDING_TOP.dp)
+                .testTag("profile_delete_dialog"),
+        ) {
+            Text(
+                text = rememberLocalizedString(titleKey),
+                color = Color.White,
+                fontSize = DELETE_DIALOG_TITLE_FONT.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = DELETE_DIALOG_PADDING_H.dp),
+            )
+            Text(
+                text = rememberLocalizedString("This action is permanent and cannot be reversed."),
+                color = Color.White,
+                fontSize = DELETE_DIALOG_BODY_FONT.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(
+                    horizontal = DELETE_DIALOG_PADDING_H.dp,
+                    vertical = DELETE_DIALOG_BODY_GAP.dp,
+                ),
+            )
+            // 底部两键：等分横排 + 顶部/中缝 1px 分割线（btnArea/splitLine）
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(DELETE_DIALOG_BUTTON_HEIGHT.dp)
+                    .drawWithContent {
+                        drawContent()
+                        drawLine(
+                            color = DELETE_DIALOG_DIVIDER,
+                            start = androidx.compose.ui.geometry.Offset(0f, 0f),
+                            end = androidx.compose.ui.geometry.Offset(size.width, 0f),
+                        )
+                        drawLine(
+                            color = DELETE_DIALOG_DIVIDER,
+                            start = androidx.compose.ui.geometry.Offset(size.width / 2, 0f),
+                            end = androidx.compose.ui.geometry.Offset(size.width / 2, size.height),
+                        )
+                    },
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clickable(onClick = onDismiss)
+                        .testTag("profile_delete_cancel"),
+                ) {
+                    Text(
+                        text = rememberLocalizedString("Cancel"),
+                        color = Color.White,
+                        fontSize = DELETE_DIALOG_BUTTON_FONT.sp,
+                    )
+                }
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clickable(onClick = onConfirm)
+                        .testTag("profile_delete_confirm"),
+                ) {
+                    Text(
+                        text = rememberLocalizedString("Delete"),
+                        color = Color.White,
+                        fontSize = DELETE_DIALOG_BUTTON_FONT.sp,
+                    )
                 }
             }
         }
@@ -247,6 +374,12 @@ private fun ProfileGrid(
     onFollowersClick: () -> Unit,
     onFollowingClick: () -> Unit,
     onWalletAction: (ProfileWalletAction) -> Unit,
+    onSocialLinkClick: (String) -> Unit,
+    onMenuOpen: (ProfileCreatedItem) -> Unit,
+    onMenuDismiss: () -> Unit,
+    onMenuEdit: (ProfileCreatedItem) -> Unit,
+    onMenuDelete: (ProfileCreatedItem) -> Unit,
+    onMenuTogglePin: (ProfileCreatedItem) -> Unit,
 ) {
     val tab = state.selectedTab
     LazyVerticalGrid(
@@ -271,6 +404,7 @@ private fun ProfileGrid(
                 onFollowingClick = onFollowingClick,
                 onWalletAction = onWalletAction,
                 avatarDecorationImageUrl = avatarDecorationImageUrl,
+                onSocialLinkClick = onSocialLinkClick,
             )
         }
 
@@ -383,6 +517,16 @@ private fun ProfileGrid(
                 ProfileGridItem(
                     item = item,
                     modifier = Modifier.aspectRatio(ProfileStyle.CARD_ASPECT_RATIO),
+                    // P5：自己主页给每张卡装菜单（他人主页的网格不传 —— RN 的 isSelf &&）
+                    menu = ProfileCardMenuHooks(
+                        isOpen = state.openMenuKey == item.dedupeKey,
+                        isPinning = state.pinningKey == item.dedupeKey,
+                        onOpen = { onMenuOpen(item) },
+                        onDismiss = onMenuDismiss,
+                        onEdit = { onMenuEdit(item) },
+                        onDelete = { onMenuDelete(item) },
+                        onTogglePin = { onMenuTogglePin(item) },
+                    ),
                 )
             }
         }
@@ -595,3 +739,22 @@ internal fun profileListBottomPaddingDp(safeBottomDp: Float, scaleFactor: Float)
         androidTabBarBottomInsetDp(safeBottomDp, scaleFactor)
 
 private const val PROFILE_LIST_BOTTOM_EXTRA = 400f
+
+// P5 删除确认弹窗（TipsyModal.tsx：modalView 80%/圆角10/paddingTop20；
+// Android 三段渐变 :207-210；title 18 / content 16 / btn 16、btnArea 56 高、
+// 分割线白 10%）
+private const val DELETE_DIALOG_WIDTH_FRACTION = 0.8f
+private const val DELETE_DIALOG_RADIUS = 10
+private const val DELETE_DIALOG_PADDING_TOP = 20
+private const val DELETE_DIALOG_PADDING_H = 19
+private const val DELETE_DIALOG_TITLE_FONT = 18
+private const val DELETE_DIALOG_BODY_FONT = 16
+private const val DELETE_DIALOG_BODY_GAP = 16
+private const val DELETE_DIALOG_BUTTON_HEIGHT = 56
+private const val DELETE_DIALOG_BUTTON_FONT = 16
+private val DELETE_DIALOG_DIVIDER = Color(0x1AFFFFFF)
+private val DELETE_DIALOG_GRADIENT = listOf(
+    Color(0xF7303229),
+    Color(0xF73D2C29),
+    Color(0xF7432E3C),
+)

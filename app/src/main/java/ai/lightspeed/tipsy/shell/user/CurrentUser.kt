@@ -36,6 +36,11 @@ import org.json.JSONObject
  *   `store/user.ts:191`）。ChatList 的 LV 徽章是双开关判定的账号侧
  *   （另一侧是角色的 `is_relationship_open`）。默认 false —— 拉不到时
  *   宁可不显示徽章，也不显示一个后端已关的功能
+ * @property socialLinks 社交平台链接（`display_urls`，P7 渠道图标的数据源）。
+ *   这里只做**结构解析 + `display_status` 可见性**（`DisplayStatus.VISIBLE=1`，
+ *   `types/user.ts:16-19`），平台白名单/隐藏名单是展示层规则，
+ *   收在 `ProfileSocialLinks` —— 与 RN 分工一致（store 存原样，
+ *   `SocialLinksDisplay` 过滤）
  */
 data class CurrentUser(
     val userId: String,
@@ -47,7 +52,20 @@ data class CurrentUser(
     val relationshipSwitch: Boolean = false,
     val languageCode: String? = null,
     val sharedStorageSnapshot: UserStorageSnapshot? = null,
+    val socialLinks: List<SocialLink> = emptyList(),
 ) {
+
+    /**
+     * 单条社交链接（`display_urls[]` 条目，`types/user.ts:63-67`）。
+     *
+     * @property visible `display_status == 1`。RN 在渲染端过滤
+     *   （`SocialLinksDisplay.tsx` `activeLinks`），壳保留字段让过滤规则可测
+     */
+    data class SocialLink(
+        val platform: String,
+        val url: String,
+        val visible: Boolean,
+    )
     companion object {
 
         /**
@@ -79,7 +97,29 @@ data class CurrentUser(
                 languageCode = ScalarCoercion.optString(data, FIELD_LANGUAGE_CODE)
                     ?.takeIf { it.isNotBlank() },
                 sharedStorageSnapshot = UserStorageSnapshot.fromApi(data, userId),
+                socialLinks = parseSocialLinks(data),
             )
+        }
+
+        /**
+         * `display_urls` 容错解析：数组缺失/非数组 → 空表；单条缺 platform 或
+         * url → 跳过该条不弃整表（列表路径静默吞错是 iOS 踩过的反面，这里是
+         * 逐条防御而不是整体 try-catch）。`display_status` 缺失按不可见 ——
+         * 状态未知的链接宁可不展示，也不把用户设为 HIDDEN 的链接放出来。
+         */
+        private fun parseSocialLinks(data: JSONObject): List<SocialLink> {
+            val array = data.optJSONArray(FIELD_DISPLAY_URLS) ?: return emptyList()
+            val links = mutableListOf<SocialLink>()
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val platform = ScalarCoercion.optString(item, "platform")
+                    ?.takeIf { it.isNotBlank() } ?: continue
+                val url = ScalarCoercion.optString(item, "url")
+                    ?.takeIf { it.isNotBlank() } ?: continue
+                val visible = ScalarCoercion.optInt(item, "display_status") == DISPLAY_STATUS_VISIBLE
+                links += SocialLink(platform = platform, url = url, visible = visible)
+            }
+            return links
         }
 
         private const val FIELD_USER_ID = "user_id"
@@ -90,5 +130,9 @@ data class CurrentUser(
         private const val FIELD_BIO = "bio"
         private const val FIELD_RELATIONSHIP_SWITCH = "relationship_switch"
         private const val FIELD_LANGUAGE_CODE = "language_code"
+        private const val FIELD_DISPLAY_URLS = "display_urls"
+
+        /** `DisplayStatus.VISIBLE`（`types/user.ts:17`）；`2` 是 HIDDEN。 */
+        private const val DISPLAY_STATUS_VISIBLE = 1
     }
 }

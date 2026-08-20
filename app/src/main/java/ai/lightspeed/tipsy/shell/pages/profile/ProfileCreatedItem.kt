@@ -55,6 +55,23 @@ data class ProfileCreatedItem(
     val messageCount: Long,
     /** 曝光数（`stats.exposure_count`）。仅 character 卡 `is_public` 时显示。 */
     val exposureCount: Long?,
+    /**
+     * 删除动作用的业务 id（P5）。⚠️ **取嵌套层，不是顶层 `item_id`** ——
+     * RN 传给卡片的是嵌套对象（`cellItem.character || cellItem`），删除调的是
+     * `deleteCharacter(character.character_id)` / `deleteStory(character.story_id)`
+     * （`CharacterGridItem.tsx:830` / `StoryItem.tsx:839`）。嵌套缺失回落顶层
+     * `item_id`（两者实测同值，回落只为响应形状变化时不至于发空 id）。
+     * game 无删除，恒 null。**带默认值**同 `CurrentUser.bio` 的理由
+     * （既有构造点不受字段追加影响），[Companion.parse] 永远显式传。
+     */
+    val deleteId: String? = null,
+    /**
+     * 置顶动作用的 id（`/character/toggle_pin` 的 `item_id`）。
+     * character = 嵌套 `character_id`；story = 嵌套 `item_id || story_id`
+     * （`StoryItem.tsx:463` 的原样兜底链）；game = `game_id`
+     * （`GameGridItem.tsx:265`）。
+     */
+    val pinId: String? = null,
     /** 该条原始 JSON。**编辑入口必须原封透传它**，见下。 */
     val rawJson: String,
 ) : ProfileListEntry {
@@ -115,6 +132,26 @@ data class ProfileCreatedItem(
     val showStoryTag: Boolean get() = characterType == CHARACTER_TYPE_STORY
 
     /**
+     * 编辑入口的透传载荷（P5，仅 character；story 编辑按方案 §8.1 不做，
+     * game 无编辑）。
+     *
+     * ## ⚠️ 取**嵌套对象**，与 [rawJson]（顶层元素）不同层
+     *
+     * RN 的 `CharacterGridItem.handleEdit` 调 `initCharStateUpdate(character)`，
+     * 而 `character` prop 是 `cellItem.character || cellItem`（iOS 契约文档
+     * `create-rn-surface-contract.md` §3 同此对齐）。传顶层元素会让 create
+     * store 预填出一层错误包装 —— 保存时字段错位，正是「by-id 重拉导致
+     * 字段重置」同级别的数据损坏。
+     *
+     * 返回原始 JSON **原文**（不从本模型反序列化），理由见 [Companion.parse]。
+     */
+    fun editPayloadJson(): String? {
+        if (type != ProfileItemType.CHARACTER) return null
+        val top = runCatching { JSONObject(rawJson) }.getOrNull() ?: return null
+        return (top.optJSONObject(FIELD_NESTED_CHARACTER) ?: top).toString()
+    }
+
+    /**
      * 18+ 标签：nsfw 且**审核已通过**（`CharacterGridItem.tsx:528-531` ——
      * 待审/驳回时左上位置让给审核角标，18+ 不再重复出现）。
      */
@@ -159,8 +196,51 @@ data class ProfileCreatedItem(
                     ?: nested?.let { ScalarCoercion.optLong(it, FIELD_TOTAL_MESSAGES) }
                     ?: 0L,
                 exposureCount = stats?.let { ScalarCoercion.optLong(it, FIELD_EXPOSURE_COUNT) },
+                deleteId = parseDeleteId(json, nested, type),
+                pinId = parsePinId(json, nested, type),
                 rawJson = json.toString(),
             )
+        }
+
+        /** 删除 id：见属性注释。game 无删除动作（RN 菜单只有置顶）。 */
+        private fun parseDeleteId(
+            json: JSONObject,
+            nested: JSONObject?,
+            type: ProfileItemType,
+        ): String? {
+            val field = when (type) {
+                ProfileItemType.CHARACTER -> FIELD_CHARACTER_ID
+                ProfileItemType.STORY -> FIELD_STORY_ID
+                ProfileItemType.GAME -> return null
+            }
+            return nested?.let { ScalarCoercion.optString(it, field)?.takeIf { s -> s.isNotBlank() } }
+                ?: ScalarCoercion.optString(json, FIELD_ITEM_ID)?.takeIf { it.isNotBlank() }
+        }
+
+        /** 置顶 id：三类各有取法，见属性注释。 */
+        private fun parsePinId(
+            json: JSONObject,
+            nested: JSONObject?,
+            type: ProfileItemType,
+        ): String? = when (type) {
+            ProfileItemType.CHARACTER ->
+                nested?.let { ScalarCoercion.optString(it, FIELD_CHARACTER_ID) }
+                    ?.takeIf { it.isNotBlank() }
+                    ?: ScalarCoercion.optString(json, FIELD_ITEM_ID)?.takeIf { it.isNotBlank() }
+
+            // StoryItem.tsx:463：`character.item_id || character.story_id`。
+            // 嵌套对象通常无 item_id，实际命中 story_id；顶层 item_id 作最后兜底
+            ProfileItemType.STORY ->
+                nested?.let { ScalarCoercion.optString(it, FIELD_ITEM_ID) }
+                    ?.takeIf { it.isNotBlank() }
+                    ?: nested?.let { ScalarCoercion.optString(it, FIELD_STORY_ID) }
+                        ?.takeIf { it.isNotBlank() }
+                    ?: ScalarCoercion.optString(json, FIELD_ITEM_ID)?.takeIf { it.isNotBlank() }
+
+            ProfileItemType.GAME ->
+                ScalarCoercion.optString(json, FIELD_GAME_ID)?.takeIf { it.isNotBlank() }
+                    ?: nested?.let { ScalarCoercion.optString(it, FIELD_GAME_ID) }
+                        ?.takeIf { it.isNotBlank() }
         }
 
         /** 嵌套层优先、顶层兜底（响应形状变化时不至于全空）。 */
@@ -262,6 +342,8 @@ data class ProfileCreatedItem(
         private const val FIELD_ITEM_TYPE = "item_type"
         private const val FIELD_ITEM_ID = "item_id"
         private const val FIELD_GAME_ID = "game_id"
+        private const val FIELD_CHARACTER_ID = "character_id"
+        private const val FIELD_STORY_ID = "story_id"
         private const val FIELD_NICKNAME = "nickname"
         private const val FIELD_TITLE = "title"
         private const val FIELD_FACE_URL = "face_url"

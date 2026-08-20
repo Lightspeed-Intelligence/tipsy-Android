@@ -187,6 +187,33 @@ sealed interface AppRoute {
         const val DRAFT_BOX = "draft_box"
     }
 
+    /**
+     * Profile 创作卡 ⋮ 菜单「编辑」→ `CreateSurface` 编辑态（P5）。
+     *
+     * ## 与 [Create] 分开是刻意的（§2.43 落地边界早有结论）
+     *
+     * 同一个 Surface 组件，但**props 形状完全不同**：编辑态要透传完整角色
+     * 对象（`editCharacter`），创建态只有 `createEnterSource`。混在一个
+     * route 里会让「创建入口带上编辑残留」这类装配错误无处可查。
+     * `triggerSource: 'cha_edit'` 由 Surface 从 `isEdit` 自推
+     * （`CreateSurface.tsx:80-82`），壳不传。
+     *
+     * @param characterJson 创作列表该条的**嵌套角色对象原文**
+     *   （`ProfileCreatedItem.editPayloadJson`）。⚠️ 必须原封透传 ——
+     *   by-id 重拉会在保存时把 `conversation_style`/`custom_prompt` 等
+     *   字段重置（= 数据损坏，iOS 契约 §3 的明确教训）。null = 原文不可用
+     * @param characterId 兜底 id：[characterJson] 缺失/无法解析时 RN 走
+     *   `getCharacterAuth` 有损兜底 —— 仍是编辑态，不会错落创建态。
+     *   ⚠️ 两参**不得同时为空**（那会让 `isEdit` 为 false、静默落进创建态），
+     *   调用方（ProfileFragment）负责守这条
+     */
+    data class EditCharacter(
+        val characterJson: String?,
+        val characterId: String?,
+    ) : AppRoute {
+        override val requiresAuth = true
+    }
+
     // ── Profile 的出口（方案 §8.1 记的 5 个，W3 起陆续启用）──────────
     //
     // ⚠️ 这些类型的**启用状态不同**：Settings 等已通过验收的目标在

@@ -6,23 +6,30 @@ import ai.lightspeed.tipsy.shell.i18n.L10n
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
 import ai.lightspeed.tipsy.shell.ui.ScaledMetrics
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Toast
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.Lifecycle
@@ -142,6 +149,17 @@ class ProfileFragment : Fragment() {
         composeView.setContent {
             MaterialTheme {
                 val state by viewModel.state.collectAsState()
+                val context = LocalContext.current
+
+                // 一次性 Toast（P5 pin/delete 的结果反馈，同 ChatListFragment：
+                // Toast 是一次性副作用不参与重组，用 L10n.t 而非 LocalizedText）
+                LaunchedEffect(state.toastKey) {
+                    state.toastKey?.let { key ->
+                        Toast.makeText(context, L10n.t(key), Toast.LENGTH_SHORT).show()
+                        viewModel.consumeToast()
+                    }
+                }
+
                 ProfileScreen(
                     state = state,
                     onRefresh = viewModel::onRefresh,
@@ -178,6 +196,15 @@ class ProfileFragment : Fragment() {
                             .value,
                         scaleFactor = ScaledMetrics.scaleFactor(),
                     ).dp,
+                    onSocialLinkClick = ::openExternalUrl,
+                    // P5 卡片 ⋮ 菜单：状态在 ViewModel；编辑经 Router 出去
+                    onMenuOpen = viewModel::onMenuOpen,
+                    onMenuDismiss = viewModel::onMenuDismiss,
+                    onMenuEdit = ::openEditCharacter,
+                    onMenuDelete = viewModel::onDeleteRequested,
+                    onMenuTogglePin = viewModel::onTogglePin,
+                    onDeleteConfirm = viewModel::onDeleteConfirmed,
+                    onDeleteDismiss = viewModel::onDeleteDismissed,
                     // ⚠️ 用 Compose 的 inset 而不是 ViewCompat listener + 手动 render：
                     // listener 在**首帧之后**才回调，那之前值是 0，顶栏会画到状态栏底下
                     // （真机实测：Settings 与系统图标重叠）。
@@ -235,6 +262,40 @@ class ProfileFragment : Fragment() {
         // （RN 侧用 react-native-toast-message 是因为它跨平台统一处理）
     }
 
+    /**
+     * 社交链接（P7 渠道图标，对齐 RN `WebBrowser.openBrowserAsync`）。
+     *
+     * ⚠️ 必须捕获 [ActivityNotFoundException]（同 `SettingsFragment.openExternalUrl`）：
+     * 设备可能没有浏览器，未捕获会直接崩；RN 那个 await 也不会崩 App。
+     */
+    private fun openExternalUrl(url: String) {
+        val intent = Intent(Intent.ACTION_VIEW, url.toUri())
+        try {
+            startActivity(intent)
+        } catch (e: ActivityNotFoundException) {
+            Log.w(TAG, "无可用浏览器，忽略社交链接", e)
+        }
+    }
+
+    /**
+     * 卡片菜单「编辑」→ `CreateSurface` 编辑态（P5）。
+     *
+     * ⚠️ **原始 JSON 原封透传**（`editPayloadJson` 取嵌套角色对象原文）：
+     * by-id 重拉会在保存时把 `conversation_style` 等字段重置（数据损坏，
+     * 方案 §8.1 / iOS 契约 §3）。原文缺失时退化传 id（RN 走有损兜底但
+     * 仍是编辑态）；两者都没有就不导航 —— 空 route 会静默落进**创建态**。
+     */
+    private fun openEditCharacter(item: ProfileCreatedItem) {
+        viewModel.onMenuDismiss()
+        val payload = item.editPayloadJson()
+        val characterId = item.itemId
+        if (payload == null && characterId.isNullOrBlank()) {
+            Log.w(TAG, "编辑目标缺 JSON 与 id，拒绝导航：${item.dedupeKey}")
+            return
+        }
+        requestRoute(AppRoute.EditCharacter(characterJson = payload, characterId = characterId))
+    }
+
     companion object {
         fun newInstance() = ProfileFragment()
 
@@ -243,5 +304,7 @@ class ProfileFragment : Fragment() {
         private const val TYPE_FOLLOWING = "following"
 
         private const val CLIP_LABEL = "UID"
+
+        private const val TAG = "ProfileFragment"
     }
 }

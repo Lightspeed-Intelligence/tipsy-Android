@@ -347,6 +347,52 @@ class SurfacePropsTest {
         assertEquals("draft_box", props["createEnterSource"])
     }
 
+    // ── P5：EditCharacter（CreateSurface 编辑态）────────────
+
+    @Test
+    fun `EditCharacter 产出结构化 editCharacter 对象与兜底 id`() {
+        val props = SurfaceProps.forRoute(
+            AppRoute.EditCharacter(
+                characterJson = """{"character_id":"c1","nickname":"n",
+                    "custom_prompt":"keep","tags":["a","b"],
+                    "world_books":[{"book_id":"w1"}],"conversation_style":null}""",
+                characterId = "c1",
+            ),
+        )
+        @Suppress("UNCHECKED_CAST")
+        val edit = props["editCharacter"] as Map<String, Any>
+        assertEquals("c1", edit["character_id"])
+        // 模型没建模的字段必须还在 —— 这是 editCharacter 存在的全部理由
+        assertEquals("keep", edit["custom_prompt"])
+        assertEquals(listOf("a", "b"), edit["tags"])
+        @Suppress("UNCHECKED_CAST")
+        val books = edit["world_books"] as List<Map<String, Any>>
+        assertEquals("w1", books.single()["book_id"])
+        // 显式 null 不能丢（键缺失在 zustand 里语义不同）
+        assertTrue("conversation_style 必须保留", edit.containsKey("conversation_style"))
+        assertEquals("兜底 id 同时携带", "c1", props["editCharacterId"])
+    }
+
+    @Test
+    fun `EditCharacter 的 JSON 坏掉时退化成仅 id`() {
+        // RN 走 getCharacterAuth 有损兜底 —— 仍是编辑态，不会错落创建态
+        val props = SurfaceProps.forRoute(
+            AppRoute.EditCharacter(characterJson = "not-json{", characterId = "c1"),
+        )
+        assertFalse("坏 JSON 不产出 editCharacter", props.containsKey("editCharacter"))
+        assertEquals("c1", props["editCharacterId"])
+    }
+
+    @Test
+    fun `EditCharacter 不带 createEnterSource`() {
+        // triggerSource='cha_edit' 由 Surface 从 isEdit 自推（CreateSurface.tsx:80-82），
+        // 壳传了就是把分流复刻成两份（§2.30 纪律）
+        val props = SurfaceProps.forRoute(
+            AppRoute.EditCharacter(characterJson = """{"character_id":"c1"}""", characterId = "c1"),
+        )
+        assertFalse(props.containsKey("createEnterSource"))
+    }
+
     @Test
     fun `纯业务 key 不触发守卫`() {
         // 不该误报：这些都是 RN 侧真实 props 名

@@ -1,6 +1,6 @@
 # Tipsy Android 原生化迁移：现状（唯一状态真值）
 
-> 更新：2026-08-18 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
+> 更新：2026-08-19 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
 > **G1 CI 已激活且在 main 上真绿**（§2.10 / §2.22）
 >
 > **W1 基本收尾**（细化方案见 [`../architecture/android-w1-plan.md`](../architecture/android-w1-plan.md)）：
@@ -17,7 +17,9 @@
 > **W2 进行中**：五 Tab shell + Home 首屏（§2.23，主链路真机已验）+ 标签筛选抽屉
 > 与 For You 冷启动种子（§2.24，**抽屉、种子写入门禁、离线渲染种子真机全已验**）。
 > Home 剩 banner / 彩蛋弹窗 / mp4 封面三项（前两项评估留 RN Surface）。
-> **W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 Grid 主链路
+> **W3 进行中**：Profile 主体完成（§2.25–§2.29；**P7 完成 = 头像框 + 渠道图标**，
+> §2.44，含对 PR #41 两处偏差的收尾修正；**P5 卡片 ⋮ 菜单完成**，§2.45 ——
+> **Profile 全部批次至此收口**）；ChatList P1 Grid 主链路
 > 已并入 main 且模拟器冒烟 PASS（§2.30）；Search P1 主链路已实现且 directApk
 > 真机冒烟 PASS（§2.31）；**P2 筛选器已实现**（§2.34）。
 > **他人主页已实现并并入 main**（§2.32，PR #28）：`AppRoute.UserProfile` 进白名单，
@@ -58,16 +60,16 @@
 
 ## 0. 三十秒速览
 
-- **波次进度**：W0 完成；**W1 完成**（契约层已在 CI 组合验证（§2.22）；**P9 已完成**（§2.36）；§12 关闭链记为已接受偏差）；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 已随 PR #25 并入 main（§2.30）；**Search P1 主链路已实现并完成 directApk 冒烟**（§2.31）；**P2 筛选器已实现**（§2.34，Search 完整对等）；**EditProfile 已完成静态预接/账号隔离/刷新接力**（§2.43），但 production policy 仍关闭。
+- **波次进度**：W0 完成；**W1 完成**（契约层已在 CI 组合验证（§2.22）；**P9 已完成**（§2.36）；§12 关闭链记为已接受偏差）；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 已随 PR #25 并入 main（§2.30）；**Search P1 主链路已实现并完成 directApk 冒烟**（§2.31）；**P2 筛选器已实现**（§2.34，Search 完整对等）；**EditProfile 已完成静态预接/账号隔离/刷新接力**（§2.43），但 production policy 仍关闭；**P7 完成 = 头像框 + 渠道图标**（§2.44，PR #41 + 收尾 PR #43，含 AuthMode 契约修正与失败保留语义）；**P5 卡片 ⋮ 菜单完成**（§2.45，PR #46：编辑原始 JSON 透传 `CreateSurface` 编辑态、删除/置顶非乐观 + 重拉对账；**owner 模拟器冒烟目测 PASS**，2026-08-19）—— **Profile 全部批次收口**，W3 业务面仅剩 ChatList P2 Map（PR #42 draft 进行中）。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`、`pages/chatlist/`、`pages/search/`、`pages/screen/`**；EditProfile 刷新接力落在 `pages/profile/ProfileRefreshHub` 与 `tipsy-auth.notifyProfileChanged`。
-- **submodule**：pin **`5ba22c8bbbade8d726ef2c5921b76a221a50be79`**（§2.44 的账号缓存清理 + Android KeyboardProvider inset 修复；前一 pin `4ae2ebc667` 是 §2.43 EditProfile 账号安全/通知链）。⚠️ `da4f65a` 与 PR #34 的三处壳改动**必须同时存在**：指针回退则 exclude 仍失效，而 styles/lifecycle 两处已让构建变绿 —— 会得到「构建通过但图片仍坏」的假绿。
+- **submodule**：pin **`5ba22c8bbbade8d726ef2c5921b76a221a50be79`**（§2.46 的账号缓存清理 + Android KeyboardProvider inset 修复；前一 pin `4ae2ebc667` 是 §2.43 EditProfile 账号安全/通知链）。⚠️ `da4f65a` 与 PR #34 的三处壳改动**必须同时存在**：指针回退则 exclude 仍失效，而 styles/lifecycle 两处已让构建变绿 —— 会得到「构建通过但图片仍坏」的假绿。
 - **已验证**：main 上 PR #25 的 G1 Fast Gate 全绿。W3 Search P1 提交前快照的本机证据：`lintDirectApkDebug` 无新增（baseline 5 条）、`assembleGooglePlayDebug`/`assembleDirectApkDebug` 通过、**DirectApk app 单测 695 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿；directApk 真机主链路冒烟 PASS（§2.31）。提交前审查再新增 13 条、扩展 2 条回归测试并修正并发/auth/Router/点击归因/分页去重行为，最终源码预计 708 条；**最终 head 未在本机重跑 Gradle，交 G1 验证**。
 - **他人主页已实现**（§2.32，2026-08-14）：6 文件 1,469 行，`AppRoute.UserProfile` 进白名单 —— **搜索 → 创作者 → 他人主页是壳的第一条端到端可用路径**。审计推翻了「复用自己视角」的前提（七处偏差）：只有 **1 个 tab**（RN 注释说两个，代码是一个）、数据源另有四条、`size` **200 且不翻页**、`/user/get/public` 走 `axiosAuth` 会对游客弹登录页、`/plot/list/creator` **现网从未被调用**、关注按钮在 `ProfileHeader.tsx` 而非 `user-profile.tsx`。真机冒烟 **NOT RUN**。
 - **Settings 列表 + 语言页已实现**（§2.33，8 文件 1,501 行）：补上了真实功能缺失 —— 此前**壳内没有任何入口能改语言**。审计订正三处：语言页**要原生实现**（RN 与 iOS 双证据）、`supportedLanguages` 壳内**恒为空**必须自己拉、Limitless 开关是 `nsfw` 的**唯一写方**且仅 directApk 可见。渠道 gating 收在 `SettingsRow` 并对三渠道各有单测。7 个 Surface 子屏（`AppRoute.SettingsSubScreen`）仍被明确拒绝。真机冒烟 **NOT RUN**。
 - **P9 冒烟部分兑现**（§2.37，2026-08-17）：§9.1 十项里 **6 项 PASS**（未登录/登录切换/Back 栈底/首帧/Embedded/50 次泄漏 —— 无泄漏、容器实例恒为 1、PSS +3.7%）、**语言切换**当轮 FAIL（壳缺陷倒灌，非 ChatDetail 问题；已修并于 §2.39 复跑 **PASS**）、旋转恢复 NOT RUN。⚠️ 跑在**模拟器**上，§2.5 已定不作覆盖升级证据。同时查出 **autolinking exclude 从 W0 起一直静默失效**（PR #34）—— 此前所有构建都带着 dev-launcher 在跑。
 - **语言倒灌已修 + 共享键系统扫描**（§2.38，2026-08-18）：owner 选路 1 —— 语言页确认时回写 `user-storage` 信封（`AccountLanguageWriter` merge + `notifyUserStoreChanged`）。**跨仓契约是现成的**：RN 侧监听、桥方法、iOS 实现三者都在，只是 Android 壳从没调过 → **零 RN 改动、零 submodule bump**。前置顾虑核实排除（该 key 无 `version`/`migrate`，⚠️ 但性别筛选那个 key 有自定义 `merge`，结论**不可外推**）。9 个共享键的读写方向已全扫，表落在 `LegacyMmkvStore` 类注释。app 单测 **907 条** skipped=0，三组测试均做过反向验证。✅ **§9.1 语言那列已复跑 PASS（模拟器，非真机）**（§2.39）。
 - **语言复跑 PASS + 分级开关 404**（§2.39，2026-08-18）：语言那列 FAIL → **PASS**（`initialProps.context.languageCode` 实测 `zh-tw`，往返 5 次稳定）。同轮查出**`POST /user/nsfw` 少了 `/update` → 404**：因 `onNsfwToggle` 是刻意的非乐观更新（失败自动回滚），404 表现为「开关点了自己弹回去」，与「没点到」无法区分；fake-API 单测验不到真实路径，已补 `SettingsApiContractTest`（MockWebServer 真往返，已反向验证）。顺带修 `SettingsFragment` 从不观察 `languageError` 导致的**零提示**（收集器挂 `onViewCreated`，不是 `onStart`）。⚠️ 读共享 MMKV 必须先解析头部 `actualSize` —— 追加写会让 `tail` 读到上一代残留，方向正好相反。
-- **2026-08-19 Surface/会话稳定性收口**（§2.44）：Profile 短列表恢复滚动；Android 原生登录把 token、完整 `/user/info` 快照与 loggedIn 收成一个事务；登出/换号同步清 `user-storage` 与无账号维度聊天 LRU；Surface 首帧宿主对齐 iOS；修复 KeyboardProvider 污染共享 Activity 状态栏 inset。RN pin 已推 `feat/android-native`。
+- **2026-08-19 Surface/会话稳定性收口**（§2.46）：Profile 短列表恢复滚动；Android 原生登录把 token、完整 `/user/info` 快照与 loggedIn 收成一个事务；登出/换号同步清 `user-storage` 与无账号维度聊天 LRU；Surface 首帧宿主对齐 iOS；修复 KeyboardProvider 污染共享 Activity 状态栏 inset。RN pin 已推 `feat/android-native`。
 - **✅ 卡片点击已解锁**（§2.36，2026-08-17）：`ChatDetail` / `MiniPhoneChat` 进白名单，Home/ChatList/Search/Screen 四个页面的卡片点击**第一次有下一屏**。Profile 的 `EditProfileSurface` 已完成静态预接（§2.43），但因 §9.1 全 NOT RUN 仍由 policy 明确拒绝；其余 Gems/UserCoins/RoleCard/Follow 与 Settings 7 子屏仍点不动。§12 实例关闭链**记为已接受偏差**（单层容器弹不错；根治要改 RN 侧 9 个调用点 + 双壳回归）。
 - **Tab3 创建入口已接通**（§2.40，2026-08-18，219 行）：`AppRoute.Create` 进白名单，Tab3 的 ➕ 从「只打一行日志」变成挂 `CreateSurface` 直达创建表单 —— **五个 Tab 全部可用**。壳只传 `createEnterSource` 一个 prop，**刻意不复刻** RN tabPress 那四个参数（Surface 自决落地页，§2.30 纪律）。⚠️ 真机抓到**类别性**缺陷并已修：`AppRoute.Create()` 无参 ⇒ 实例恒相等 ⇒ 去重不解除就「只能用一次」，ChatDetail 因每次带不同 characterId 而侥幸未暴露；后续每个无参路由都要配解除。✅ §2.41 已补微根/微栈/注册/bootstrap 机器断言；⚠️ §9.1 的 8 个设备/生命周期验收格仍全 `✎`。
 - **Screen P1 + P2 代码已实现**（§2.35 / §2.42）：P1 落 AB 端点分流、归因、首屏缓存与会话埋点；P2 让 `showcase` 首次接入 Media3、有界播放器池、±1 窗口、RN Android buffer、动态 50MB cache、三轴播放门与声音开关。PR #39 最终 head `13cc633` 的 G1 全绿；⚠️ feed 无 showcase，真实视频/cache 失败/API24–33 层序/audio focus 四项仍 NOT RUN，故**不是 production-ready**。
@@ -81,7 +83,7 @@
 | W0 | 工程地基 + brownfield DebugSurface | 基建 | 🟢 完成 | `93d2c5551` | `4f191e8` |
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟢 **完成**：契约层已收口且 CI 已验；**P9 已完成**（§2.36，白名单放开 + 桥桩回填）；§12 关闭链记为**已接受偏差**（owner 2026-08-17）。**冒烟部分兑现**（§2.37 + §2.39）：§9.1 **7 过 / 3 未跑**，业务分流项未验。语言那项的壳缺陷已修（§2.38）且**复跑 PASS（模拟器）**（§2.39） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17/#33 已并） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
-| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：Profile 主体完成（P1–P4、P6，§2.25–§2.29）；ChatList P1、Search P1/P2、他人主页、Settings 列表/语言均已落；**EditProfile 已完成静态预接、账号隔离与 Profile 刷新接力**（§2.43），会话/Surface 稳定性收口见 §2.44，但 production policy 仍关闭。剩 Profile P5 ⋮ 菜单/P7 头像框、ChatList P2 Map 与 EditProfile §9.1 设备矩阵 | `5ba22c8bbbade8d726ef2c5921b76a221a50be79` | —（PR #21–#30 已并；本轮 PR 待开） |
+| W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **进行中**：**Profile 全部批次完成**（P1–P7，§2.25–§2.29、§2.44 头像框+渠道图标、§2.45 卡片菜单）；ChatList P1、Search P1/P2、他人主页、Settings 列表/语言均已落；**EditProfile 已完成静态预接、账号隔离与 Profile 刷新接力**（§2.43），会话/Surface 稳定性收口见 §2.46，但 production policy 仍关闭。剩 ChatList P2 Map（PR #42 draft 进行中）与 EditProfile §9.1 设备矩阵 | `5ba22c8bbbade8d726ef2c5921b76a221a50be79` | —（PR #21–#30、#41、#43、#46 已并；#44 待合，#45 是 #46 的前身，因叠栈 base 删除被 GitHub 自动关闭，内容同 #46） |
 | W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | 🟡 **进行中**：Screen P1 数据链（§2.35）与 P2 Media3 有界播放机制（§2.42，PR #39 / `6084df0`）已实现；P2 仍有真实视频/cache 失败/API24–33 层序/audio focus 四项 NOT RUN，故不 production-ready。Tab3 已接 `CreateSurface`（§2.40/§2.41）；剩 Screen next-item/fade/firstInteractive/P3、10 个未启用业务 Surface（含 W3 已预接但未放行的 EditProfile）、系统能力、OTA | `da4f65a04f50bc098c2df3bd9f8fbcc13018f7a5` | `6084df0d401e610d6fbcf26ce88c2bc494025927` |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
 
@@ -1460,7 +1462,7 @@ W3 开工，Profile Tab 从占位换真页。新增 `pages/profile/`（16 文件
 —— 壳只读不写 RN 的 `user-storage` 信封，冷启动首进 Profile 多一次 loading 是
 记录在案的代价，要消掉走「读信封作种子」而不是壳写信封）。
 
-> 2026-08-19 订正：这是本刀当时的分期边界，已由 §2.44 的完整会话发布取代；
+> 2026-08-19 订正：这是本刀当时的分期边界，已由 §2.46 的完整会话发布取代；
 > Android 现在会 merge 写入 `user-storage`，同时保留 `CurrentUser` 作为 Native 内存模型。
 
 **范围**：`/user/info` 资料头部、`/user/stats_info` 四统计、`/user/created/list`
@@ -1980,6 +1982,11 @@ Search 的创作者点击换真页。新增 6 文件 1,469 行（`PublicProfileA
 
 开工前审计推翻了「复用自己视角基础设施」这个直觉前提 —— 七处偏差
 （1–4 是最初审计，5–7 是写码时二次核实补的），全部已按实测落地：
+
+> ⚠️ **第八处偏差后来在 P7 补出**（2026-08-19，§2.44）：RN 的 `ProfileHeader`
+> 自己/他人两个视角都渲染昵称下方的社交渠道图标（数据他人视角来自
+> `/user/get/public` 的 `display_urls`），本节的头部实现**没有**这排图标。
+> 展示层可直接复用 `ProfileSocialLinks`，留待他人主页后续包。
 
 1. **他人主页只有 1 个 tab，不是 5 个**（`CharacterGrid.tsx:980-1005`）：
    `isSelf` 否分支的 `return [...]` 里只有一个元素。该分支上方注释写
@@ -2958,7 +2965,7 @@ Back，**语言不再回落英文**，再连跑 4 次往返稳定；反向（繁
 三重 gating 要求 `!isGooglePlay && nsfwEnabled`，而 nsfw 读的是
 `HomeFilterStore.readNsfw()`（config-persist 镜像）。壳**刻意没有 `writeNsfw`**
 （镜像由 RN 单向接力），故开关打开后镜像仍是 `false`，重启后开关也回到 `false`。
-⚠️ **这条不算已验**：§2.44 后 `/user/info` 的完整 `user-storage` 已包含 `nsfw`，
+⚠️ **这条不算已验**：§2.46 后 `/user/info` 的完整 `user-storage` 已包含 `nsfw`，
 RN runtime 启动时可按现有订阅接力到 `config-persist`；但纯 Native 路径在 RN 尚未启动时
 仍没有直接写 `config-persist.nsfw`。因此「打开任一 Surface 后自愈」不等于该 Native
 分级筛选已闭环，仍需单独定所有权并做设备验证。
@@ -3290,7 +3297,169 @@ Native 表单。Android 只补宿主契约、账号安全门与修改成功后�
 生产 policy 必须保持关闭；本结论是
 “可提交预接线”，不是 production-ready。
 
-### 2.44 Profile 滚动 + 完整用户会话 + Surface 稳定性（2026-08-19）
+### 2.44 W3 Profile P7：头像框 + 渠道图标（2026-08-19）
+
+P7 的定义在 §2.26：**头像框与渠道图标两半**。PR #41（merge `cc97de0`）只落了
+头像框渲染缝且零测试；收尾 PR 修正其两处偏差、补齐渠道图标半边并补测试。
+
+#### 第一笔：头像框渲染缝（PR #41，7 文件 +79 行）
+
+- `CurrentUser` 增 `avatar_decoration_code`（`/user/info`，`ScalarCoercion` +
+  空串归 null）；`AvatarDecorationApi` 拉公开目录
+  `/avatar_decoration/config/list` 按 code 解析 `image_url`；
+  `ProfileViewModel` 刷新链解析后经 `ProfileState.avatarDecorationImageUrl`
+  下发；`ProfileHeaderSection` 把框画成头像上层的**不可点 overlay**
+  （`ContentScale.Fit`，testTag `profile_avatar_decoration`）。
+- **尺寸对等已核实**：RN 是 58dp 头像内嵌 65dp 容器、框画满 65dp
+  （`TipsyAvatar.tsx:87-92`）；壳的头像本体本就简化为满 65dp 圆（P2 已记），
+  框取同一 65dp 盒即对等。
+- **SVG 解码能力当前是传递依赖**：`react-native-screens` 显式引了
+  `coil-svg:3.0.4`（其 `android/build.gradle:249-253`），coil3 靠
+  ServiceLoader 自动注册 decoder。显式声明已在 ChatMap 分支 commit
+  `4acf6cd`（「两轨共享前置」，随 PR #42 入 main）—— 在那之前若 RN 侧
+  移除该依赖，框会**静默不渲染**。
+
+#### 第二笔：收尾修正（本节 PR）
+
+1. **鉴权模式契约偏差**：首版用 `AuthMode.NONE`，RN 真值是
+   **`axiosPublic`**（`apis/avatarDecoration.ts:16`）→ 正确映射是
+   `OPPORTUNISTIC`。NONE 恰是 `AuthMode` 类注释点名的 iOS「搜索历史恒空」
+   bug 形状 —— 带不带 token 的行为差异只在服务端，客户端与单测都看不出来。
+   已修并补 `AvatarDecorationApiContractTest`（MockWebServer 真往返，5 条：
+   路径、有 token 必带、无 token 照发、code 查无/`image_url` 空串按无框、
+   空 code 零请求）。
+2. **失败语义对齐 RN**：首版目录拉取失败会把已显示的框清空（日志却写着
+   「保留」），且目录往返**垫在**用户资料落地与 stats/钱包链前面。RN 真值：
+   `useAvatarDecorationConfig` 读 MMKV 持久化的 `config-persist` 目录，
+   瞬时网络失败不掉框。已改为：user 先落 state；框在 `userStatsJob`
+   **子协程**独立解析（登出/新刷新随 job 取消，旧账号在飞解析不残留写回，
+   账号边界仍由 `onAuthChanged` 整表复位兜底）；**拉取失败保留上次 URL**
+   （同钱包/统计「一次网络抖动不清屏」纪律）；code 为空立即清
+   （EditProfile 取消佩戴 → `notifyProfileChanged` 刷新后旧框不能留）；
+   目录返回但查无此 code 也清（目录是真值）。`ProfileViewModelTest`
+   +5 条（合计 46 条）。
+3. 顺带订正 `ProfileHeaderSection` KDoc 里过期的「头像框未做」标题
+   （PR #41 改了正文没改标题）。
+
+#### 第三笔：渠道图标（本节 PR，P7 的另一半）
+
+昵称下方的社交平台图标行（RN `SocialLinksDisplay.tsx`，Discord/Instagram/
+TikTok… 点击开外部浏览器）：
+
+- `CurrentUser` 增 `display_urls` 逐条容错解析（单条残缺跳过不弃整表；
+  `display_status` 缺失按**不可见** —— 状态未知宁可不展示，也不把用户设为
+  HIDDEN 的链接放出来）。
+- `ProfileSocialLinks` 收展示层三层过滤，**顺序照 RN**：
+  ① `display_status == VISIBLE(1)` ② 平台在 9 枚举支持名单（未知平台静默
+  跳过）③ 不在隐藏名单 `[kofi, patreon]`（`socialPlatforms.ts:53-56`，
+  RN 注释"暂时隐藏"—— 名单变了两端一起改）。图标 20dp、行 gap 12、
+  昵称列 gap 6（`ProfileHeader.tsx` styles）；9 个 png 资产已按
+  `ic_profile_social_<platform>` 搬入 `drawable-nodpi`。
+- 点击对齐 RN `WebBrowser.openBrowserAsync`：`ACTION_VIEW` + 捕获
+  `ActivityNotFoundException`（照 `SettingsFragment.openExternalUrl` 先例）。
+- `ProfileSocialLinksTest` 5 条对拍三层过滤 + 原序 + 九平台资产映射完整性；
+  `CurrentUserParserTest` +4 条（合计 9 条）。
+- ⚠️ **新识别偏差（未修）**：RN 的 `ProfileHeader` 自己/他人两个视角**都**渲染
+  这排图标（`useProfile.tsx:223-225`：`isSelf ? store : publicUser.display_urls`），
+  §2.32 的七处偏差审计没覆盖这一条 —— 壳的他人主页头部（`PublicProfile*`）
+  目前**没有**渠道图标。留待他人主页后续包（数据从 `/user/get/public` 的
+  `display_urls` 来，展示层可直接复用 `ProfileSocialLinks`）。
+
+#### 与 RN 的刻意差异
+
+壳不复刻 config-persist 的 hydrate 持久层（§2.19 记过那三个 hydrate
+**静默吞失败**的坑，全新安装必现空框），每次 Profile 刷新链解析一次目录 ——
+代价是每次刷新多一个轻量请求，换来失败可见且不背 MMKV 残留的历史包袱。
+
+#### 验证
+
+- 本机：`ProfileViewModelTest` 46 + `AvatarDecorationApiContractTest` 5 +
+  `ProfileSocialLinksTest` 5 + `CurrentUserParserTest` 9；全套件
+  `testGooglePlayDebugUnitTest` **1005 条 failures=0 / skipped=0** +
+  `:tipsy-auth:testDebugUnitTest` 过 + `lintDirectApkDebug` 过 +
+  `assembleGooglePlayDebug` 过；完整 G1 交 CI（PR #41 自身的 G1 在 PR 上已绿）。
+- 真机/模拟器 **NOT RUN**（按 owner 2026-08-14 决定累积）：待验清单加两条 ——
+  「Profile 头像框实际渲染（含 SVG 图源，ServiceLoader 注册只有设备能证）」、
+  「渠道图标行渲染 + 点击开浏览器」。
+
+### 2.45 W3 Profile P5：创作卡 ⋮ 菜单 —— 编辑/删除/置顶（2026-08-19）
+
+**Profile 的最后一块业务**（方案 §8.1「卡片菜单」行）。动作矩阵与 iOS 壳
+一致：**角色=编辑/删除/置顶、故事=删除/置顶、游戏=置顶**。
+
+#### RN 真值审计（实现前逐条核实）
+
+- **动作与端点**：置顶是**单端点 toggle** `/character/toggle_pin`
+  （`apis/character.ts:461-470`，`item_id` + `item_type` 三类共用，服务端
+  翻转并回 `is_pinned`）；删除分两端点两字段 —— `/character/delete`
+  （`character_id`）与 `/story/delete`（`story_id`），不可归并。
+- **id 全在嵌套层**：RN 传给卡片的是 `cellItem.character || cellItem`
+  （`CharacterGrid.tsx:568-641`），删除/置顶用的 id 是嵌套对象的
+  `character_id` / `story_id`，**不是顶层 `item_id`**。story 置顶是
+  `item_id || story_id` 兜底链（`StoryItem.tsx:463`）。
+- **语义**：pin/delete 都**非乐观** —— 成功后 `createdMutate` 整列表重拉
+  对账（置顶影响排序，服务端才知道 pinned 组终序）；pin 单飞（`isPinning`
+  门）；成功 Toast 按**响应**的 `is_pinned` 分流；失败按
+  `up to 3 pins allowed` 子串分流上限文案。
+- **遮罩卡也显示 ⋮**（`isSelf &&` 块在 `isMasked` 三元**之外**）——
+  这是用户删除不可用角色的唯一途径，做反的话这类角色永远删不掉。
+- **编辑**（仅 character；story 编辑暂缓、game 无编辑）：
+  `initCharStateUpdate(嵌套对象)` 全量预填 → `CreateSurface` 编辑态。
+  iOS 契约 §3 的硬教训照单全收：**by-id 重拉会在保存时把
+  `conversation_style`/`custom_prompt`/`show_background`/`animated_image`
+  重置（= 数据损坏）**，必须原始 JSON 原封透传。
+
+#### 落地（14 文件）
+
+- **模型**：`ProfileCreatedItem` 增 `deleteId`/`pinId`（嵌套优先、顶层兜底，
+  按类型分流）与 `editPayloadJson()`（取嵌套 `character` 对象**原文**，
+  非 character 返回 null）。
+- **API**：`ProfileApi` 增 `togglePin`/`deleteCharacter`/`deleteStory`
+  （全 REQUIRED）。
+- **ViewModel**：菜单单开互斥（`openMenuKey` 单字段，RN 那套
+  `closeOtherMenu` ref 表不需要）、删除确认二段式（`pendingDelete`）、
+  pin 单飞（`pinningKey`）、成功重拉对账（`reloadCreatedTab` 只动创作 tab）、
+  Toast key 复用 ChatList 的五个词条 + 上限词条（全在 SHELL_KEYS）。
+  ⚠️ **壳补了 RN 没有的失败提示**：RN 删除的 onConfirm 无 try/catch，
+  失败表现为「点了删除、卡片还在、零提示」—— §2.39 那类静默失败不继承。
+- **编辑链**：新 route `AppRoute.EditCharacter(characterJson, characterId)`
+  → 生产白名单 + `ShellNavigator` 分支（**复用 CreateSurface 容器**，
+  与 Create 共用幂等判定与退栈去重解除谓词）→ `SurfaceProps` 产出
+  `editCharacter`（结构化嵌套对象）+ `editCharacterId`（有损兜底；
+  坏 JSON 退化成仅 id —— 仍是编辑态，**绝不静默落创建态**）。
+  props 侧新增 `JsonRouteParams`（JSON→Map 结构转换，显式 null 保留为
+  NULL 哨兵 —— zustand 里「键为 null」与「键缺失」语义不同，丢 null 会让
+  清空过的字段旧值复活；大整数走 Long 不丢精度）＋ `SurfaceContract.putRouteParams`
+  扩 List/null 支持（对象数组走 `putParcelableArrayList`，Bundle 不是
+  Serializable —— 走错 API 平时正常、**进程重建 parcel 时才崩**）。
+- **UI**：⋮ 触发钮（右下 4/12、24dp，**clickable 吃掉事件** —— iOS 装饰
+  View 穿透教训）；卡内浮层（黑 60% scrim 点击关闭 + 两列动作网格照
+  `menuGrid` 布局；**圆形模糊揭开动画刻意不迁**，纯视觉增强）；删除确认
+  弹窗照 `TipsyModal.tsx` Android 分支（80% 宽/圆角 10/三段深色渐变/
+  底部两键等分横排 + 1px 分割线 —— 不是 Material 右对齐按钮）。
+  **Share 刻意不迁**（`ShareCharacter` 427 行 + 分享基建，iOS 壳同样未迁）。
+  他人主页复用 `ProfileGridItem` 不传 `menu` → 无菜单（RN 的 `isSelf &&`）。
+- **埋点**：删除成功发 `delete_character`（camelCase `characterId`，
+  仅 character —— story 的 onConfirm 实测无埋点）。
+
+#### 验证
+
+- 本机：`ProfileViewModelTest` +9（55 条）、`ProfileParserTest` +6、
+  `SurfacePropsTest` +3、`AppRouterTest` +1、新 `JsonRouteParamsTest` 4 条；
+  全套件 **1028 条 failures=0 / skipped=0** + `:tipsy-auth` 过 +
+  `lintDirectApkDebug` 过 + `assembleGooglePlayDebug` 过；G1 交 CI。
+- ⚠️ lint 硬门实测抓出 **IconDuplicates**：RN 的 `card_delete.png` 与
+  Search 已入库的清除图标是同一张图 —— 已复用 `ic_search_history_clear`
+  不重复入库。搬 RN 资产前先查重是个可复用的教训。
+- ✅ **模拟器轻量冒烟 PASS**（owner 2026-08-19 目测，directApk）：菜单开合/
+  删除/置顶/编辑主链路无异常。⚠️ 目测不等于逐项验收，且模拟器不作
+  覆盖升级证据（§2.5）。
+- 真机 **NOT RUN**（累积）：待验清单仍留三条 ——「菜单开合与动作
+  （含遮罩卡的 ⋮）」「删除/置顶真实往返 + 上限文案」「编辑态进
+  CreateSurface 的字段保真（改保存后 `conversation_style` 等不被重置）」。
+  编辑保真只有真机能证 —— 单测只能钉 props 形状，钉不了 RN store 预填。
+
+### 2.46 Profile 滚动 + 完整用户会话 + Surface 稳定性（2026-08-19）
 
 本轮由设备回归连续抓到四类互相关联的问题，并按 iOS 宿主边界收口：
 
@@ -3315,20 +3484,20 @@ Android submodule 固定到 `5ba22c8bbbade8d726ef2c5921b76a221a50be79`。
 
 验证：用户已在模拟器确认 Profile 滚动与 Surface 往返不再闪回；RN Prettier 与补丁
 反向应用检查 PASS。Android 新增静态/单元测试源码覆盖 Profile padding、inset 补丁、
-完整字段/信封、generation/subject 闸门、登录必需镜像与 token 删除回调；按 owner 约束，
-本轮未运行 Gradle 编译、单测或 lint，交 CI 验证。
+完整字段/信封、generation/subject 闸门、登录必需镜像与 token 删除回调；PR #44 首轮
+G1 Fast Gate 已 PASS，解决 main 冲突后的 merge head 仍以新一轮 G1 为准。
 
 ## 3. 横切能力
 
 
 | 能力 | 状态 | 落地处 |
 | --- | --- | --- |
-| Auth 所有权 | 🟡 **closeout 已实现且 CI 已验**（§2.22），完整用户会话待本轮 CI | `shell/auth/` + `shell/user/`（§2.13 / §2.18 / §2.44）。single-flight/generation/原子条件清理已收口；Application 统一发布 Native store 与 RN `user-storage`，登录要求完整快照成功后才广播；历史 token 迁移未完（P2） |
+| Auth 所有权 | 🟡 **closeout 已实现且 CI 已验**（§2.22），完整用户会话待 merge-head CI | `shell/auth/` + `shell/user/`（§2.13 / §2.18 / §2.46）。single-flight/generation/原子条件清理已收口；Application 统一发布 Native store 与 RN `user-storage`，登录要求完整快照成功后才广播；历史 token 迁移未完（P2） |
 | `tipsy-auth` Android 实现 | 🟡 **桥已注册、能力 PARTIAL** | `modules/tipsy-auth/android/` + `ShellAuthProvider`；主线程约束已落地。§2.36 回填了 `requestLogin` / `openUserProfile` 系三个**标签过期的桩**（debug 会抛）—— ⚠️ **能力落地后必须回来改 override**，且现由 5 条单测钉死；§2.43 新增可选零参 `notifyProfileChanged`，Android 注册方法数 **17**，旧 iOS/旧壳无需同步实现；仍未实现的只有 `notifyOnboardingCompleted`（W4） |
 | 网络层 | 🟡 **closeout 已实现且 CI 已验**（§2.22） | `shell/network/`（§2.14 / §2.18）。过期 token 发送守门与双入口共享 gate 已实现。**未引 Retrofit** |
 | i18n | 🟢 **已完成**（含语言设置页 + 信封回写） | `shell/i18n/`（§2.16）。壳是唯一 writer；key-based 查表 + 两条 normalize 规则 + Compose 自订阅组件。**原生语言设置页已实现**（§2.33）—— RN 的 `SettingsSurface` 白名单刻意不含 `Language`，iOS 侧也是原生 `LanguageViewController`。写入走 `POST /user/set_language` **+ 回写 `user-storage` 信封**（§2.38，2026-08-18）—— ⚠️ 原记「不经 Zustand 信封」，**那正是 §2.37 语言倒灌的根因**，已修：`AccountLanguageWriter` merge + `notifyUserStoreChanged`。真机冒烟仍未跑（§9.1「语言切换」列待复跑） |
 | Router / 深链 | 🟡 parser/router 机制已落地，**生产白名单六个目标** | `shell/router/`；三个纯原生（`Search` §2.31 / `UserProfile` §2.32 / `Settings` §2.33）+ 三个 Surface 目标（`ChatDetail` / `MiniPhoneChat` §2.36 + `Create` §2.40）。带参路由用谓词解除去重；无参 data-object 路由必须在退栈后按类型解除，否则只能打开一次。`EditProfile` 已预接解除但 policy 仍关闭（§2.43） |
-| RN Surface 宿主 | 🟡 机制已落地；**业务参数通道 P9 才真正接上** | `RNSurfaceFragment`（共享单 ReactHost）；UUID/首帧/reappear/props builder 已有。§2.44 首帧宿主已对齐 iOS（不透明 Native wrapper + 透明 RN Root，无 cover/时机猜测），并修复 KeyboardProvider 污染共享 Activity inset；真实 instance-aware close **记为已接受偏差**（§2.36） |
+| RN Surface 宿主 | 🟡 机制已落地；**业务参数通道 P9 才真正接上** | `RNSurfaceFragment`（共享单 ReactHost）；UUID/首帧/reappear/props builder 已有。§2.46 首帧宿主已对齐 iOS（不透明 Native wrapper + 透明 RN Root，无 cover/时机猜测），并修复 KeyboardProvider 污染共享 Activity inset；真实 instance-aware close **记为已接受偏差**（§2.36） |
 | Media3 / Screen 视频 | 🟡 **P2 机制已落地，验收未闭环** | `pages/screen/ScreenPlayerPool` / `ScreenPlayerLedger` / `ScreenVideoHost` / `ScreenVisibility`（§2.42）：`largeMemoryClass` 3～5 有界池、±1 窗口、RN Android buffer、动态 50MB `SimpleCache`、三轴播放门与 audio focus=true。最终 head G1 全绿；真实视频/cache 失败/API24–33 层序/audio focus 四项仍 NOT RUN，next-item/fade/firstInteractive/P3 未做，故不 production-ready |
 | Push | 🔴 未开始 | — |
 | Analytics（Qt） | ⏸️ **推迟，但 facade 已落地** | `shell/analytics/Analytics`（§2.23）：业务页照常调用、uid 排队语义照搬 RN，debug 落日志。Qt 接线本身仍推迟（§2.17）—— ⚠️ **`preInit` 一次都不会调**，facade 存在 ≠ 埋点在上报 |
@@ -3420,7 +3589,7 @@ P9 冒烟新增的两项（2026-08-17，§2.37）：
 - ~~🔴 **分级开关（Limitless）点了没反应**~~ ✅ **已修**（2026-08-18，§2.39）：
   `POST /user/nsfw` 少了 `/update`（真值 `/user/nsfw/update`）→ 404，因失败自动回滚
   而伪装成「没点到」。已补 MockWebServer 契约测试 + 失败 Toast。
-- 🟡 **壳内 nsfw 镜像谁来接力**（§2.39 新增，**需 owner 定**）：§2.44 已让
+- 🟡 **壳内 nsfw 镜像谁来接力**（§2.39 新增，**需 owner 定**）：§2.46 已让
   `/user/info` 完整写 `user-storage.nsfw`，RN runtime 启动后会按现有订阅接力到
   `config-persist.nsfw`；但纯 Native 路径在 RN 未启动时仍不会写 config 信封。
   后果从「永远不出现」缩小为「首次 Surface 前可能不出现」，仍需定所有权与验收。

@@ -52,6 +52,11 @@ object ProductionRoutePolicy {
         //（`index.surfaces.js:136`），且 §9.1 的单层容器/popSurface 收口
         // 与 ChatDetail 同一条链
         AppRoute.Create::class.java,
+        // P5 编辑入口：**同一个 CreateSurface 容器**的编辑态（props 带
+        // `editCharacter` 全量对象）。容器 gate 复用 Create 那行；props 形状
+        // 由 SurfacePropsTest + SurfaceContractTest 钉住。编辑保真（原始 JSON
+        // 原封透传）是它单独成 route 的全部理由 —— 见 AppRoute.EditCharacter
+        AppRoute.EditCharacter::class.java,
     )
 }
 

@@ -230,6 +230,143 @@ class ProfileViewModel(
         loadPages(tab, fromPage = p.nextPage)
     }
 
+    /** 一次性 Toast 已展示，清状态（同 `ChatListViewModel.consumeToast`）。 */
+    fun consumeToast() {
+        _state.value = _state.value.copy(toastKey = null)
+    }
+
+    // ── P5 卡片 ⋮ 菜单（方案 §8.1：角色=编辑/删除/置顶、故事=删除/置顶、游戏=置顶）──
+
+    /** 打开某张卡的菜单。单字段天然互斥 —— RN 那套 `closeOtherMenu` ref 表不需要。 */
+    fun onMenuOpen(item: ProfileCreatedItem) {
+        _state.value = _state.value.copy(openMenuKey = item.dedupeKey)
+    }
+
+    fun onMenuDismiss() {
+        _state.value = _state.value.copy(openMenuKey = null)
+    }
+
+    /** 菜单「Delete」→ 关菜单、挂确认弹窗（真正删除在 [onDeleteConfirmed]）。 */
+    fun onDeleteRequested(item: ProfileCreatedItem) {
+        _state.value = _state.value.copy(openMenuKey = null, pendingDelete = item)
+    }
+
+    fun onDeleteDismissed() {
+        _state.value = _state.value.copy(pendingDelete = null)
+    }
+
+    /**
+     * 确认删除（`CharacterGridItem.tsx:825-840` / `StoryItem.tsx:832-846`）。
+     *
+     * 语义照 RN：**服务端先删、成功后整列表重拉对账**（不是 ChatList 那种
+     * 乐观移除）—— 弹窗在发请求前就收掉，列表在重拉完成时更新。
+     * 成功不弹 Toast（RN 如此）；仅 character 发 `delete_character` 埋点
+     * （story 的 onConfirm 没有埋点，实测）。
+     *
+     * ⚠️ 失败提示是壳补的（`Delete failed`，ChatList 已有 key）：RN 的
+     * onConfirm **没有** try/catch，失败表现为「点了删除、卡片还在、
+     * 无任何提示」—— §2.39 那类静默失败，不继承。
+     */
+    fun onDeleteConfirmed() {
+        val target = _state.value.pendingDelete ?: return
+        _state.value = _state.value.copy(pendingDelete = null)
+        val deleteId = target.deleteId
+        if (deleteId.isNullOrBlank()) {
+            // game 无删除动作，UI 不该给出这个入口；走到这里是装配错误
+            logWarn("删除目标缺 id：type=${target.type} key=${target.dedupeKey}", null)
+            _state.value = _state.value.copy(toastKey = KEY_DELETE_FAILED)
+            return
+        }
+        coroutineScope.launch {
+            val result = runCatching {
+                when (target.type) {
+                    ProfileItemType.CHARACTER -> api.deleteCharacter(deleteId)
+                    ProfileItemType.STORY -> api.deleteStory(deleteId)
+                    ProfileItemType.GAME -> error("game 卡无删除动作")
+                }
+            }
+            if (result.isFailure) {
+                val error = result.exceptionOrNull()
+                if (error is CancellationException) throw error
+                logWarn("删除失败：${target.dedupeKey}", error)
+                _state.value = _state.value.copy(toastKey = KEY_DELETE_FAILED)
+                return@launch
+            }
+            if (target.type == ProfileItemType.CHARACTER) {
+                // 参数名照 RN sendEvent（camelCase characterId）
+                Analytics.track("delete_character", mapOf("characterId" to deleteId))
+            }
+            reloadCreatedTab()
+        }
+    }
+
+    /**
+     * 置顶/取消置顶（`CharacterGridItem.tsx:396-424` 的 `handleTogglePin`）。
+     *
+     * RN 语义逐条对齐：
+     * - 单飞（`isPinning` 门）；点击即关菜单；
+     * - **非乐观**：成功才重拉列表（置顶影响排序，本地重排不可靠，
+     *   服务端才知道 pinned 组的最终顺序）；
+     * - 成功 Toast 按**响应**的 `is_pinned` 分流（`res?.is_pinned` falsy →
+     *   Unpinned，null 同 falsy）；
+     * - 失败 Toast：服务端 msg 含 `up to 3 pins allowed` → 上限文案，
+     *   否则统一 `Pinned failed`（RN 不分置顶/取消方向，照抄）。
+     */
+    fun onTogglePin(item: ProfileCreatedItem) {
+        if (_state.value.pinningKey != null) return
+        val pinId = item.pinId
+        if (pinId.isNullOrBlank()) {
+            logWarn("置顶目标缺 id：key=${item.dedupeKey}", null)
+            _state.value = _state.value.copy(openMenuKey = null, toastKey = KEY_PIN_FAILED)
+            return
+        }
+        _state.value = _state.value.copy(openMenuKey = null, pinningKey = item.dedupeKey)
+        coroutineScope.launch {
+            val result = runCatching { api.togglePin(pinId, item.type) }
+            if (result.isFailure) {
+                val error = result.exceptionOrNull()
+                if (error is CancellationException) throw error
+                logWarn("置顶操作失败：${item.dedupeKey}", error)
+                _state.value = _state.value.copy(
+                    pinningKey = null,
+                    toastKey = pinFailureKey(error),
+                )
+                return@launch
+            }
+            _state.value = _state.value.copy(
+                pinningKey = null,
+                toastKey = if (result.getOrNull() == true) KEY_PIN_OK else KEY_UNPIN_OK,
+            )
+            reloadCreatedTab()
+        }
+    }
+
+    /**
+     * 上限判定照 RN `error?.toString().includes('up to 3 pins allowed')` ——
+     * 只认业务 envelope 的 msg（那是 RN 能 includes 到的来源）。
+     */
+    private fun pinFailureKey(error: Throwable?): String =
+        if (error is ApiException.Business &&
+            error.serverMessage?.contains(PIN_LIMIT_MSG_FRAGMENT) == true
+        ) {
+            KEY_PIN_LIMIT
+        } else {
+            KEY_PIN_FAILED
+        }
+
+    /**
+     * 删除/置顶成功后的创作列表对账重拉（RN 的 `createdMutate`）。
+     *
+     * 只动创作 tab：pin/delete 不影响四个统计数字与其它 tab。保留旧列表直到
+     * 新数据到达（清空会闪白，§8.4）。菜单动作只存在于创作 tab，此刻
+     * [cancelInFlight] 打断的必然是自己 tab 的在飞链。
+     */
+    private fun reloadCreatedTab() {
+        cancelInFlight()
+        updatePaging(ProfileTab.CREATED) { it.copy(errorMessage = null) }
+        loadPages(ProfileTab.CREATED, fromPage = 0)
+    }
+
     // ── 内部 ────────────────────────────────────────
 
     private fun loadFirstPageIfNeeded(tab: ProfileTab) {
@@ -360,16 +497,10 @@ class ProfileViewModel(
             // 先刷用户信息：statsInfo 需要 userId
             val userInfoRefreshed = userStore.refresh()
             val user = userStore.current.value
-            val decorationUrl = runCatching {
-                avatarDecorationSource?.fetchImageUrl(user?.avatarDecorationCode)
-            }.onFailure {
-                if (it is CancellationException) throw it
-                logWarn("拉取头像框配置失败，保留头像本体", it)
-            }.getOrNull()
-            _state.value = _state.value.copy(
-                user = user,
-                avatarDecorationImageUrl = decorationUrl,
-            )
+            _state.value = _state.value.copy(user = user)
+            // 头像框独立成子协程：随本 job 一起被取消（登出/新刷新不残留旧写回），
+            // 但一个纯装饰目录不得阻塞头像昵称落地，也不得垫在 stats/钱包链前面
+            launch { resolveAvatarDecoration(user?.avatarDecorationCode) }
             val userId = user?.userId
             // EditProfile 的 dirty 只能由一次真正成功的 /user/info 响应确认清除。
             // refresh 失败会保留 CurrentUserStore 的旧值；若只看 user != null，
@@ -399,6 +530,35 @@ class ProfileViewModel(
         }
         userStatsJob = job
         return job
+    }
+
+    /**
+     * 头像框 code → 图片 URL（P7，方案 §8.1 Profile 行）。
+     *
+     * 语义对齐 RN：`useAvatarDecorationConfig` 读的是 MMKV 持久化过的
+     * `config-persist` 目录，**瞬时网络失败不掉框**。所以：
+     * - code 为空 = 明确「未佩戴」，立即清空 —— EditProfile 取消佩戴后
+     *   `notifyProfileChanged` 触发的刷新不能把旧框留在屏上；
+     * - 目录返回但查无此 code / `image_url` 为空 → 清空（目录才是真值）；
+     * - 拉取**失败**保留上次的 URL（同钱包/统计「一次网络抖动不清屏」的纪律）。
+     *
+     * 账号边界不靠这里：登出/换号走 [onAuthChanged] 整表复位 `ProfileState()`，
+     * 且本函数总在 [userStatsJob] 的子协程里跑，旧账号的在飞解析会随 job 取消。
+     */
+    private suspend fun resolveAvatarDecoration(code: String?) {
+        val source = avatarDecorationSource ?: return
+        if (code.isNullOrBlank()) {
+            _state.value = _state.value.copy(avatarDecorationImageUrl = null)
+            return
+        }
+        runCatching { source.fetchImageUrl(code) }
+            .onSuccess { url ->
+                _state.value = _state.value.copy(avatarDecorationImageUrl = url)
+            }
+            .onFailure {
+                if (it is CancellationException) throw it
+                logWarn("拉取头像框目录失败，保留上次头像框", it)
+            }
     }
 
     /**
@@ -472,5 +632,15 @@ class ProfileViewModel(
 
         /** i18n key（key = 英文原文）。UI 层判等后走 LocalizedText，同 Home。 */
         const val FALLBACK_ERROR_KEY = "Please try again later"
+
+        // P5 菜单动作的 Toast keys（词条已全部在 SHELL_KEYS，勿改英文原文）
+        const val KEY_PIN_OK = "Pinned successfully"
+        const val KEY_UNPIN_OK = "Unpinned successfully"
+        const val KEY_PIN_FAILED = "Pinned failed"
+        const val KEY_PIN_LIMIT = "Up to 3 pins allowed. Unpin one to try again."
+        const val KEY_DELETE_FAILED = "Delete failed"
+
+        /** RN 判上限的子串（`CharacterGridItem.tsx:415`），大小写照原文。 */
+        private const val PIN_LIMIT_MSG_FRAGMENT = "up to 3 pins allowed"
     }
 }

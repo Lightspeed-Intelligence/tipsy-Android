@@ -433,6 +433,87 @@ class ProfileParserTest {
         assertEquals(0L, item.messageCount)
     }
 
+    // ── P5：动作 id 与编辑载荷 ─────────────────────
+
+    @Test
+    fun `character 的删除与置顶 id 取嵌套 character_id`() {
+        // 删除调 deleteCharacter(character.character_id)（CharacterGridItem.tsx:830）；
+        // 置顶 togglePinCharacter(character.character_id,'character')（:403）
+        val item = createdItem(
+            """{"item_type":"character","item_id":"top-id",
+                "character":{"nickname":"n","character_id":"nested-id"}}""",
+        )
+        assertEquals("nested-id", item.deleteId)
+        assertEquals("nested-id", item.pinId)
+    }
+
+    @Test
+    fun `character 嵌套缺 id 时回落顶层 item_id`() {
+        val item = createdItem(
+            """{"item_type":"character","item_id":"top-id","character":{"nickname":"n"}}""",
+        )
+        assertEquals("top-id", item.deleteId)
+        assertEquals("top-id", item.pinId)
+    }
+
+    @Test
+    fun `story 的置顶 id 走 item_id 或 story_id 兜底链`() {
+        // StoryItem.tsx:463 `character.item_id || character.story_id`
+        val withStoryId = createdItem(
+            """{"item_type":"story","item_id":"top",
+                "story":{"title":"t","story_id":"s1"}}""",
+        )
+        assertEquals("s1", withStoryId.pinId)
+        assertEquals("删除走 deleteStory(story_id)", "s1", withStoryId.deleteId)
+
+        val withItemId = createdItem(
+            """{"item_type":"story","item_id":"top",
+                "story":{"title":"t","item_id":"i1","story_id":"s1"}}""",
+        )
+        assertEquals("嵌套 item_id 优先（RN 的 || 链）", "i1", withItemId.pinId)
+    }
+
+    @Test
+    fun `game 无删除动作且置顶用顶层 game_id`() {
+        // GameGridItem 菜单只有 Pin（无编辑/删除）；togglePinCharacter(item.game_id,'game')
+        val item = createdItem(
+            """{"item_type":"game","item_id":"top","game_id":"g1","game":{"title":"t"}}""",
+        )
+        assertNull("game 不可删除", item.deleteId)
+        assertEquals("g1", item.pinId)
+    }
+
+    @Test
+    fun `编辑载荷取嵌套 character 对象原文`() {
+        // initCharStateUpdate 收的是 cellItem.character（嵌套层），传顶层
+        // 元素会多一层错误包装 —— 保存时字段错位
+        val item = createdItem(
+            """{"item_type":"character","item_id":"a",
+                "character":{"nickname":"n","character_id":"c1",
+                             "custom_prompt":"keep-me","conversation_style":null}}""",
+        )
+        val payload = JSONObject(item.editPayloadJson()!!)
+        assertEquals("c1", payload.getString("character_id"))
+        assertEquals("模型没建模的字段必须还在", "keep-me", payload.getString("custom_prompt"))
+        assertTrue("显式 null 不能丢", payload.has("conversation_style"))
+        assertFalse("不能是顶层包装", payload.has("item_type"))
+    }
+
+    @Test
+    fun `story 与 game 无编辑载荷`() {
+        // 编辑仅 character（story 编辑暂缓、game 无编辑，方案 §8.1 / iOS 契约 §3）
+        assertNull(
+            createdItem(
+                """{"item_type":"story","item_id":"s","story":{"title":"t"}}""",
+            ).editPayloadJson(),
+        )
+        assertNull(
+            createdItem(
+                """{"item_type":"game","game_id":"g","game":{"title":"t"}}""",
+            ).editPayloadJson(),
+        )
+    }
+
     private fun createdItem(json: String): ProfileCreatedItem =
         ProfileCreatedItem.parse(JSONObject(json))!!
 }
