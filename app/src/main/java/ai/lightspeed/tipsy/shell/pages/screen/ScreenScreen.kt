@@ -330,26 +330,12 @@ private fun ScreenCard(
                 .align(Alignment.BottomStart)
                 .fillMaxWidth()
                 .padding(
-                    start = CONTENT_PADDING.dp,
-                    end = CONTENT_PADDING.dp,
-                    bottom = bottomPadding + CONTENT_PADDING.dp,
+                    start = CONTENT_HORIZONTAL_PADDING.dp,
+                    end = CONTENT_HORIZONTAL_PADDING.dp,
+                    bottom = bottomPadding + CONTENT_BOTTOM_GAP.dp,
                 ),
         ) {
-            CreatorRow(item = item)
-            Spacer(Modifier.height(CONTENT_GAP.dp))
-            if (item.nickname != null) {
-                Text(
-                    text = item.nickname,
-                    color = Color.White,
-                    fontSize = NICKNAME_FONT.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.testTag("screen_card_nickname"),
-                )
-            }
             if (item.tagline.isNotBlank()) {
-                Spacer(Modifier.height(TAGLINE_GAP.dp))
                 Text(
                     text = item.tagline,
                     color = Color.White.copy(alpha = TEXT_SECONDARY_ALPHA),
@@ -360,9 +346,9 @@ private fun ScreenCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.testTag("screen_card_tagline"),
                 )
+                Spacer(Modifier.height(CONTENT_GAP.dp))
             }
-            Spacer(Modifier.height(CONTENT_GAP.dp))
-            StatsRow(item = item, onCardEvent = onCardEvent)
+            ScreenMetaBar(item = item, onCardEvent = onCardEvent)
             Spacer(Modifier.height(CONTENT_GAP.dp))
             ChatCta(onClick = onStartChat)
         }
@@ -371,33 +357,62 @@ private fun ScreenCard(
     }
 }
 
+/**
+ * 底部信息栏：左侧角色头像/名称/作者，右侧横排操作栏。
+ *
+ * 结构同时对齐 RN `FeedMediaItem.metaBarContent` 与 iOS `ScreenCell.metaBar`。
+ * 操作栏不能单独占下一行，否则会像旧实现一样落在左下角并把 CTA 整体顶高。
+ */
 @Composable
-private fun CreatorRow(item: ScreenFeedItem) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+private fun ScreenMetaBar(item: ScreenFeedItem, onCardEvent: (ScreenCardEvent) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         AsyncImage(
-            model = item.creatorAvatarUrl?.let { HomeText.transformImageUrl(it) },
-            contentDescription = item.creatorNickname,
+            // RN 用 `character_avatars[0]`，iOS 用 `faceUrl`；这里对应 [avatarUrl]。
+            // `creatorAvatarUrl` 是作者头像，放这里会让头像与旁边的角色名不匹配。
+            model = item.avatarUrl?.let { HomeText.transformImageUrl(it) },
+            contentDescription = item.nickname,
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .size(AVATAR_SIZE.dp)
                 .clip(CircleShape)
                 .background(Color.White.copy(alpha = PLACEHOLDER_ALPHA)),
         )
-        if (item.creatorNickname != null) {
-            Text(
-                text = "@" + item.creatorNickname,
-                color = Color.White.copy(alpha = TEXT_SECONDARY_ALPHA),
-                fontSize = CREATOR_FONT.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = AVATAR_GAP.dp),
-            )
+        Column(
+            modifier = Modifier
+                .padding(start = AVATAR_GAP.dp)
+                .weight(1f),
+        ) {
+            item.nickname?.let { nickname ->
+                Text(
+                    text = nickname,
+                    color = Color.White,
+                    fontSize = NICKNAME_FONT.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("screen_card_nickname"),
+                )
+            }
+            item.creatorNickname?.let { creatorNickname ->
+                Text(
+                    text = "@$creatorNickname",
+                    color = Color.White.copy(alpha = CREATOR_ALPHA),
+                    fontSize = CREATOR_FONT.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
+        Spacer(Modifier.size(META_BAR_GAP.dp))
+        StatsRow(item = item, onCardEvent = onCardEvent)
     }
 }
 
 /**
  * 点赞 / 评论 / 分享三个操作（`VideoActionButtons`，`layout="horizontal"`）。
+ * 由 [ScreenMetaBar] 固定在角色信息右侧，不能作为独立内容行渲染。
  *
  * ⚠️ 形态是**图标在上、计数在下**，不是裸数字胶囊 —— 模拟器实测
  * （2026-08-14）确认我第一版做成了胶囊，与现网差得明显。
@@ -419,20 +434,19 @@ private fun StatsRow(item: ScreenFeedItem, onCardEvent: (ScreenCardEvent) -> Uni
     ) {
         ActionButton(
             iconRes = R.drawable.ic_profile_tab_like,
-            count = item.likeCount,
+            label = HomeText.formatMessageCount(item.likeCount),
             testTag = "screen_card_like",
             onClick = { onCardEvent(ScreenCardEvent.LIKE_CLICK) },
         )
         ActionButton(
             iconRes = R.drawable.ic_screen_comment,
-            count = item.commentCount,
+            label = HomeText.formatMessageCount(item.commentCount),
             testTag = "screen_card_comment",
             onClick = { onCardEvent(ScreenCardEvent.COMMENT_CLICK) },
         )
         ActionButton(
             iconRes = R.drawable.ic_screen_share,
-            // 分享没有计数（RN 那里也只有图标）
-            count = null,
+            label = rememberLocalizedString("Share"),
             testTag = "screen_card_share",
             onClick = { onCardEvent(ScreenCardEvent.SHARE_CLICK) },
         )
@@ -443,7 +457,7 @@ private fun StatsRow(item: ScreenFeedItem, onCardEvent: (ScreenCardEvent) -> Uni
 @Composable
 private fun ActionButton(
     iconRes: Int,
-    count: Long?,
+    label: String,
     testTag: String,
     onClick: () -> Unit,
 ) {
@@ -459,23 +473,21 @@ private fun ActionButton(
             contentDescription = null,
             modifier = Modifier.size(ACTION_ICON_SIZE.dp),
         )
-        if (count != null) {
-            Text(
-                text = HomeText.formatMessageCount(count),
-                color = Color.White,
-                fontSize = ACTION_COUNT_FONT.sp,
-                fontWeight = FontWeight.SemiBold,
-                // 压在图片上，用阴影保可读性（对齐 RN 的 textShadow）
-                style = LocalTextStyle.current.copy(
-                    shadow = Shadow(
-                        color = Color.Black.copy(alpha = COUNT_SHADOW_ALPHA),
-                        offset = Offset(0f, COUNT_SHADOW_DY),
-                        blurRadius = COUNT_SHADOW_BLUR,
-                    ),
+        Text(
+            text = label,
+            color = Color.White,
+            fontSize = ACTION_COUNT_FONT.sp,
+            fontWeight = FontWeight.SemiBold,
+            // 压在图片上，用阴影保可读性（对齐 RN 的 textShadow）
+            style = LocalTextStyle.current.copy(
+                shadow = Shadow(
+                    color = Color.Black.copy(alpha = COUNT_SHADOW_ALPHA),
+                    offset = Offset(0f, COUNT_SHADOW_DY),
+                    blurRadius = COUNT_SHADOW_BLUR,
                 ),
-                modifier = Modifier.padding(top = ACTION_COUNT_GAP.dp),
-            )
-        }
+            ),
+            modifier = Modifier.padding(top = ACTION_COUNT_GAP.dp),
+        )
     }
 }
 
@@ -485,17 +497,21 @@ private fun ChatCta(onClick: () -> Unit) {
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(CTA_RADIUS.dp))
-            .background(CTA_BACKGROUND)
+            .height(STORY_CTA_HEIGHT.dp)
+            .clip(RoundedCornerShape(STORY_CTA_RADIUS.dp))
+            // RN Android 没有开启 expo-blur 的实验性真模糊，实际稳定降级就是
+            // 半透明材质底色；Compose 的 Modifier.blur 只会糊自身且 API 31 以下
+            // 不生效，不能拿来冒充背景毛玻璃。
+            .background(STORY_CTA_BACKGROUND)
             .clickable(onClick = onClick)
-            .padding(vertical = CTA_V_PADDING.dp)
             .testTag("screen_card_cta"),
     ) {
         Text(
-            text = rememberLocalizedString("Send"),
-            color = Color.White,
-            fontSize = CTA_FONT.sp,
-            fontWeight = FontWeight.Medium,
+            text = rememberLocalizedString("Let Your Story Begin"),
+            color = Color.White.copy(alpha = STORY_CTA_TEXT_ALPHA),
+            fontSize = STORY_CTA_FONT.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -517,15 +533,18 @@ private fun RetryPane(onRetry: () -> Unit) {
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(CTA_RADIUS.dp))
-                    .background(CTA_BACKGROUND)
+                    .clip(RoundedCornerShape(RETRY_CTA_RADIUS.dp))
+                    .background(RETRY_CTA_BACKGROUND)
                     .clickable(onClick = onRetry)
-                    .padding(horizontal = CTA_H_PADDING.dp, vertical = CTA_V_PADDING.dp),
+                    .padding(
+                        horizontal = RETRY_CTA_H_PADDING.dp,
+                        vertical = RETRY_CTA_V_PADDING.dp,
+                    ),
             ) {
                 Text(
                     text = rememberLocalizedString("Retry"),
                     color = Color.White,
-                    fontSize = CTA_FONT.sp,
+                    fontSize = RETRY_CTA_FONT.sp,
                 )
             }
         }
@@ -562,15 +581,19 @@ private const val GRADIENT_STOP_LOWER = 0.6f
 private const val TEXT_SECONDARY_ALPHA = 0.7f
 private const val PLACEHOLDER_ALPHA = 0.15f
 
-private const val CONTENT_PADDING = 16
+/** RN `contentContainer.paddingHorizontal = 12` / iOS ScreenCell 两侧 inset 12。 */
+private const val CONTENT_HORIZONTAL_PADDING = 12
+/** CTA 底边距底栏 10（iOS `contentBottomInset`；RN 对应 showcase base inset）。 */
+private const val CONTENT_BOTTOM_GAP = 10
 private const val CONTENT_GAP = 12
-private const val TAGLINE_GAP = 6
 private const val TAGLINE_MAX_LINES = 2
-private const val NICKNAME_FONT = 20
+private const val NICKNAME_FONT = 14
 private const val TAGLINE_FONT = 14
 private const val CREATOR_FONT = 13
-private const val AVATAR_SIZE = 32
-private const val AVATAR_GAP = 8
+private const val CREATOR_ALPHA = 0.5f
+private const val AVATAR_SIZE = 40
+private const val AVATAR_GAP = 9
+private const val META_BAR_GAP = 12
 /** `horizontalContainer.gap: 24`（`VideoActionButtons.tsx:351`）。 */
 private const val ACTION_GAP = 24
 private const val ACTION_ICON_SIZE = 32
@@ -580,11 +603,18 @@ private const val ACTION_COUNT_FONT = 10
 private const val COUNT_SHADOW_ALPHA = 0.45f
 private const val COUNT_SHADOW_DY = 1f
 private const val COUNT_SHADOW_BLUR = 2f
-private const val CTA_RADIUS = 24
-private const val CTA_V_PADDING = 14
-private const val CTA_H_PADDING = 24
-private const val CTA_FONT = 15
-private const val EMPTY_FONT = 14
 
-/** CTA 底色（品牌粉，同其它页的 accent）。 */
-private val CTA_BACKGROUND = Color(0xFFAD403B)
+/** Screen 转化 CTA：RN `storyBeginButton` / iOS `storyButton` 的共同规格。 */
+private const val STORY_CTA_HEIGHT = 40
+private const val STORY_CTA_RADIUS = 20
+private const val STORY_CTA_FONT = 14
+private const val STORY_CTA_TEXT_ALPHA = 0.9f
+private val STORY_CTA_BACKGROUND = Color.White.copy(alpha = 0.15f)
+
+/** 重试按钮不是 Screen 转化 CTA，继续保留原来的品牌色样式。 */
+private const val RETRY_CTA_RADIUS = 24
+private const val RETRY_CTA_V_PADDING = 14
+private const val RETRY_CTA_H_PADDING = 24
+private const val RETRY_CTA_FONT = 15
+private val RETRY_CTA_BACKGROUND = Color(0xFFAD403B)
+private const val EMPTY_FONT = 14

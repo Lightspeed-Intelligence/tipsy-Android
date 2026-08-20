@@ -356,8 +356,8 @@ class ScreenFragment : Fragment() {
      * 再 `endHomeSession`、最后导航 —— 会话必须在离开前收掉。
      *
      * ⚠️ 壳**不复刻** `resolveChatEntryScreen` 四路分流（§2.35 记的有意偏差）：
-     * 只透传判定素材，由 `ChatDetailSurface` 自决入口屏 —— 与 ChatList 侧
-     * 同一条纪律（§2.30）。
+     * 只透传判定素材与列表已有的首帧 preload，由 `ChatDetailSurface` 自决入口屏
+     * 并同步 seed 背景 —— 与 ChatList 侧同一条分流纪律（§2.30）。
      *
      * ⚠️ 入口来源必须是 **`big_screen`**：RN 侧靠它把影院 `sourceType`
      * 判成 `first_tab`（`useChatNavigation.ts:59` 的 `=== 'big_screen'`）。
@@ -371,8 +371,7 @@ class ScreenFragment : Fragment() {
             AppRoute.ChatDetail(
                 characterId = item.characterId,
                 chatEnterSource = AppRoute.ChatEnterSource.BIG_SCREEN,
-                characterType = item.characterType,
-                contentType = item.contentType,
+                preload = item.toChatDetailPreload(),
             ),
             AppRouter.Source.IN_APP,
         )

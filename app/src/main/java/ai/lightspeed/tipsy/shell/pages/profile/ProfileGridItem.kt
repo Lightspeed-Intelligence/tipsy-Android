@@ -28,17 +28,12 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil3.compose.AsyncImage
-import coil3.request.ImageRequest
-import coil3.compose.LocalPlatformContext
-import coil3.request.transformations
 
 /**
  * 创作 tab 的三列网格卡（`CharacterGridItem.tsx` 2 千行里的展示部分；
@@ -46,8 +41,8 @@ import coil3.request.transformations
  *
  * ## P4 补齐的角标层（自下而上）
  *
- * 1. 封面（含模糊，条件见 [ProfileCreatedItem.shouldBlurCover]；模糊在
- *    Coil 解码层做，理由见 [CoverBlurTransformation]）
+ * 1. 封面（含模糊，条件见 [ProfileCreatedItem.shouldBlurCover]；API 31+ 实时
+ *    RenderEffect，API 24–30 走 [CoverBlurTransformation] 安全降级）
  * 2. 底部渐变 + 名称 + 计数行（曝光仅 character 且公开；消息数三种卡都有）
  * 3. 左上：审核角标（rejected/pending）＞ 私密锁 ＞ story/18+ 标签
  *    —— **同一位置三选一**，优先级是 RN 的三元链
@@ -118,19 +113,10 @@ private fun BoxScope.CardContent(item: ProfileCreatedItem) {
         val cover = item.coverUrl
         if (!cover.isNullOrBlank()) {
             val url = HomeText.transformImageUrl(cover)
-            AsyncImage(
-                // 模糊是解码层变换：全 API 版本一致，且与原图各占一份内存缓存
-                model = if (item.shouldBlurCover) {
-                    ImageRequest.Builder(LocalPlatformContext.current)
-                        .data(url)
-                        .transformations(CoverBlurTransformation())
-                        .build()
-                } else {
-                    url
-                },
+            ProfileCoverImage(
+                url = url,
                 contentDescription = item.name,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
+                shouldBlur = item.shouldBlurCover,
             )
         }
 

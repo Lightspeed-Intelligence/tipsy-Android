@@ -7,7 +7,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -19,16 +18,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil3.compose.AsyncImage
-import coil3.compose.LocalPlatformContext
-import coil3.request.ImageRequest
-import coil3.request.transformations
 
 /**
  * 收藏 / 点赞 tab 的三列网格卡（`FavoriteCharacterCard.tsx` 的展示部分，
@@ -53,18 +47,10 @@ fun ProfileFavoriteCard(item: ProfileFavoriteItem, modifier: Modifier = Modifier
     ) {
         if (!item.imageUrl.isNullOrBlank()) {
             val url = HomeText.transformImageUrl(item.imageUrl)
-            AsyncImage(
-                model = if (item.nsfw) {
-                    ImageRequest.Builder(LocalPlatformContext.current)
-                        .data(url)
-                        .transformations(CoverBlurTransformation())
-                        .build()
-                } else {
-                    url
-                },
+            ProfileCoverImage(
+                url = url,
                 contentDescription = item.nickname,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
+                shouldBlur = item.nsfw,
             )
         }
 

@@ -99,7 +99,10 @@ private fun ScreenFeedItem.toCacheJson(): JSONObject {
     nickname?.let { character.put("nickname", it) }
     creatorId?.let { character.put("creator_id", it) }
     primaryColor?.let { character.put("img_primary_color", it) }
+    gender?.let { character.put("gender", it) }
+    nsfw?.let { character.put("nsfw", it) }
     character.put("is_translated", isTranslated)
+    lang?.let { character.put("lang", it) }
     characterType?.let { character.put("character_type", it) }
     contentType?.let { character.put("content_type", it) }
 
@@ -113,8 +116,10 @@ private fun ScreenFeedItem.toCacheJson(): JSONObject {
         ScreenMediaSourceType.SHOWCASE,
         -> Unit
     }
-    // image_url 是静图形态的背景，也是 thumbnail 的回落 —— 两种形态都要有
-    thumbnailUrl?.let { character.put("image_url", it) }
+    // image_url 是 ChatDetail 首帧背景的语义源。showcase 的 thumbnail 可能是
+    // greeting video cover，不能拿它冒充角色静态图；旧测试/旧内存模型缺 imageUrl
+    // 时才用 thumbnail 兼容回落，保证缓存仍可读回。
+    (imageUrl ?: thumbnailUrl)?.let { character.put("image_url", it) }
     avatarUrl?.let { character.put("face_url", it) }
 
     val root = JSONObject().put("character", character)

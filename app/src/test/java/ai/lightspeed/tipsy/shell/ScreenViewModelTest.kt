@@ -450,6 +450,7 @@ class ScreenViewModelTest {
         mediaSourceType = ScreenMediaSourceType.STATIC_IMAGE,
         backgroundUrl = null,
         thumbnailUrl = null,
+        imageUrl = null,
         tagline = "",
         greeting = "",
         nickname = id,
@@ -461,7 +462,10 @@ class ScreenViewModelTest {
         commentCount = 0,
         totalMessages = 0,
         primaryColor = null,
+        gender = null,
+        nsfw = null,
         isTranslated = false,
+        lang = null,
         characterType = null,
         contentType = null,
     )

@@ -1,6 +1,7 @@
 package ai.lightspeed.tipsy.shell
 
 import ai.lightspeed.tipsy.shell.router.AppRoute
+import ai.lightspeed.tipsy.shell.router.ChatDetailPreload
 import ai.lightspeed.tipsy.shell.surface.SurfaceContract
 import ai.lightspeed.tipsy.shell.surface.SurfaceProps
 import org.junit.Assert.assertEquals
@@ -110,6 +111,54 @@ class SurfacePropsTest {
 
         assertEquals(2, preload["contentType"])
         assertNull(preload["characterType"])
+    }
+
+    /**
+     * Screen 首次进入影院时，背景 URL 必须在 RN 子树首渲前到达 preload。
+     * MultiCinema 把该值作为 `initialBackground` 的 useState 初值；漏传会首进黑底，
+     * 第二次才靠 runtime 内详情缓存看起来恢复。
+     */
+    @Test
+    fun `Screen 首帧素材完整进入嵌套 preload`() {
+        val props = SurfaceProps.forRoute(
+            AppRoute.ChatDetail(
+                characterId = "cinema-1",
+                chatEnterSource = AppRoute.ChatEnterSource.BIG_SCREEN,
+                preload = ChatDetailPreload(
+                    nickname = "Evelyn",
+                    gender = "female",
+                    imageUrl = "https://cdn/character.jpg",
+                    faceUrl = "https://cdn/face.jpg",
+                    imgPrimaryColor = "#102030",
+                    nsfw = false,
+                    greeting = "Hello",
+                    introduction = "Intro",
+                    isTranslated = true,
+                    lang = "en",
+                    characterType = 2,
+                    contentType = 1,
+                    greetingVideoUrl = "https://cdn/greeting.mp4",
+                    greetingVideoCoverUrl = "https://cdn/cover.jpg",
+                ),
+            ),
+        )
+
+        val preload = props["preload"] as Map<*, *>
+        assertEquals("Evelyn", preload["nickname"])
+        assertEquals("female", preload["gender"])
+        assertEquals("https://cdn/character.jpg", preload["imageUrl"])
+        assertEquals("https://cdn/face.jpg", preload["faceUrl"])
+        assertEquals("#102030", preload["imgPrimaryColor"])
+        assertEquals(false, preload["nsfw"])
+        assertEquals("Hello", preload["greeting"])
+        assertEquals("Intro", preload["introduction"])
+        assertEquals(true, preload["isTranslated"])
+        assertEquals("en", preload["lang"])
+        assertEquals(2, preload["characterType"])
+        assertEquals(1, preload["contentType"])
+        assertEquals("https://cdn/greeting.mp4", preload["greetingVideoUrl"])
+        assertEquals("https://cdn/cover.jpg", preload["greetingVideoCoverUrl"])
+        assertNull("preload 字段不能平铺到顶层", props["imageUrl"])
     }
 
     /**

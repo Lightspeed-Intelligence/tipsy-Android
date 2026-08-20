@@ -19,7 +19,7 @@ import org.json.JSONObject
  *
  * @property nsfw 封面模糊（`!nsfw偏好 && nsfw`，偏好恒 false → 18+ 一律模糊，
  *   `FavoriteCharacterCard.tsx:242`；注意这卡的 BlurView intensity 是 25 不是 40，
- *   壳复用同一 [CoverBlurTransformation] —— 强度差异属验收阶段视觉 diff）
+ *   壳复用同一 [ProfileCoverImage] —— 强度差异属验收阶段视觉 diff）
  */
 data class ProfileFavoriteItem(
     val characterId: String,
