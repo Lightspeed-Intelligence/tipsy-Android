@@ -83,6 +83,10 @@ object ProductionRoutePolicy {
         // 渠道分流 —— 支付闭环是真机冒烟置顶项（§2.52）
         AppRoute.GemsPurchase::class.java,
         AppRoute.UserCoins::class.java,
+        // W4 批次 5：角色卡新增/编辑（Profile 角色卡 tab 的 Add New +
+        // 卡行点击）。微栈含 CreateStack —— 换头像死链是 iOS 原始事故，
+        // 静态 gate 已锁（RoleCardSurfaceContractTest）
+        AppRoute.RoleCard::class.java,
     )
 }
 

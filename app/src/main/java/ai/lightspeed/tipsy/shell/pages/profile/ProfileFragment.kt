@@ -205,6 +205,12 @@ class ProfileFragment : Fragment() {
                     onMenuTogglePin = viewModel::onTogglePin,
                     onDeleteConfirm = viewModel::onDeleteConfirmed,
                     onDeleteDismiss = viewModel::onDeleteDismissed,
+                    // W4 批次 5：角色卡新增/编辑（→ RoleCardSurface；
+                    // 空 id = Add New 新增分支，带 id = 编辑分支）
+                    onAddRoleCardClick = { requestRoute(AppRoute.RoleCard()) },
+                    onRoleCardClick = { item ->
+                        requestRoute(AppRoute.RoleCard(profileCardId = item.profileCardId))
+                    },
                     // ⚠️ 用 Compose 的 inset 而不是 ViewCompat listener + 手动 render：
                     // listener 在**首帧之后**才回调，那之前值是 0，顶栏会画到状态栏底下
                     // （真机实测：Settings 与系统图标重叠）。

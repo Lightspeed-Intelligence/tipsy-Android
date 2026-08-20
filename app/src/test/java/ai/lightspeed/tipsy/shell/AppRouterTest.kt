@@ -226,6 +226,33 @@ class AppRouterTest {
     }
 
     /**
+     * W4 批次 5：`RoleCard` 进白名单 —— Profile 角色卡 tab 的
+     * Add New 与卡行编辑有下一屏。
+     */
+    @Test
+    fun `RoleCard 在生产白名单内且关闭后可重开`() {
+        assertTrue(
+            "RoleCard 必须在生产白名单里，否则 Add New 点了只会 reject",
+            AppRoute.RoleCard::class.java in ProductionRoutePolicy.enabledRouteTypes,
+        )
+
+        val f = fixture(
+            loggedIn = true,
+            enabled = listOf(AppRoute.RoleCard::class.java),
+        )
+        // 无参（Add New）实例恒相等 —— Create 那次真机抓过的类别性缺陷，
+        // 必须验证退栈解除
+        val route = AppRoute.RoleCard()
+        f.router.handle(route)
+        f.router.handle(route)
+        assertEquals("容器还在时重复点击应去重", 1, f.navigated.size)
+
+        f.router.onDestinationClosed { it is AppRoute.RoleCard }
+        f.router.handle(route)
+        assertEquals("容器退栈后 Add New 必须能重开", 2, f.navigated.size)
+    }
+
+    /**
      * W4 批次 4：`Letter` 进白名单 —— ChatList 铃铛有下一屏
      * （NotificationSurface，三 tab 站内信）。
      */

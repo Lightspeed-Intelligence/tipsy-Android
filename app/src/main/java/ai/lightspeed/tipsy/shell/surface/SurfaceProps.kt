@@ -154,6 +154,9 @@ object SurfaceProps {
     const val GEMS_SOURCE_TYPE = "sourceType"
     const val GEMS_SOURCE_PAGE = "sourcePage"
 
+    /** `RoleCardSurface.tsx:25` 的可选编辑 id（空 = Add New 新增分支）。 */
+    const val ROLE_CARD_PROFILE_CARD_ID = "profileCardId"
+
     /**
      * 把 route 转成业务 props。
      *
@@ -357,6 +360,17 @@ object SurfaceProps {
             aliased("scrollInfo", "scroll_info")?.let { put(GEMS_SCROLL_INFO, it) }
             aliased("sourceType", "source_type")?.let { put(GEMS_SOURCE_TYPE, it) }
             aliased("sourcePage", "source_page")?.let { put(GEMS_SOURCE_PAGE, it) }
+        }
+
+        /*
+         * `RoleCardSurface`（W4 批次 5）。唯一可选 prop `profileCardId`
+         * （`RoleCardSurface.tsx:25`）：空 = 新增分支（Add New），
+         * 非空 = 编辑分支（拉 getProfileCard 预填）。iOS 容器同义。
+         */
+        is AppRoute.RoleCard -> buildMap {
+            route.profileCardId?.takeIf { it.isNotBlank() }?.let {
+                put(ROLE_CARD_PROFILE_CARD_ID, it)
+            }
         }
 
         //

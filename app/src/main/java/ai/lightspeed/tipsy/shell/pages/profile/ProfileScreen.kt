@@ -115,6 +115,9 @@ fun ProfileScreen(
     onMenuTogglePin: (ProfileCreatedItem) -> Unit = {},
     onDeleteConfirm: () -> Unit = {},
     onDeleteDismiss: () -> Unit = {},
+    /** W4 批次 5：角色卡 tab 的新增/编辑出口（→ RoleCardSurface）。 */
+    onAddRoleCardClick: () -> Unit = {},
+    onRoleCardClick: (ProfileRoleCardItem) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val gridState = rememberLazyGridState()
@@ -193,6 +196,8 @@ fun ProfileScreen(
                             onMenuEdit = onMenuEdit,
                             onMenuDelete = onMenuDelete,
                             onMenuTogglePin = onMenuTogglePin,
+                            onAddRoleCardClick = onAddRoleCardClick,
+                            onRoleCardClick = onRoleCardClick,
                         )
                         if (showFloatingTabBar) {
                             ProfileTabBar(
@@ -380,6 +385,8 @@ private fun ProfileGrid(
     onMenuEdit: (ProfileCreatedItem) -> Unit,
     onMenuDelete: (ProfileCreatedItem) -> Unit,
     onMenuTogglePin: (ProfileCreatedItem) -> Unit,
+    onAddRoleCardClick: () -> Unit,
+    onRoleCardClick: (ProfileRoleCardItem) -> Unit,
 ) {
     val tab = state.selectedTab
     LazyVerticalGrid(
@@ -453,7 +460,10 @@ private fun ProfileGrid(
                 )
             }
 
-            state.items.isEmpty() -> item(
+            // ⚠️ 角色卡 tab 空列表**不走**通用空态：Add New 按钮就是新增
+            // 入口，空态文案把它藏掉等于「第一张角色卡永远建不了」——
+            // RN 的 Add New 是 tab 头常驻（CharacterGrid.tsx:1275）
+            state.items.isEmpty() && tab != ProfileTab.ROLE_CARD -> item(
                 span = { GridItemSpan(maxLineSpan) },
                 key = KEY_STATUS,
                 contentType = CT_STATUS,
@@ -482,17 +492,51 @@ private fun ProfileGrid(
                 )
             }
 
-            // 角色卡：单列横条（RoleCard.tsx 是 marginBottom 12 的列表）
-            tab == ProfileTab.ROLE_CARD -> items(
-                items = state.roleCardItems,
-                key = { it.dedupeKey },
-                span = { GridItemSpan(maxLineSpan) },
-                contentType = { CT_ROLE_CARD },
-            ) { item ->
-                ProfileRoleCardRow(
-                    item = item,
-                    modifier = Modifier.padding(bottom = ROLE_CARD_BOTTOM.dp),
-                )
+            // 角色卡：单列横条（RoleCard.tsx 是 marginBottom 12 的列表）。
+            // 列表头是「Add New」按钮（CharacterGrid.tsx:1275-1291；胶囊 32 高、
+            // 白 8% 底）—— 空列表也显示，它就是新增入口。
+            // ⚠️ 超限弹窗（isOverRoleCardLimit → RoleCardLimit 弹层）不在壳侧判：
+            // 超限时 RN EditRoleCard 保存会被后端 code=9 拒绝，Surface 内自提示；
+            // 壳复刻上限值会与服务端/订阅档位漂移
+            tab == ProfileTab.ROLE_CARD -> {
+                item(
+                    span = { GridItemSpan(maxLineSpan) },
+                    key = KEY_ADD_ROLE_CARD,
+                    contentType = CT_ADD_ROLE_CARD,
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = ROLE_CARD_BOTTOM.dp)
+                            .clip(RoundedCornerShape(ADD_ROLE_CARD_RADIUS.dp))
+                            .background(ADD_ROLE_CARD_BACKGROUND)
+                            .height(ADD_ROLE_CARD_HEIGHT.dp)
+                            .clickable(onClick = onAddRoleCardClick)
+                            .testTag("profile_role_card_add"),
+                    ) {
+                        Text(
+                            text = "+ " + rememberLocalizedString("Add New"),
+                            color = Color.White,
+                            fontSize = ADD_ROLE_CARD_FONT.sp,
+                        )
+                    }
+                }
+                items(
+                    items = state.roleCardItems,
+                    key = { it.dedupeKey },
+                    span = { GridItemSpan(maxLineSpan) },
+                    contentType = { CT_ROLE_CARD },
+                ) { item ->
+                    ProfileRoleCardRow(
+                        item = item,
+                        modifier = Modifier
+                            .padding(bottom = ROLE_CARD_BOTTOM.dp)
+                            // 整行点击 = 编辑（RoleCard.tsx:152 的 EditRoleCard 导航）
+                            .clickable { onRoleCardClick(item) },
+                    )
+                }
             }
 
             // 收藏 / 点赞：三列网格（chunk(_, 3)，卡与创作同比例），共用组件
@@ -720,6 +764,14 @@ private const val TAB_BAR_PADDING = 10
 private const val MEMORY_CARD_MARGIN = 10
 private const val MEMORY_CARD_BOTTOM = 7
 private const val ROLE_CARD_BOTTOM = 11
+
+// 角色卡 Add New 头（CharacterGrid.tsx addRoleCardButton：32 高/圆角 31/白 8%）
+private const val KEY_ADD_ROLE_CARD = "add_role_card"
+private const val CT_ADD_ROLE_CARD = "add_role_card"
+private const val ADD_ROLE_CARD_HEIGHT = 32
+private const val ADD_ROLE_CARD_RADIUS = 31
+private const val ADD_ROLE_CARD_FONT = 13
+private val ADD_ROLE_CARD_BACKGROUND = Color(0x14FFFFFF)
 
 /**
  * 自己视角 Profile 的列表底部余量。
