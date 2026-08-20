@@ -243,6 +243,20 @@ class AppRouterTest {
     }
 
     /**
+     * W4 批次 3：`SettingsSubScreen` 进白名单 —— Settings 列表的 7 个
+     * Surface 子屏（Security/Blacklist/Feedback/About/ContactUs/Delete/Widget）
+     * 有下一屏。§2.41 的静态 gate（微根/微栈/强类型 Screen/退栈解除）
+     * 已先行，导航分支与去重解除在 MainActivity 早已预接。
+     */
+    @Test
+    fun `SettingsSubScreen 在生产白名单内`() {
+        assertTrue(
+            "SettingsSubScreen 必须在生产白名单里，否则设置列表的七个子屏点了只会 reject",
+            AppRoute.SettingsSubScreen::class.java in ProductionRoutePolicy.enabledRouteTypes,
+        )
+    }
+
+    /**
      * Create 要求登录：未登录时**排队**而不是直接打开。
      *
      * 创建流程的每个接口都要 token，未登录直接挂 Surface 的表现是
@@ -433,22 +447,16 @@ class AppRouterTest {
     }
 
     /**
-     * W3：`Settings` 是**列表本体**（原生页，§2.33），在白名单里；
-     * 但它的 7 个子屏是 `SettingsSubScreen`，走 `SettingsSurface` 且
-     * **未过 §9.1**，必须仍被拒绝。
-     *
-     * 两者混为一谈的后果：点子页要么打开一层新的设置列表（传错 route），
-     * 要么静默无反应（§8.3 禁止）。
+     * W3：`Settings` 是**列表本体**（原生页，§2.33）；W4 批次 3 起它的
+     * 7 个子屏（`SettingsSubScreen` → `SettingsSurface`）也已放行。
+     * 两个 route **类型不同**必须都能各自导航 —— 混为一谈的后果：
+     * 点子页要么打开一层新的设置列表（传错 route），要么静默无反应（§8.3 禁止）。
      */
     @Test
-    fun `Settings 列表已启用但子屏仍被拒绝`() {
+    fun `Settings 列表与子屏都已启用且各自导航`() {
         assertTrue(
             "Settings 列表必须在白名单里，否则 Profile 的设置入口点了没反应",
             AppRoute.Settings::class.java in ProductionRoutePolicy.enabledRouteTypes,
-        )
-        assertFalse(
-            "SettingsSubScreen 未过 §9.1，不得进白名单",
-            AppRoute.SettingsSubScreen::class.java in ProductionRoutePolicy.enabledRouteTypes,
         )
 
         val f = fixture(
@@ -461,8 +469,8 @@ class AppRouterTest {
         f.router.handle(
             AppRoute.SettingsSubScreen(AppRoute.SettingsSubScreen.Screen.SECURITY),
         )
-        assertEquals("子屏不该导航", 1, f.navigated.size)
-        assertEquals("子屏要被明确拒绝", 1, f.rejections.size)
+        assertEquals("子屏是独立 route，必须导航而不是被吞", 2, f.navigated.size)
+        assertEquals("不该有拒绝", 0, f.rejections.size)
     }
 
     /**
