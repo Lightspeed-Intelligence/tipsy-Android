@@ -365,6 +365,19 @@ sealed interface AppRoute {
         override val requiresAuth = true
     }
 
+    /**
+     * 角色卡新增/编辑 → `RoleCardSurface`（W4 批次 5）。
+     *
+     * 对齐 iOS `RoleCardSurfaceViewController`：空 [profileCardId] →
+     * `EditRoleCard` 走**新增**分支（Profile 角色卡 tab 的「Add New」）；
+     * 非空 → 拉 `getProfileCard` 预填走**编辑**分支（卡行点击）。
+     * 微容器 root stack 包裹 EditRoleCard + **CreateStack** ——
+     * 换头像子流程走内嵌 CreateStack，缺它即死链（iOS 踩过的原始事故）。
+     */
+    data class RoleCard(val profileCardId: String? = null) : AppRoute {
+        override val requiresAuth = true
+    }
+
     /** 登录页（W2 的原生 Login）。**它自己当然不要求登录。** */
     data class Login(val reason: String? = null) : AppRoute {
         override val requiresAuth = false
