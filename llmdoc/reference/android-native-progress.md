@@ -64,7 +64,7 @@
 
 - **波次进度**：W0 完成；**W1 完成**（契约层已在 CI 组合验证（§2.22）；**P9 已完成**（§2.36）；§12 关闭链记为已接受偏差）；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 已随 PR #25 并入 main（§2.30）；**Search P1 主链路已实现并完成 directApk 冒烟**（§2.31）；**P2 筛选器已实现**（§2.34，Search 完整对等）；**EditProfile 已完成静态预接/账号隔离/刷新接力**（§2.43），但 production policy 仍关闭；**P7 完成 = 头像框 + 渠道图标**（§2.44，PR #41 + 收尾 PR #43，含 AuthMode 契约修正与失败保留语义）；**P5 卡片 ⋮ 菜单完成**（§2.45，PR #46：编辑原始 JSON 透传 `CreateSurface` 编辑态、删除/置顶非乐观 + 重拉对账；**owner 模拟器冒烟目测 PASS**，2026-08-19）；**ChatList P2 ChatMap 已生产接线**（§2.47，2026-08-20：接手 #42 draft 收尾 —— 纵向滚动/连续楼层/卡片点击/四词条 + bump pin，模拟器全链路实测）—— **W3 业务面全部落地**，剩 EditProfile §9.1 设备矩阵与累积真机冒烟。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`、`pages/chatlist/`、`pages/search/`、`pages/screen/`**；EditProfile 刷新接力落在 `pages/profile/ProfileRefreshHub` 与 `tipsy-auth.notifyProfileChanged`。
-- **submodule**：pin **`93c8647f3`**（§2.47 的 ChatMap 四词条，基于 §2.46 的 `5ba22c8bb` 之上 —— 后者是账号缓存清理 + KeyboardProvider inset patch；前一 pin `4ae2ebc667` 是 §2.43 EditProfile 账号安全/通知链）。⚠️ `da4f65a` 与 PR #34 的三处壳改动**必须同时存在**：指针回退则 exclude 仍失效，而 styles/lifecycle 两处已让构建变绿 —— 会得到「构建通过但图片仍坏」的假绿。
+- **submodule**：pin **`f4fe474d2`**（§2.51 的桥三件套 openComments/openChatDetail/openFeedback + 测试修复；前一 pin `93c8647f3` 是 §2.47 ChatMap 四词条，更早的 `5ba22c8bb` 是 §2.46 账号缓存清理 + KeyboardProvider inset patch）。⚠️ `da4f65a` 与 PR #34 的三处壳改动**必须同时存在**：指针回退则 exclude 仍失效，而 styles/lifecycle 两处已让构建变绿 —— 会得到「构建通过但图片仍坏」的假绿。
 - **已验证**：main 上 PR #25 的 G1 Fast Gate 全绿。W3 Search P1 提交前快照的本机证据：`lintDirectApkDebug` 无新增（baseline 5 条）、`assembleGooglePlayDebug`/`assembleDirectApkDebug` 通过、**DirectApk app 单测 695 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿；directApk 真机主链路冒烟 PASS（§2.31）。提交前审查再新增 13 条、扩展 2 条回归测试并修正并发/auth/Router/点击归因/分页去重行为，最终源码预计 708 条；**最终 head 未在本机重跑 Gradle，交 G1 验证**。
 - **他人主页已实现**（§2.32，2026-08-14）：6 文件 1,469 行，`AppRoute.UserProfile` 进白名单 —— **搜索 → 创作者 → 他人主页是壳的第一条端到端可用路径**。审计推翻了「复用自己视角」的前提（七处偏差）：只有 **1 个 tab**（RN 注释说两个，代码是一个）、数据源另有四条、`size` **200 且不翻页**、`/user/get/public` 走 `axiosAuth` 会对游客弹登录页、`/plot/list/creator` **现网从未被调用**、关注按钮在 `ProfileHeader.tsx` 而非 `user-profile.tsx`。真机冒烟 **NOT RUN**。
 - **Settings 列表 + 语言页已实现**（§2.33，8 文件 1,501 行）：补上了真实功能缺失 —— 此前**壳内没有任何入口能改语言**。审计订正三处：语言页**要原生实现**（RN 与 iOS 双证据）、`supportedLanguages` 壳内**恒为空**必须自己拉、Limitless 开关是 `nsfw` 的**唯一写方**且仅 directApk 可见。渠道 gating 收在 `SettingsRow` 并对三渠道各有单测。7 个 Surface 子屏（`AppRoute.SettingsSubScreen`）仍被明确拒绝。真机冒烟 **NOT RUN**。
@@ -76,7 +76,7 @@
 - **Tab3 创建入口已接通**（§2.40，2026-08-18，219 行）：`AppRoute.Create` 进白名单，Tab3 的 ➕ 从「只打一行日志」变成挂 `CreateSurface` 直达创建表单 —— **五个 Tab 全部可用**。壳只传 `createEnterSource` 一个 prop，**刻意不复刻** RN tabPress 那四个参数（Surface 自决落地页，§2.30 纪律）。⚠️ 真机抓到**类别性**缺陷并已修：`AppRoute.Create()` 无参 ⇒ 实例恒相等 ⇒ 去重不解除就「只能用一次」，ChatDetail 因每次带不同 characterId 而侥幸未暴露；后续每个无参路由都要配解除。✅ §2.41 已补微根/微栈/注册/bootstrap 机器断言；⚠️ §9.1 的 8 个设备/生命周期验收格仍全 `✎`。
 - **Screen P1 + P2 代码已实现**（§2.35 / §2.42）：P1 落 AB 端点分流、归因、首屏缓存与会话埋点；P2 让 `showcase` 首次接入 Media3、有界播放器池、±1 窗口、RN Android buffer、动态 50MB cache、三轴播放门与声音开关。PR #39 最终 head `13cc633` 的 G1 全绿；⚠️ feed 无 showcase，真实视频/cache 失败/API24–33 层序/audio focus 四项仍 NOT RUN，故**不是 production-ready**。
 - **Search P2 筛选器已实现**（§2.34，4 文件 723 行）：性别/排序/分级抽屉 + 二级标签栏，Search 达成完整对等。`SearchTagOrderTest` **逐条对拍 RN 的 144 行现成单测**。⚠️ 分级筛选的门是「非 GooglePlay && nsfw 开」，与 Settings 的 Limitless（只有 directApk）**不同轴** —— RuStore 在这里算可选。
-- **不存在 / 未验**：ChatList 的 Map「時光長廊」仍是 P2；Screen P2 已落代码但四项核心验收未跑，next-item/fade/firstInteractive/P3 仍无；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。生产路由白名单**六个**目标（三纯原生 + `ChatDetail`/`MiniPhoneChat` + **`Create`**），`ChatDetailSurface` 仍有设备矩阵欠账、`CreateSurface` 的 8 个设备/生命周期验收格仍全 `✎`；其余 10 个业务 Surface 全未过矩阵。EditProfile 已按 **W3 预接**（§2.43），生产启用仍只认 §9.1，不再保留 W3/W4 owner 歧义。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1）与 **Follow 出口无 Surface 可用**。
+- **不存在 / 未验**：Screen P2 已落代码但四项核心验收未跑，next-item/fade/firstInteractive/P3 仍无；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。生产路由白名单 **11 类**（2026-08-20 更新，原「六个」已过期）：三纯原生（Search/UserProfile/Settings）+ 八 Surface/带参目标（ChatDetail/MiniPhoneChat/Create/EditCharacter/SettingsSubScreen/EditProfile/Comments/Letter）。13 个业务 Surface 已启用 **6 个**（ChatDetail/Create/Settings/EditProfile/Comments/Notification），未启用 7 个：GemsSubscription/UserCoins/RoleCard/Onboarding/DeleteAccount/Widget（后两者的独立容器 iOS 已删、走 Settings 子屏，待核实 Android 是否同判）+ Debug 不计。各 Surface 的真机格仍在累积清单。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1）与 **Follow 出口无 Surface 可用**。
 
 ## 1. 波次状态
 
@@ -3711,6 +3711,58 @@ Comments，CommentReport 等二级页同栈可跳）。
 - 互动通知评论卡入口（`NotificationSurface` 未启用，届时 commentId/rootId
   定位参数才有消费方）；`openComments` 桥方法（Surface 内跨栈出口）——
   当前无调用场景，等 NotificationSurface 那刀一起。
+  ✅ **两条都已由 §2.51 兑现**（2026-08-20 同日）。
+
+### 2.51 W4 批次 4 第一刀：NotificationSurface + 跨栈桥三件套（2026-08-20）
+
+`AppRoute.Letter` 进生产白名单（第 **11** 类）—— ChatList 铃铛从 reject
+变成打开三 tab 站内信。**这刀带 RN 侧改动**（桥模块，pin bump）：
+`LetterItem`/`letter-detail` 的壳内分流早就在调四个可选桥方法
+（iOS 壳先行，`?.()` 方法级守卫），Android 桥此前只有 `openUserProfile` ——
+缺的三个在 RN 侧的表现是「互动通知点了没反应」且不报错。
+
+#### 落地
+
+- **桥（RN 仓 `18e6c10b5` + 测试修复 `f4fe474d2`，pin bump）**：
+  `openComments`（键 **snake_case**，对齐 RN Comments 路由参数 ——
+  与 `openChatDetail` 的 **camelCase** 不同轴，各照各的 RN 真值，
+  别"统一风格"）、`openChatDetail`（分流素材透传 + 数字转型，
+  `resolveInitialParams` 自决初始屏）、`openFeedback`（落 SettingsSurface
+  直达 Feedback 屏）。三个都触碰导航 → 全走 `onMain`；
+  `MainThreadDispatchTest` 覆盖表 9 → 12。Android 注册方法数 17 → 20。
+- **壳 provider**：`openComments` guard 缺 target 不跳（iOS 同义）；
+  `openChatDetail` 空 characterId 不跳；`ShellAuthProviderTest` +5。
+- **路由**：`Letter` 从 data object 改 **data class（可选 tab）**——
+  `NotificationSurface.tsx` 的 `tab` prop（System/Personal/Engagement，
+  缺省 System）；铃铛入口不传。SurfaceProps 只在有值时放键。
+- **静态 gate**：`NotificationSurfaceContract` + checklist 八项微根 +
+  ContractTest 6 条 —— 含**跨栈出口双向锁**（RN `?.()` 调用的方法名
+  必须与 Android 桥 `AsyncFunction` 注册名一致，桥方法名拼错的表现
+  是静默降级）。World 作品图（`openSimulatorGame`）壳侧无路由，
+  RN 注释已明确降级不响应 —— 刻意不实现。
+- 「未启用样本」测试主体 Letter → GemsPurchase（下一刀启用时再换；
+  样本耗尽时改为断言白名单 = route 全集）。
+
+#### §9.1 矩阵（模拟器 Pixel 10 / API 37，directApk；⚠️ 不作覆盖升级证据）
+
+| 项 | 结果 |
+| --- | --- |
+| 初始 route fixture | ✅ 铃铛 → 三 tab 站内信打开（System 默认选中、Personal/Engagement 可切、All Read 在位、空态插画正常） |
+| Back/栈底 | ✅ 回 ChatList |
+| 关闭重开 | ✅ 谓词解除生效 |
+| 旋转 | ✅ 往返存活 |
+| 15 次挂载/卸载 | ✅ Activities=1、ViewRootImpl=1 无泄漏 |
+| 进程恢复 | ✅ force-stop 冷启动后重开成功 |
+| 未登录 | ✅ 同前三刀：游客机即登录页，路径不可达 |
+| **Engagement 跨栈出口实操** | ✎ **测试账号无互动通知**（评论卡/作品图/头像无真实数据可点）—— 桥语义由 5 条单测 + 双向静态锁覆盖，端到端点击留真机冒烟（用有互动记录的账号） |
+| 语言切换 / OTA | ✎ 同前 |
+
+#### 兑现 §2.50 的两条欠账
+
+互动通知评论卡的 commentId/rootId 定位参数与 `openComments` 桥方法
+都随本刀落地（此前记「等 NotificationSurface 那刀一起」）。
+
+
 
 
 

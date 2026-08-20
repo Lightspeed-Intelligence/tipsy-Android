@@ -25,7 +25,7 @@ class AppRouteParserTest {
             "tipsy://subscribe/page" to AppRoute.Subscribe,
             "tipsy://chat/detail" to AppRoute.ChatDetail(null),
             "tipsy://chat/mini-phone" to AppRoute.MiniPhoneChat(null),
-            "tipsy://chat/letter" to AppRoute.Letter,
+            "tipsy://chat/letter" to AppRoute.Letter(),
             "tipsy://create/profile-detail" to AppRoute.CreateProfileDetail(null),
         )
         cases.forEach { (uri, expected) ->

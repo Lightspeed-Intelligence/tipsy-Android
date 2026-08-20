@@ -155,6 +155,24 @@ object SurfaceDependencyChecklist {
         Requirement("SurfaceToastHost", "评论提交/删除结果只写 toast store，界面无提示"),
     )
 
+    /**
+     * `NotificationSurface` 的微根（`NotificationSurface.tsx:48-79`，
+     * 与 Comments/Settings 同构八项）。微栈是 `NotificationStackNavigator`
+     * 两页（列表 + 详情）；Engagement tab 的跨栈出口全部经桥
+     * （openUserProfile/openComments/openChatDetail/openFeedback），
+     * World 作品图（openSimulatorGame）壳侧无路由，RN 注释已明确降级。
+     */
+    val NOTIFICATION: List<Requirement> = listOf(
+        Requirement("SafeAreaProvider", "安全区失效（内容顶到状态栏/挖孔下）"),
+        Requirement("KeyboardProvider", "键盘避让失效"),
+        Requirement("SWRConfig", "缓存与 revalidate 语义和现网不一致"),
+        Requirement("GestureHandlerRootView", "手势返回与页内拖拽失效"),
+        Requirement("PortalProvider", "通知页弹层没有 portal 宿主"),
+        Requirement("NavigationContainer", "NotificationStack 无法挂载"),
+        Requirement("Stack.Navigator", "列表与详情两页都不可达"),
+        Requirement("SurfaceToastHost", "操作结果只写 toast store，界面无提示"),
+    )
+
     /** 原生列表可直达的入口；真值来自强类型路由，测试再与 RN 白名单双向比对。 */
     val SETTINGS_DIRECT_SCREENS: List<String> =
         AppRoute.SettingsSubScreen.Screen.entries.map { it.rnName }

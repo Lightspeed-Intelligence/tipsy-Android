@@ -56,7 +56,7 @@ object AppRouteParser {
             "subscribe/page" -> AppRoute.Subscribe
             "chat/detail" -> AppRoute.ChatDetail(characterId)
             "chat/mini-phone" -> AppRoute.MiniPhoneChat(characterId)
-            "chat/letter" -> AppRoute.Letter
+            "chat/letter" -> AppRoute.Letter()
             "create/profile-detail" -> AppRoute.CreateProfileDetail(characterId)
             // 未知路径：返回 null 由调用方记日志并安全忽略。
             // ⚠️ 不要在这里加"猜测式"兜底（比如 startsWith("chat") → ChatDetail）——

@@ -143,8 +143,14 @@ sealed interface AppRoute {
         override val requiresAuth = true
     }
 
-    /** `chat/letter` —— 站内信（落在 `NotificationSurface`，W4 启用）。 */
-    data object Letter : AppRoute {
+    /**
+     * `chat/letter` —— 站内信 → `NotificationSurface`（W4 批次 4）。
+     *
+     * @param tab 初始 tab（`System`/`Personal`/`Engagement`，
+     *   `NotificationSurface.tsx:17` 注释）。铃铛入口不传 —— RN 侧
+     *   `navigate('NotificationStack')` 无参，Surface 默认 `System`
+     */
+    data class Letter(val tab: String? = null) : AppRoute {
         override val requiresAuth = true
     }
 
