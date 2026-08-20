@@ -172,27 +172,57 @@ class AppRouterTest {
      * §8.3 纪律：路由到未启用目标必须给明确错误或安全兜底，**绝不 silent no-op**。
      * 静默的症状正是「点了没反应」。
      *
-     * ⚠️ 主体已换两次：`ChatDetail`（P9 启用）→ `Letter`（批次 4 启用）→
-     * 现在是 `GemsPurchase`（W4 批次 4 下一刀）。启用它时再换主体 ——
-     * 未启用样本没了就说明 13 个 Surface 全部上线，这条测试改为断言
-     * 白名单与 route 类型全集相等。
+     * ⚠️ 主体已换三次：`ChatDetail`（P9）→ `Letter`（批次 4）→
+     * `GemsPurchase`（批次 4 第二刀）→ 现在是 `DailyGemEntry`（深链目标，
+     * 无对应 Surface 启用计划前恒未启用）。样本耗尽时改为断言白名单 =
+     * route 类型全集。
      */
     @Test
     fun `未启用的 Surface 目标被明确拒绝且不会导航`() {
         assertFalse(
-            "生产白名单本身必须锁住未过矩阵的 Surface，不能只靠 Activity 记得不启用",
-            AppRoute.GemsPurchase::class.java in ProductionRoutePolicy.enabledRouteTypes,
+            "生产白名单本身必须锁住未过矩阵的目标，不能只靠 Activity 记得不启用",
+            AppRoute.DailyGemEntry::class.java in ProductionRoutePolicy.enabledRouteTypes,
         )
         val f = fixture(
             loggedIn = true,
             enabled = ProductionRoutePolicy.enabledRouteTypes.toList(),
         )
-        val route = AppRoute.GemsPurchase()
+        val route = AppRoute.DailyGemEntry
         f.router.handle(route)
 
         assertEquals("不该导航", 0, f.navigated.size)
         assertEquals("必须明确拒绝一次", 1, f.rejections.size)
         assertEquals(route, f.rejections.single())
+    }
+
+    /**
+     * W4 批次 4：Gems/UserCoins 双放行 —— Profile 钱包卡三出口 +
+     * 402 付费墙兜底 + 桥 openGemsPurchase 全部有下一屏。
+     */
+    @Test
+    fun `GemsPurchase 与 UserCoins 在生产白名单内且关闭后可重开`() {
+        for (type in listOf(
+            AppRoute.GemsPurchase::class.java,
+            AppRoute.UserCoins::class.java,
+        )) {
+            assertTrue(
+                "${type.simpleName} 必须在生产白名单里，否则钱包卡出口点了只会 reject",
+                type in ProductionRoutePolicy.enabledRouteTypes,
+            )
+        }
+
+        val f = fixture(
+            loggedIn = true,
+            enabled = listOf(AppRoute.GemsPurchase::class.java),
+        )
+        val route = AppRoute.GemsPurchase(mapOf("initialTab" to "buy_gems"))
+        f.router.handle(route)
+        f.router.handle(route)
+        assertEquals("容器还在时重复点击应去重", 1, f.navigated.size)
+
+        f.router.onDestinationClosed { it is AppRoute.GemsPurchase }
+        f.router.handle(route)
+        assertEquals("容器退栈后必须能重开", 2, f.navigated.size)
     }
 
     /**

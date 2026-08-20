@@ -472,6 +472,66 @@ class SurfacePropsTest {
         assertFalse(minimal.containsKey("rootId"))
     }
 
+    // ── W4 批次 4：GemsPurchase ─────────────────────
+
+    @Test
+    fun `Gems 的 camelCase 键直传且空值不放`() {
+        val props = SurfaceProps.forRoute(
+            AppRoute.GemsPurchase(
+                mapOf(
+                    "initialTab" to "buy_gems",
+                    "planId" to "3",
+                    "scrollInfo" to "",
+                ),
+            ),
+        )
+        assertEquals("buy_gems", props["initialTab"])
+        assertEquals("3", props["planId"])
+        assertFalse("空串键不放（iOS isEmpty 判断同义）", props.containsKey("scrollInfo"))
+    }
+
+    @Test
+    fun `Gems 的 snake_case 别名归一成 camelCase`() {
+        // iOS TipsyRouter:349-363 的双键读取 —— 宝石页任务入口传 snake 键，
+        // 不归一的表现是初始 tab 静默回落 subscription
+        val props = SurfaceProps.forRoute(
+            AppRoute.GemsPurchase(
+                mapOf(
+                    "initial_tab" to "buy_gems",
+                    "plan_id" to "5",
+                    "source_type" to "task",
+                ),
+            ),
+        )
+        assertEquals("buy_gems", props["initialTab"])
+        assertEquals("5", props["planId"])
+        assertEquals("task", props["sourceType"])
+        assertFalse("snake 原键不透传", props.containsKey("initial_tab"))
+    }
+
+    @Test
+    fun `Gems 的 preferNextPlan 转 Boolean`() {
+        // RN props 是 boolean —— 传字符串 "false" 会被真值判定当 true。
+        // iOS boolParam：1/true/yes（大小写不敏感）
+        assertEquals(
+            true,
+            SurfaceProps.forRoute(
+                AppRoute.GemsPurchase(mapOf("preferNextPlan" to "YES")),
+            )["preferNextPlan"],
+        )
+        assertEquals(
+            false,
+            SurfaceProps.forRoute(
+                AppRoute.GemsPurchase(mapOf("prefer_next_plan" to "false")),
+            )["preferNextPlan"],
+        )
+    }
+
+    @Test
+    fun `UserCoins 无 props`() {
+        assertEquals(emptyMap<String, Any>(), SurfaceProps.forRoute(AppRoute.UserCoins))
+    }
+
     @Test
     fun `纯业务 key 不触发守卫`() {
         // 不该误报：这些都是 RN 侧真实 props 名

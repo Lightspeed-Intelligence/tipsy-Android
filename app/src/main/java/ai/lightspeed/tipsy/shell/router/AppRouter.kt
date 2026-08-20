@@ -77,6 +77,12 @@ object ProductionRoutePolicy {
         // replace + addToBackStack 叠栈（同 ChatDetail → 他人主页的既有
         // 模式），返回逐层弹；popSurface 弹栈顶，单显示层语义不变
         AppRoute.Letter::class.java,
+        // W4 批次 4：宝石购买/订阅 + 金币兑换（Profile 钱包卡三出口 +
+        // 402 付费墙兜底 + 桥 openGemsPurchase，三入口早已汇到同一 route）。
+        // ⚠️ 真实购买在模拟器不可测（无 Play Billing），矩阵只验渲染与
+        // 渠道分流 —— 支付闭环是真机冒烟置顶项（§2.52）
+        AppRoute.GemsPurchase::class.java,
+        AppRoute.UserCoins::class.java,
     )
 }
 

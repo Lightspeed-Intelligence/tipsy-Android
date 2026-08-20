@@ -142,6 +142,19 @@ object SurfaceProps {
     const val NOTIFICATION_TAB = "tab"
 
     /**
+     * `GemsSubscriptionSurface.tsx:21-28` 的六个可选 props（camelCase）。
+     * `initialTab` 由 RN `normalizeTab` 归一（`buy_gems` 之外全落
+     * `subscription`）；`planId` 收字符串（RN `normalizePlanId` 自转数字）；
+     * `preferNextPlan` 是 **boolean**（壳按 iOS boolParam 语义转型）。
+     */
+    const val GEMS_INITIAL_TAB = "initialTab"
+    const val GEMS_PLAN_ID = "planId"
+    const val GEMS_PREFER_NEXT_PLAN = "preferNextPlan"
+    const val GEMS_SCROLL_INFO = "scrollInfo"
+    const val GEMS_SOURCE_TYPE = "sourceType"
+    const val GEMS_SOURCE_PAGE = "sourcePage"
+
+    /**
      * 把 route 转成业务 props。
      *
      * @return 业务参数；无参数的 route 返回**空 map**。
@@ -322,6 +335,30 @@ object SurfaceProps {
             route.tab?.takeIf { it.isNotBlank() }?.let { put(NOTIFICATION_TAB, it) }
         }
 
+        /*
+         * `GemsSubscriptionSurface`（W4 批次 4）。六个可选 props
+         * （`GemsSubscriptionSurface.tsx:21-28`，camelCase）—— route 的
+         * params 来自两个入口：Profile 钱包卡（camelCase 固定键）与
+         * 桥 `openGemsPurchase`（RN 调用方传什么是什么）。iOS 容器只认
+         * camelCase 并做 snake_case 别名归一（`TipsyRouter.swift:349-363`），
+         * 壳照做 —— 不归一的表现是宝石页任务入口带 snake 键时初始 tab 静默
+         * 回落 subscription。空值键不放（iOS 逐个 isEmpty 判断同义）。
+         */
+        is AppRoute.GemsPurchase -> buildMap {
+            fun aliased(camel: String, snake: String): String? =
+                (route.params[camel] ?: route.params[snake])?.takeIf { it.isNotBlank() }
+            aliased("initialTab", "initial_tab")?.let { put(GEMS_INITIAL_TAB, it) }
+            aliased("planId", "plan_id")?.let { put(GEMS_PLAN_ID, it) }
+            aliased("preferNextPlan", "prefer_next_plan")?.let {
+                // iOS boolParam：1/true/yes（大小写不敏感）→ true。
+                // RN 侧 props 是 boolean —— 传字符串 "false" 会被真值判定当 true
+                put(GEMS_PREFER_NEXT_PLAN, it.lowercase() in setOf("1", "true", "yes"))
+            }
+            aliased("scrollInfo", "scroll_info")?.let { put(GEMS_SCROLL_INFO, it) }
+            aliased("sourceType", "source_type")?.let { put(GEMS_SOURCE_TYPE, it) }
+            aliased("sourcePage", "source_page")?.let { put(GEMS_SOURCE_PAGE, it) }
+        }
+
         //
         // ⚠️ Search 是**纯原生页**（W3），和 Settings 一样根本不经 Surface ——
         // 它在这里返回空 map 纯粹是为了满足穷尽性；真有人给它传 props
@@ -331,7 +368,6 @@ object SurfaceProps {
         is AppRoute.UserBalance,
         is AppRoute.Subscribe,
         is AppRoute.CreateProfileDetail,
-        is AppRoute.GemsPurchase,
         is AppRoute.Login,
         is AppRoute.Settings,
         is AppRoute.EditProfile,
