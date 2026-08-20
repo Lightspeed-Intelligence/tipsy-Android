@@ -148,7 +148,7 @@ class ChatListFragment : Fragment() {
                     onRefresh = viewModel::onRefresh,
                     onLoadMore = viewModel::onLoadMore,
                     onPageTypeSelected = viewModel::onPageTypeSelected,
-                    onBellClick = { requestRoute(AppRoute.Letter) },
+                    onBellClick = { requestRoute(AppRoute.Letter()) },
                     onThreadClick = ::onThreadClick,
                     onPinClick = viewModel::togglePin,
                     onDeleteRequest = viewModel::requestDelete,

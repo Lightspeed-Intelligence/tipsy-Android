@@ -71,6 +71,12 @@ object ProductionRoutePolicy {
         // ⚠️ ChatDetail 内点评论**不经这里**（Comments 屏在 ChatDetail 微栈内，
         // §12.1 核实 2026-08-20）—— 本 route 只从原生页进入，单层容器纪律不变
         AppRoute.Comments::class.java,
+        // W4 批次 4：站内信（ChatList 铃铛 → NotificationSurface）。
+        // Engagement tab 的跨栈出口经桥（openComments/openChatDetail/
+        // openFeedback 本刀新增；openUserProfile 早有）—— 目标容器
+        // replace + addToBackStack 叠栈（同 ChatDetail → 他人主页的既有
+        // 模式），返回逐层弹；popSurface 弹栈顶，单显示层语义不变
+        AppRoute.Letter::class.java,
     )
 }
 

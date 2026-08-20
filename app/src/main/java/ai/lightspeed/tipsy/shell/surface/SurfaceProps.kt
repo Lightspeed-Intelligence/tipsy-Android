@@ -130,6 +130,9 @@ object SurfaceProps {
     const val COMMENTS_COMMENT_ID = "commentId"
     const val COMMENTS_ROOT_ID = "rootId"
 
+    /** `NotificationSurface.tsx:16-19` 的初始 tab prop。 */
+    const val NOTIFICATION_TAB = "tab"
+
     /**
      * 把 route 转成业务 props。
      *
@@ -282,6 +285,15 @@ object SurfaceProps {
         // - Settings 是原生列表（§8.1），根本不经 Surface props
         // - EditProfile 在 RN 侧是同页 Drawer，无路由参数
         // - UserCoins 页自己从 user store 取当前用户，不需要壳传 id
+        /*
+         * `NotificationSurface`（W4 批次 4）。唯一 prop `tab`
+         * （`NotificationSurface.tsx:16-19`，System/Personal/Engagement），
+         * RN 侧 `props.tab ?? 'System'` —— 缺省即 System，铃铛入口不传
+         */
+        is AppRoute.Letter -> buildMap {
+            route.tab?.takeIf { it.isNotBlank() }?.let { put(NOTIFICATION_TAB, it) }
+        }
+
         //
         // ⚠️ Search 是**纯原生页**（W3），和 Settings 一样根本不经 Surface ——
         // 它在这里返回空 map 纯粹是为了满足穷尽性；真有人给它传 props
@@ -290,7 +302,6 @@ object SurfaceProps {
         is AppRoute.DailyGemEntry,
         is AppRoute.UserBalance,
         is AppRoute.Subscribe,
-        is AppRoute.Letter,
         is AppRoute.CreateProfileDetail,
         is AppRoute.GemsPurchase,
         is AppRoute.Login,

@@ -470,6 +470,103 @@ class ShellAuthProviderTest {
         assertEquals(listOf(AppRoute.UserProfile("")), f.routeRequests)
     }
 
+    // ── W4 批次 4：NotificationSurface 跨栈出口三件套 ─────────
+
+    @Test
+    fun `openComments 解析 snake_case 参数并转 route`() = runTest {
+        // 键对齐 RN Comments 路由参数（LetterItem.tsx:299-307）——
+        // 与 openChatDetail 的 camelCase 不同轴，两个各照各的 RN 真值
+        val f = fixture(persisted = null, isDebug = true)
+
+        f.provider.openComments(
+            mapOf(
+                "target_type" to "2",
+                "target_id" to "story-9",
+                "comment_id" to "cm-1",
+                "root_id" to "rt-3",
+            ),
+        )
+
+        assertEquals(
+            listOf(
+                AppRoute.Comments(
+                    targetType = 2,
+                    targetId = "story-9",
+                    creatorId = "",
+                    commentId = "cm-1",
+                    rootId = "rt-3",
+                ),
+            ),
+            f.routeRequests,
+        )
+    }
+
+    @Test
+    fun `openComments 缺 target 参数不跳不崩`() = runTest {
+        // iOS guard 同义：缺 target_type/target_id 记日志忽略 ——
+        // 跳一个空 target 的评论页比不跳更糟（页面报错且无法归因）
+        val f = fixture(persisted = null, isDebug = true)
+
+        f.provider.openComments(mapOf("target_id" to "story-9"))
+        f.provider.openComments(mapOf("target_type" to "1"))
+        f.provider.openComments(mapOf("target_type" to "abc", "target_id" to "x"))
+
+        assertEquals(emptyList<AppRoute>(), f.routeRequests)
+    }
+
+    @Test
+    fun `openChatDetail 透传分流素材且数字转型`() = runTest {
+        // characterType/contentType 必须转 Int —— ChatDetail route 收数字，
+        // SurfaceProps 再按数字进嵌套 preload（"1" === 1 在 JS 是 false）
+        val f = fixture(persisted = null, isDebug = true)
+
+        f.provider.openChatDetail(
+            "char-7",
+            mapOf(
+                "chatEnterSource" to "unknown",
+                "isStory" to "true",
+                "characterType" to "1",
+                "contentType" to "2",
+            ),
+        )
+
+        assertEquals(
+            listOf(
+                AppRoute.ChatDetail(
+                    characterId = "char-7",
+                    chatEnterSource = "unknown",
+                    isStory = true,
+                    characterType = 1,
+                    contentType = 2,
+                ),
+            ),
+            f.routeRequests,
+        )
+    }
+
+    @Test
+    fun `openChatDetail 空 characterId 不跳`() = runTest {
+        val f = fixture(persisted = null, isDebug = true)
+
+        f.provider.openChatDetail("", mapOf("chatEnterSource" to "unknown"))
+
+        assertEquals(emptyList<AppRoute>(), f.routeRequests)
+    }
+
+    @Test
+    fun `openFeedback 落 Settings 的 Feedback 子屏`() = runTest {
+        val f = fixture(persisted = null, isDebug = true)
+
+        f.provider.openFeedback()
+
+        assertEquals(
+            listOf(
+                AppRoute.SettingsSubScreen(AppRoute.SettingsSubScreen.Screen.FEEDBACK),
+            ),
+            f.routeRequests,
+        )
+    }
+
     // ── helpers ───────────────────────────────────────────────
 
     private class Fixture(

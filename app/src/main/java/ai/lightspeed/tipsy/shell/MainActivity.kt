@@ -11,6 +11,7 @@ import ai.lightspeed.tipsy.shell.router.AppRouter
 import ai.lightspeed.tipsy.shell.surface.CommentsSurfaceContract
 import ai.lightspeed.tipsy.shell.surface.CreateSurfaceContract
 import ai.lightspeed.tipsy.shell.surface.EditProfileSurfaceContract
+import ai.lightspeed.tipsy.shell.surface.NotificationSurfaceContract
 import ai.lightspeed.tipsy.shell.surface.SettingsSurfaceContract
 import ai.lightspeed.tipsy.shell.surface.SurfaceProps
 import ai.lightspeed.tipsy.shell.tabs.TabHostFragment
@@ -171,6 +172,10 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
             // 容器出栈后按类型解除，否则同一作品的评论页只能打开一次
             if (supportFragmentManager.findFragmentByTag(CommentsSurfaceContract.COMPONENT_NAME) == null) {
                 router.onDestinationClosed { route -> route is AppRoute.Comments }
+            }
+            // Letter 带可选 tab 参数，同样谓词版按类型解除
+            if (supportFragmentManager.findFragmentByTag(NotificationSurfaceContract.COMPONENT_NAME) == null) {
+                router.onDestinationClosed { route -> route is AppRoute.Letter }
             }
             // EditProfile 是无参 data object；若不在容器真正退栈后按类型解除，
             // 第二次点击会永久命中 Router 的 lastHandled 去重（与 Create 同型）。
@@ -345,6 +350,9 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
                 // 通用链：幂等判定、平铺 props、popSurface 收口同 ChatDetail
                 is AppRoute.Comments ->
                     openSurface(CommentsSurfaceContract.COMPONENT_NAME, route)
+                // W4 批次 4：站内信（ChatList 铃铛）
+                is AppRoute.Letter ->
+                    openSurface(NotificationSurfaceContract.COMPONENT_NAME, route)
                 // W3 预接：RN auth-scoped bootstrap 已落地，但专属 §9.1 尚未
                 // 实机验收，生产 policy 仍关闭。组件身份、空 props、容器与关闭
                 // 去重先钉死；后续放行只改集中 policy，不再临场补导航机制。

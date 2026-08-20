@@ -304,6 +304,64 @@ class ShellAuthProvider(
         withContext(mainDispatcher) { onNavigateGemsPurchase(emptyMap()) }
     }
 
+    /**
+     * 互动通知评论卡 → 评论页（W4 批次 4）。
+     *
+     * ⚠️ 键是 **snake_case**（对齐 RN Comments 路由参数，`LetterItem.tsx:299`），
+     * 与 [openChatDetail] 的 camelCase **不同轴** —— 两个方法各照各的 RN 真值，
+     * 别"统一风格"。target 缺失不跳（iOS 同义：guard + 日志）。
+     */
+    override fun openComments(params: Map<String, String>) {
+        val targetType = params["target_type"]?.toIntOrNull()
+        val targetId = params["target_id"]?.takeIf { it.isNotBlank() }
+        if (targetType == null || targetId == null) {
+            logger.log(Logger.Level.WARN, "openComments 缺 target 参数，已忽略：$params")
+            return
+        }
+        onRequestRoute(
+            AppRoute.Comments(
+                targetType = targetType,
+                targetId = targetId,
+                // 该入口不传 creatorId（iOS 注释：删除权限走 RN 兜底请求）
+                creatorId = params["creator_id"].orEmpty(),
+                commentId = params["comment_id"],
+                rootId = params["root_id"],
+            ),
+        )
+    }
+
+    /**
+     * 互动通知作品图 → 聊天详情（W4 批次 4）。
+     *
+     * 键是 **camelCase**（`LetterItem.tsx:253-262`）。分流素材只透传：
+     * `resolveInitialParams` 自决初始屏（§2.30/§2.35 纪律，与卡片点击同链）。
+     * 空 characterId 不跳（iOS guard 同义；Router 对 ChatDetail 不再重复判空）。
+     */
+    override fun openChatDetail(characterId: String, params: Map<String, String>) {
+        if (characterId.isBlank()) {
+            logger.log(Logger.Level.WARN, "openChatDetail 空 characterId，已忽略")
+            return
+        }
+        onRequestRoute(
+            AppRoute.ChatDetail(
+                characterId = characterId,
+                chatEnterSource = params["chatEnterSource"]?.takeIf { it.isNotBlank() },
+                isStory = params["isStory"] == "true",
+                characterType = params["characterType"]?.toIntOrNull(),
+                contentType = params["contentType"]?.toIntOrNull(),
+            ),
+        )
+    }
+
+    /**
+     * Surface 内「回馈」入口 → SettingsSurface 直达 Feedback 屏（W4 批次 4）。
+     * iOS `openFeedback` → `.feedback` 路由同义。
+     */
+    override fun openFeedback() =
+        onRequestRoute(
+            AppRoute.SettingsSubScreen(AppRoute.SettingsSubScreen.Screen.FEEDBACK),
+        )
+
     // ── SurfaceLifecycleContract ────────────────────────────────
 
     override fun notifyOnboardingCompleted() =

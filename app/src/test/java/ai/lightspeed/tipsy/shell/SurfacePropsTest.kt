@@ -200,7 +200,7 @@ class SurfacePropsTest {
             AppRoute.DailyGemEntry,
             AppRoute.UserBalance,
             AppRoute.Subscribe,
-            AppRoute.Letter,
+            AppRoute.Letter(),
             AppRoute.CreateProfileDetail("x"),
             AppRoute.GemsPurchase(),
             AppRoute.Login(),

@@ -172,26 +172,52 @@ class AppRouterTest {
      * §8.3 纪律：路由到未启用目标必须给明确错误或安全兜底，**绝不 silent no-op**。
      * 静默的症状正是「点了没反应」。
      *
-     * ⚠️ 主体从 `ChatDetail` 换成 `Letter`（2026-08-17，P9）：前者已过微根清单
-     * 与桥回填、进了白名单（见下一条），继续拿它当"未启用"样本会让这条纪律
-     * 测试与现实脱节。`Letter` 落 `NotificationSurface`，属 W4。
+     * ⚠️ 主体已换两次：`ChatDetail`（P9 启用）→ `Letter`（批次 4 启用）→
+     * 现在是 `GemsPurchase`（W4 批次 4 下一刀）。启用它时再换主体 ——
+     * 未启用样本没了就说明 13 个 Surface 全部上线，这条测试改为断言
+     * 白名单与 route 类型全集相等。
      */
     @Test
     fun `未启用的 Surface 目标被明确拒绝且不会导航`() {
         assertFalse(
             "生产白名单本身必须锁住未过矩阵的 Surface，不能只靠 Activity 记得不启用",
-            AppRoute.Letter::class.java in ProductionRoutePolicy.enabledRouteTypes,
+            AppRoute.GemsPurchase::class.java in ProductionRoutePolicy.enabledRouteTypes,
         )
         val f = fixture(
             loggedIn = true,
             enabled = ProductionRoutePolicy.enabledRouteTypes.toList(),
         )
-        val route = AppRoute.Letter
+        val route = AppRoute.GemsPurchase()
         f.router.handle(route)
 
         assertEquals("不该导航", 0, f.navigated.size)
         assertEquals("必须明确拒绝一次", 1, f.rejections.size)
         assertEquals(route, f.rejections.single())
+    }
+
+    /**
+     * W4 批次 4：`Letter` 进白名单 —— ChatList 铃铛有下一屏
+     * （NotificationSurface，三 tab 站内信）。
+     */
+    @Test
+    fun `Letter 在生产白名单内且关闭后可重开`() {
+        assertTrue(
+            "Letter 必须在生产白名单里，否则铃铛点了只会 reject",
+            AppRoute.Letter::class.java in ProductionRoutePolicy.enabledRouteTypes,
+        )
+
+        val f = fixture(
+            loggedIn = true,
+            enabled = listOf(AppRoute.Letter::class.java),
+        )
+        val route = AppRoute.Letter()
+        f.router.handle(route)
+        f.router.handle(route)
+        assertEquals("容器还在时重复点击应去重", 1, f.navigated.size)
+
+        f.router.onDestinationClosed { it is AppRoute.Letter }
+        f.router.handle(route)
+        assertEquals("容器退栈后必须能重开", 2, f.navigated.size)
     }
 
     /**
