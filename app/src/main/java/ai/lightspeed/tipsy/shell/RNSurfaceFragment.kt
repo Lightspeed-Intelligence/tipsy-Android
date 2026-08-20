@@ -2,13 +2,13 @@ package ai.lightspeed.tipsy.shell
 
 import ai.lightspeed.tipsy.shell.surface.ReappearPolicy
 import ai.lightspeed.tipsy.shell.surface.SurfaceContract
+import android.graphics.Color
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
-import androidx.core.view.isNotEmpty
 import com.facebook.react.ReactFragment
 import expo.modules.tipsyauth.TipsyAuthRegistry
 
@@ -23,7 +23,7 @@ import expo.modules.tipsyauth.TipsyAuthRegistry
  * ## W1 §12 的四件事（本类实现）
  *
  * 1. **`surfaceInstanceId`**（§12.1）—— 每次打开生成唯一 id
- * 2. **首帧协议**（§12.2）—— ready 前原生占位，ready 后单次淡出
+ * 2. **首帧协议**（§12.2）—— 不透明 Native 宿主垫底，透明 RN Root 首帧直接覆盖
  * 3. **`onSurfaceReappeared`**（§12.3）—— 非首次 onResume 时发射
  * 4. **capability handshake / initial props**（§12.4）—— 见 [SurfaceContract]
  */
@@ -50,9 +50,6 @@ class RNSurfaceFragment : ReactFragment() {
      */
     private var hasResumedOnce = false
 
-    /** 原生占位层。ready 后淡出并移除。 */
-    private var placeholder: View? = null
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // 判定规则抽在 ReappearPolicy 里（可单测）；这里只负责喂生命周期状态
@@ -71,11 +68,15 @@ class RNSurfaceFragment : ReactFragment() {
     }
 
     /**
-     * 在 RN 的 root view 之上盖一层原生占位（§12.2）。
+     * 对齐 iOS `RNSurfaceHost` / `RNSurfaceContainer` 的普通全屏 Surface：
      *
-     * **不用固定延时猜 ready**（iOS `b2773e1` 处理过同一问题）：延时短了会闪
-     * 白屏，长了平白拖慢首帧，而且真机与模拟器的合适值不同。这里改为等
-     * RN 真正渲染出内容 —— 见 [scheduleFirstFrameReveal]。
+     * - Native 宿主先画不透明 App 底色；
+     * - RN Root 保持透明，首帧内容提交后直接覆盖宿主；
+     * - 不增加 cover，也不根据布局/固定延时猜测 RN ready。
+     *
+     * Android 的 `surface_container` 与 Native Tab 是 sibling。宿主若透明，warm
+     * Runtime 下新 Surface 首帧尚未提交时就会透出下面的 Tab，看起来像先 pop
+     * 回 Native。这个层级约束与共享的 RN Surface 代码无关，只属于原生宿主。
      */
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -83,59 +84,17 @@ class RNSurfaceFragment : ReactFragment() {
         savedInstanceState: Bundle?,
     ): View? {
         val reactView = super.onCreateView(inflater, container, savedInstanceState) ?: return null
+        reactView.setBackgroundColor(Color.TRANSPARENT)
 
         val wrapper = FrameLayout(requireContext()).apply {
+            setBackgroundResource(R.color.app_background)
             addView(
                 reactView,
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT,
             )
         }
-
-        val cover = inflater.inflate(R.layout.surface_placeholder, wrapper, false)
-        wrapper.addView(cover)
-        placeholder = cover
-
-        scheduleFirstFrameReveal(reactView)
         return wrapper
-    }
-
-    /**
-     * 等 RN 渲染出首帧后**单次**淡出占位层。
-     *
-     * 判据是「root view 有了非零尺寸的子节点」—— RN 挂载完成才会产生。
-     * 比固定延时可靠，也不需要 RN 侧配合发 ready 事件（那要改 JS，属跨仓改动）。
-     *
-     * ⚠️ **只淡出一次**：`isRevealed` 守着重复调用。重复淡出会让页面在
-     * 快速切换时闪烁，而且 listener 不摘掉会一直跑在每帧上。
-     */
-    private fun scheduleFirstFrameReveal(reactView: View) {
-        var isRevealed = false
-        reactView.viewTreeObserver.addOnGlobalLayoutListener(
-            object : android.view.ViewTreeObserver.OnGlobalLayoutListener {
-                override fun onGlobalLayout() {
-                    if (isRevealed) return
-                    val hasContent = (reactView as? ViewGroup)?.let {
-                        it.isNotEmpty() && it.getChildAt(0).height > 0
-                    } ?: (reactView.height > 0)
-                    if (!hasContent) return
-
-                    isRevealed = true
-                    reactView.viewTreeObserver.removeOnGlobalLayoutListener(this)
-                    fadeOutPlaceholder()
-                }
-            },
-        )
-    }
-
-    private fun fadeOutPlaceholder() {
-        val cover = placeholder ?: return
-        placeholder = null
-        cover.animate()
-            .alpha(0f)
-            .setDuration(FADE_OUT_MS)
-            .withEndAction { (cover.parent as? ViewGroup)?.removeView(cover) }
-            .start()
     }
 
     /**
@@ -173,9 +132,6 @@ class RNSurfaceFragment : ReactFragment() {
         private const val ARG_INSTANCE_ID = "tipsy.surfaceInstanceId"
         private const val ARG_COMPONENT_NAME = "tipsy.componentName"
         private const val STATE_HAS_RESUMED_ONCE = "tipsy.hasResumedOnce"
-
-        /** 淡出时长。短到不显得拖沓，长到不像是闪一下。 */
-        private const val FADE_OUT_MS = 180L
 
         /**
          * @param routeParams 业务参数，**平铺**进 initial props 的顶层 ——

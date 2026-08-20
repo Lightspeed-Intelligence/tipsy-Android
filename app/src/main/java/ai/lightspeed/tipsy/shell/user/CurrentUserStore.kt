@@ -1,27 +1,18 @@
 package ai.lightspeed.tipsy.shell.user
 
 import android.util.Log
+import ai.lightspeed.tipsy.shell.auth.Generations
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * 当前用户信息的进程内持有者（Profile / 后续 Settings 的数据源）。
+ * 当前用户信息的进程级持有者（所有 Native 页与 RN Surface 共用）。
  *
- * ## 只在内存，不持久化 —— 这是刻意的
- *
- * RN 侧 user store 是 `persist` 的（`store/user.ts:82`，信封 `user-storage`），
- * 但壳**不写**那个信封：
- * - `AccountLanguageReader` 已定边界「壳只读 `user-storage`」，写它就要按 §4.6
- *   做 merge（整体覆盖会破坏 Zustand 信封里其余二十多个字段 ——
- *   与 §2.23 `config-persist-storage` 同一类事故）
- * - 壳这一刀不需要跨进程存活：Profile 每次进页面都会拉 `/user/info`
- *
- * 代价写在这里免得当成 bug：**冷启动首次进 Profile 会有一次 loading**
- * （没有本地镜像可先上屏）。RN 侧因为有 persist 所以是秒显。
- * 如果后续要消掉这个 loading，正确做法是**读** RN 已有的 `user-storage` 镜像
- * 作种子（同 `HomeForYouCache` 的思路），而不是让壳去写那个信封。
+ * Android Native 是 token 与 `/user/info` 的 owner，因此成功响应会同时更新内存并经
+ * [CurrentUserMirrorLike] merge 到 RN 的 `user-storage`。这与 iOS AuthSession 的职责
+ * 对齐；Surface 只负责 rehydrate，不再从 JWT 猜一个最小身份。
  *
  * ## ⚠️ 拉取失败**不清**已有身份
  *
@@ -29,10 +20,14 @@ import kotlinx.coroutines.flow.asStateFlow
  * 清掉会让用户在一次网络抖动后看到自己的头像昵称突然变空白，
  * 而数据其实还在服务端 —— 与方案 §8.4「失败不清列表」同一条纪律。
  *
- * 真正该清的时机只有**登出**（[clear]），由 `AuthStateHub.didLogout` 驱动。
+ * 真正该清的时机只有**登出或新登录的账号屏障**（[clear]）；网络失败不清。
  */
 class CurrentUserStore(
     private val source: UserInfoSource,
+    private val generations: Generations? = null,
+    private val currentUserId: (() -> String?)? = null,
+    private val mirror: CurrentUserMirrorLike = CurrentUserMirrorLike.NOOP,
+    private val onUserUpdated: (CurrentUser) -> Unit = {},
     private val logWarn: (String, Throwable?) -> Unit = { m, t -> Log.w(TAG, m, t) },
 ) {
 
@@ -44,10 +39,17 @@ class CurrentUserStore(
     /**
      * 拉一次并更新。
      *
-     * @return true 表示拿到了新数据；false 表示失败或响应残缺
-     *   —— **两种情况下 [current] 都保持原值不动**（见类注释）
+     * @param requireSharedSnapshot 是否要求 RN 共享快照也必须成功落盘。登录事务传 true，
+     *   避免发布「Native 有用户、RN 无用户」的半登录状态；普通后台刷新保持 false，
+     *   镜像失败时仍允许 Native 使用本次网络结果。
+     * @return true 表示拿到了可发布的新数据；false 表示请求、响应校验或必需镜像失败。
+     *   失败时 [current] 保持原值不动（见类注释）
      */
-    suspend fun refresh(): Boolean {
+    suspend fun refresh(requireSharedSnapshot: Boolean = false): Boolean {
+        // 账号私有请求发出前捕获 auth generation 与 token subject；响应回来后一起校验。
+        // subject 可能缺失，所以它只是附加校验，generation 才是主闸。
+        val authSnapshot = generations?.snapshot()
+        val expectedUserId = currentUserId?.invoke()
         val fetched = runCatching { source.fetchCurrentUser() }
             .onFailure {
                 // ⚠️ 取消不是失败：这里吞掉 CancellationException 会让登出时已在飞的
@@ -58,12 +60,31 @@ class CurrentUserStore(
             }
             .getOrNull()
         if (fetched == null) return false
+
+        if (authSnapshot != null && generations?.isAuthValid(authSnapshot) != true) {
+            logWarn("/user/info 返回时账号已变化，丢弃旧响应", null)
+            return false
+        }
+        if (expectedUserId != null && fetched.userId != expectedUserId) {
+            logWarn("/user/info userId 与当前 token subject 不一致，拒绝发布", null)
+            return false
+        }
+
+        // 下列步骤均为同步、无挂起操作；生产调用方在 Main.immediate 上恢复，避免
+        // generation 校验与发布之间被另一次 login/logout 插入。
+        val mirrored = mirror.write(fetched)
+        if (requireSharedSnapshot && !mirrored) {
+            logWarn("登录所需 user-storage 快照写入失败，拒绝发布半登录状态", null)
+            return false
+        }
+
         _current.value = fetched
+        onUserUpdated(fetched)
         return true
     }
 
     /**
-     * 清空 —— **只在登出时调**。
+     * 清空 —— **只在登出或新登录账号屏障时调**。
      *
      * 不要在拉取失败时调这个，理由见类注释。
      */

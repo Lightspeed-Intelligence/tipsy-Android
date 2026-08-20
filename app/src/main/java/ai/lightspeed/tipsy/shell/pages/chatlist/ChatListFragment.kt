@@ -10,8 +10,6 @@ import ai.lightspeed.tipsy.shell.tabs.HOME_LIST_BOTTOM_EXTRA
 import ai.lightspeed.tipsy.shell.tabs.TAB_BAR_CONTENT_HEIGHT
 import ai.lightspeed.tipsy.shell.tabs.androidTabBarBottomInsetDp
 import ai.lightspeed.tipsy.shell.ui.ScaledMetrics
-import ai.lightspeed.tipsy.shell.user.CurrentUserStore
-import ai.lightspeed.tipsy.shell.user.UserInfoApi
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -67,7 +65,7 @@ class ChatListFragment : Fragment() {
                 generations = app.generations,
                 languageProvider = { L10n.current },
                 userIdProvider = { app.tokenStore.currentUserId() },
-                userStore = CurrentUserStore(UserInfoApi(app.apiClient)),
+                userStore = app.currentUserStore,
             ) as T
         }
     }

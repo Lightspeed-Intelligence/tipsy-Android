@@ -509,7 +509,10 @@ Surface 只挂最小 root stack。**RN 页内 `navigate` 的所有目的页必�
 
 #### 首帧协议
 
-Surface 首帧 ready 前显示 Native 占位，ready 后单次淡出。**不用固定延时猜测**（iOS `b2773e1` 处理过同一问题）。
+普通全屏 Surface 对齐 iOS 宿主边界：Native 容器先画不透明 App 底色，RN Root
+保持透明，RN 首帧提交后直接覆盖；**不增加 cover，也不按布局或固定延时猜 ready**。
+这样 cold/warm Runtime 都不会透出下层 Native 页面，共享的 RN Surface 无需平台分支。
+只有产品明确要求交叉淡入的特殊转场，才接平台提供的 RN 内容出现信号做门控。
 
 ### 4.4 Auth 契约
 

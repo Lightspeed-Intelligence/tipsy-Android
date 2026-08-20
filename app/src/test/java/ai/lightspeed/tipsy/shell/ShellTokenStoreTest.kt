@@ -607,6 +607,7 @@ class ShellTokenStoreTest {
     @Test
     fun `clearToken 可只清值而不通知 listener`() = runTest {
         var cleared = 0
+        var removed = 0
         val generations = Generations()
         val persistence = FakePersistence(tokenWithExp(now + 3600))
         val before = generations.auth
@@ -614,6 +615,10 @@ class ShellTokenStoreTest {
             persistence = persistence,
             generations = generations,
             listener = object : ShellTokenStore.Listener {
+                override fun onTokenRemoved() {
+                    removed++
+                }
+
                 override fun onTokenCleared() {
                     cleared++
                 }
@@ -624,6 +629,7 @@ class ShellTokenStoreTest {
 
         assertNull("不通知仍必须清 token", persistence.stored)
         assertTrue("不通知仍必须失效 auth generation", generations.auth > before)
+        assertEquals("静默 clear 也必须触发账号存储成对清理", 1, removed)
         assertEquals("桥 clearToken 不得广播 loggedOut", 0, cleared)
     }
 

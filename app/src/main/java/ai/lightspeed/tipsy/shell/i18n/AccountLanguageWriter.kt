@@ -1,5 +1,7 @@
 package ai.lightspeed.tipsy.shell.i18n
 
+import ai.lightspeed.tipsy.shell.user.UserStorageEnvelope
+import ai.lightspeed.tipsy.shell.user.UserStorageSnapshot
 import org.json.JSONObject
 
 /**
@@ -65,7 +67,7 @@ import org.json.JSONObject
  * 常驻 JS runtime 已经 hydrate 过这个 store，直接改 MMKV **它不会知道**。
  * `index.surfaces.js:72-76` 已有该监听（注释写明「壳每次 merge user-storage
  * 后通知长驻 JS runtime 重读」），桥方法 `notifyUserStoreChanged` 两端都在 ——
- * 只是 Android 壳此前从没调过。**这条链是现成的，不需要改 `tipsy-app`。**
+ * Android 的完整用户发布与语言字段写入现在都走这条事件链。
  */
 object AccountLanguageWriter {
 
@@ -80,33 +82,11 @@ object AccountLanguageWriter {
      * @return 永不为 null（与 gender 那条不同，见类注释）
      */
     fun merge(raw: String?, languageCode: String): String {
-        val envelope = parseEnvelope(raw) ?: JSONObject().put(ENVELOPE_VERSION, DEFAULT_VERSION)
-        // state 缺失或类型不对都重建：宁可让 RN 的 merge 用默认值补齐，
-        // 也不要写一个没有 state 层的信封（那样 rehydrate 直接拿不到东西）
-        val state = envelope.optJSONObject(ENVELOPE_STATE) ?: JSONObject()
-        // ⚠️ 只 put 这一个 key，见类注释
-        state.put(FIELD_LANGUAGE_CODE, languageCode)
-        envelope.put(ENVELOPE_STATE, state)
-        // 造新信封时补 version；已有信封**保留它原来的值**不要改成 0 ——
-        // 若将来 RN 给这个 store 加了 version，覆盖成 0 会反向触发 migrate
-        if (!envelope.has(ENVELOPE_VERSION)) {
-            envelope.put(ENVELOPE_VERSION, DEFAULT_VERSION)
-        }
-        return envelope.toString()
+        // 与完整用户快照共用同一信封算法，避免两套实现日后在 version/state
+        // 容错上漂移。这里只构造一个字段；生产 RMW 串行化在 UserStorageRepository。
+        return UserStorageEnvelope.merge(
+            raw,
+            JSONObject().put(UserStorageSnapshot.FIELD_LANGUAGE_CODE, languageCode),
+        )
     }
-
-    private fun parseEnvelope(raw: String?): JSONObject? {
-        val trimmed = raw?.trim().orEmpty()
-        if (trimmed.isEmpty() || !trimmed.startsWith("{")) return null
-        return runCatching { JSONObject(trimmed) }.getOrNull()
-    }
-
-    private const val ENVELOPE_STATE = "state"
-    private const val ENVELOPE_VERSION = "version"
-
-    /** zustand 默认值（`middleware.js:333`），`user-storage` 未声明 version。 */
-    private const val DEFAULT_VERSION = 0
-
-    /** 同 [AccountLanguageReader] 读的字段：camelCase，不是接口的 snake_case。 */
-    private const val FIELD_LANGUAGE_CODE = "languageCode"
 }

@@ -5,8 +5,7 @@ import ai.lightspeed.tipsy.shell.auth.AuthStateHub
 import ai.lightspeed.tipsy.shell.i18n.L10n
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
-import ai.lightspeed.tipsy.shell.user.CurrentUserStore
-import ai.lightspeed.tipsy.shell.user.UserInfoApi
+import ai.lightspeed.tipsy.shell.ui.ScaledMetrics
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -20,6 +19,7 @@ import android.view.ViewGroup
 import android.widget.Toast
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.LaunchedEffect
@@ -28,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
@@ -66,7 +67,7 @@ class ProfileFragment : Fragment() {
             override fun <T : ViewModel> create(modelClass: Class<T>): T = ProfileViewModel(
                 api = ProfileApi(app.apiClient),
                 walletApi = ProfileWalletApi(app.apiClient),
-                userStore = CurrentUserStore(UserInfoApi(app.apiClient)),
+                userStore = app.currentUserStore,
                 languageProvider = { L10n.current },
                 avatarDecorationSource = AvatarDecorationApi(app.apiClient),
             ) as T
@@ -184,6 +185,17 @@ class ProfileFragment : Fragment() {
                         }
                     },
                     avatarDecorationImageUrl = state.avatarDecorationImageUrl,
+                    // RN 自己视角的 CharacterGrid 固定留 `s(bottom + 400)`，保证
+                    // 数据不足一屏时头部仍能滚走；壳的 TabBar 又与内容叠放，需再
+                    // 加整段 TabBar 高度。漏掉后，六张卡刚好塞进整屏，LazyGrid
+                    // 会判定不可滚，最后一行却被 TabBar 挡住（本次录屏现象）。
+                    listBottomPadding = profileListBottomPaddingDp(
+                        safeBottomDp = WindowInsets.systemBars
+                            .asPaddingValues()
+                            .calculateBottomPadding()
+                            .value,
+                        scaleFactor = ScaledMetrics.scaleFactor(),
+                    ).dp,
                     onSocialLinkClick = ::openExternalUrl,
                     // P5 卡片 ⋮ 菜单：状态在 ViewModel；编辑经 Router 出去
                     onMenuOpen = viewModel::onMenuOpen,

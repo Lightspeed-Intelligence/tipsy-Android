@@ -2,7 +2,6 @@ package ai.lightspeed.tipsy.shell.pages.login
 
 import ai.lightspeed.tipsy.shell.BuildConfig
 import ai.lightspeed.tipsy.shell.TipsyApplication
-import ai.lightspeed.tipsy.shell.auth.Jwt
 import ai.lightspeed.tipsy.shell.i18n.L10n
 import android.annotation.SuppressLint
 import android.os.Bundle
@@ -33,7 +32,6 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
-import expo.modules.tipsyauth.TipsyAuthRegistry
 
 /**
  * 原生登录页的 Fragment 宿主（方案 ADR-002：Fragment + [ComposeView]）。
@@ -95,20 +93,15 @@ class LoginFragment : Fragment() {
     /**
      * 登录成功的落地动作。
      *
-     * 三步，顺序不能反：
-     * 1. [ShellTokenStore.onLoggedIn] —— 它内部会先 `generations.bumpAuth()`
-     *    再持久化。**不要自己再 bump**，重复递增会把在飞的合法响应也丢掉。
-     * 2. [TipsyAuthRegistry.notifyAuthStateChanged] —— 通知已挂载的 RN Surface。
-     *    iOS `AuthSession` 在同一登录落点同时广播 RN 与原生观察者；Android 只发
-     *    `loggedOut` 会让已进入 error gate 的 Surface 登录后仍停在那里。
-     * 3. [AuthStateHub.notifyDidLogin] —— 通知壳内常驻页。userId 从 JWT 的
-     *    `sub` 取；这个调用点在 main 上此前**没有任何生产实现**（只有测试在调），
-     *    正是登录链缺的那一环。
+     * 完整顺序收口在 [TipsyApplication.establishUserSession]：先清上一账号共享快照，
+     * 再落 token、拉 `/user/info`、发布完整 `user-storage`，最后才同时广播 RN 与
+     * Native loggedIn。不会再出现“有 token 但 Surface 只有一个 JWT userId”的
+     * 半登录状态；用户拉取失败则回滚 token，交给本 ViewModel 显示登录失败。
      *
      * ## 本轮到此为止（范围边界）
      *
-     * RN 登录后还会 `POST /user/info` 拉用户信息、按 `language_code` 切语言、
-     * 并按 `basicRulesCompleted`/`age`/`onboardingStatus` 决定是否进引导流程
+     * Android 现在已经会拉 `POST /user/info` 并按 `language_code` 切语言；尚未接的
+     * 是按 `basicRulesCompleted`/`age`/`onboardingStatus` 决定是否进引导流程
      * （权威判定在 `tipsy-app/src/surfaces/onboardingStage.ts`，那边有单测）。
      * 那套引导由 RN 的 `OnboardingSurface` 承接，壳侧的衔接点
      * （`ShellAuthProvider.notifyOnboardingCompleted`）当前标记为 **W4 未实现**。
@@ -116,11 +109,8 @@ class LoginFragment : Fragment() {
      * 所以**新用户走完这里只是拿到了 token**，不会自动进年龄验证 ——
      * 这是已知的分期边界，不是漏实现。
      */
-    private fun onLoginSucceeded(app: TipsyApplication, result: EmailLoginApi.LoginResult) {
-        app.tokenStore.onLoggedIn(result.token)
-        val userId = Jwt.subject(result.token)
-        TipsyAuthRegistry.notifyAuthStateChanged("loggedIn", userId)
-        app.authStateHub.notifyDidLogin(userId)
+    private suspend fun onLoginSucceeded(app: TipsyApplication, result: EmailLoginApi.LoginResult) {
+        app.establishUserSession(result.token)
         Log.i(
             TAG,
             "邮箱登录成功（isNewUser=${result.isNewUser} " +

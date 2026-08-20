@@ -13,28 +13,22 @@ import ai.lightspeed.tipsy.shell.network.AuthMode
  * `axiosPublic` 接口相反 —— 别照抄 Home 的 `OPPORTUNISTIC`
  * （那里带不带 token 决定的是"有没有个性化"，这里没 token 根本没有"当前用户"）。
  *
- * ## ⚠️ 壳刻意**不做** RN `updateUserInfo` 的四件副作用
+ * ## 副作用边界
  *
  * RN 的 `updateUserInfo`（`useUserActon.ts:255-268`）拿到响应后还会：
- * 1. `clearChatHistoryCacheOnUserSwitch` —— 聊天缓存属 W4
+ * 1. `clearChatHistoryCacheOnUserSwitch` —— 账号边界由 Application / Surface 事件清理
  * 2. `applyDefaultInputModeOnce` —— 输入模式属 ChatDetail
- * 3. `i18n.changeLanguage(...)` —— **语言链刻意不碰**，见下
+ * 3. `i18n.changeLanguage(...)` —— 由 Application 级 store 成功出口完成，见下
  * 4. `useGuideStatusStore.initializeForUser` —— 引导状态属 `OnboardingSurface`（W4）
  *
- * 本类只取用户信息字段。多做一件都会越过当前波次边界。
+ * 本类仍只负责 HTTP + parse；完整 `user-storage` 发布与语言更新由进程级
+ * `CurrentUserStore` 的注入出口完成。聊天缓存、默认输入模式、引导状态仍不在
+ * API 类里做，避免网络适配器变成第二个会话编排器。
  *
- * ## 为什么不碰 `language_code`
+ * ## `language_code` 在哪里生效
  *
- * 响应里有 `language_code`，但语言的写入链已经收口在别处：原生语言页
- * → `L10n.setLanguage` + `AccountLanguageMirror`（§2.37）。
- *
- * 在这里跟着切语言会引入第二个 writer，与 §3 记的「i18n：壳是唯一 writer」冲突，
- * 且两阶段 i18n 下时序难以推理（iOS 踩过「二启永远无种子」的同类问题）。
- *
- * ⚠️ 原注释在这里写「壳**只读** `user-storage`」作为理由 —— 那半句已过时
- * （语言页原生化后壳要写该信封，见 `AccountLanguageWriter`）。
- * **但本类不碰语言的结论不变**，理由是上面那条「不要第二个 writer」，
- * 不是「壳不写这个 key」。
+ * parser 会把它带进 `CurrentUser`；Application 级 store 成功发布后统一调用
+ * `L10n.setLanguage`。设置页仍走同一个 L10n writer，因此没有第二套语言状态。
  */
 class UserInfoApi(private val apiClient: ApiClient) : UserInfoSource {
 
@@ -63,6 +57,6 @@ class UserInfoApi(private val apiClient: ApiClient) : UserInfoSource {
  * 抽出来的理由同 `HomeFeedSource`：让 [CurrentUserStore] 的「失败不清已有身份」
  * 这类**错了不报错**的编排能用 JVM 单测覆盖，不必起 MockWebServer。
  */
-interface UserInfoSource {
+fun interface UserInfoSource {
     suspend fun fetchCurrentUser(): CurrentUser?
 }

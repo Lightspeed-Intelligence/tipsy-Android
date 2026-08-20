@@ -255,7 +255,7 @@ class SettingsFragment : Fragment() {
                     api = SettingsApi(app.apiClient),
                     // 语言镜像：不接它语言会被静默倒灌回英文（§2.37）
                     languageMirror = AccountLanguageMirror(
-                        store = app.sharedMmkvStore,
+                        repository = app.userStorageRepository,
                         currentUserId = { app.tokenStore.currentUserId() },
                     ),
                     generations = app.generations,

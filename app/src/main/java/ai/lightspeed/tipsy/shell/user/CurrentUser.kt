@@ -4,7 +4,7 @@ import ai.lightspeed.tipsy.shell.network.ScalarCoercion
 import org.json.JSONObject
 
 /**
- * 当前登录用户的信息（`POST /user/info` 的响应子集）。
+ * 当前登录用户的信息（`POST /user/info` 的 Native 消费字段 + RN 共享快照）。
  *
  * ## 为什么壳需要它
  *
@@ -13,12 +13,9 @@ import org.json.JSONObject
  * 只有他人主页才拉 `/user/get/public`。而 user store 由 `/user/info` 填充
  * （`store/user.ts:172-186`）。所以没有这一层，原生 Profile 只能显示空头像。
  *
- * ## 只取用得到的字段
- *
- * RN 的 `setUser` 写了约 30 个字段（`store/user.ts:170-195`），本类只声明壳当前
- * 真正消费的那几个。**刻意不做全量映射**：多声明的字段没有消费方，
- * 却要在每次接口变更时维护，且会诱使后来者从这里读本该走别处的真值
- * （典型是 `nsfw` —— 它的权威源是后端且 RN 侧单向镜像，见 `HomeFilterStore` 注释）。
+ * Kotlin 属性仍只声明 Native 真正消费的字段；同时 [sharedStorageSnapshot] 保存
+ * 与 RN `setUser` 等价的完整非敏感快照，供 Surface rehydrate。二者职责不同：
+ * Native 页面不应为了方便去读取未建模的 JSON，Surface 也不应只拿一个 userId。
  *
  * ## Profile 页那个可复制的 UID 就是 [userId]
  *
@@ -53,6 +50,8 @@ data class CurrentUser(
     val avatarDecorationCode: String? = null,
     val bio: String? = null,
     val relationshipSwitch: Boolean = false,
+    val languageCode: String? = null,
+    val sharedStorageSnapshot: UserStorageSnapshot? = null,
     val socialLinks: List<SocialLink> = emptyList(),
 ) {
 
@@ -95,6 +94,9 @@ data class CurrentUser(
                 bio = ScalarCoercion.optString(data, FIELD_BIO)?.takeIf { it.isNotBlank() },
                 relationshipSwitch = ScalarCoercion.optBoolean(data, FIELD_RELATIONSHIP_SWITCH)
                     ?: false,
+                languageCode = ScalarCoercion.optString(data, FIELD_LANGUAGE_CODE)
+                    ?.takeIf { it.isNotBlank() },
+                sharedStorageSnapshot = UserStorageSnapshot.fromApi(data, userId),
                 socialLinks = parseSocialLinks(data),
             )
         }
@@ -127,6 +129,7 @@ data class CurrentUser(
         private const val FIELD_BACKGROUND_IMG_URL = "background_img_url"
         private const val FIELD_BIO = "bio"
         private const val FIELD_RELATIONSHIP_SWITCH = "relationship_switch"
+        private const val FIELD_LANGUAGE_CODE = "language_code"
         private const val FIELD_DISPLAY_URLS = "display_urls"
 
         /** `DisplayStatus.VISIBLE`（`types/user.ts:17`）；`2` 是 HIDDEN。 */

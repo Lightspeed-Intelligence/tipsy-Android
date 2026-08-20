@@ -68,6 +68,13 @@ class ShellTokenStore(
     /** 登录态变化通知（→ `TipsyAuthRegistry` 广播 + 壳内常驻页订阅）。 */
     interface Listener {
         /**
+         * token 被删除（无论是否广播 loggedOut）。用于保证 token 与账号
+         * user-storage 成对清除。实现只允许做有界的本地状态/MMKV 清理；不得发
+         * 网络、等待锁外任务或触发任意长链路。
+         */
+        fun onTokenRemoved() = Unit
+
+        /**
          * 在 token 状态迁移的临界区内同步调用，以保证 `loggedOut` 不会落到随后登录的
          * 新账号上。实现只能做有界、非阻塞且不抛异常的进程内事件分发；不得做 I/O
          * 或等待其他线程。
@@ -352,6 +359,7 @@ class ShellTokenStore(
         cached = null
         cacheLoaded = true
         persistence.write(null)
+        listener.onTokenRemoved()
         if (notifyListener) listener.onTokenCleared()
     }
 }

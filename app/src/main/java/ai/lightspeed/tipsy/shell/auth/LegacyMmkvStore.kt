@@ -42,7 +42,7 @@ import java.io.File
  * | --- | --- | --- | --- | --- |
  * | `token-storage` | 壳（唯一刷新者） | ✅ | ✅ [MmkvTokenPersistence] | — |
  * | `user-storage.languageCode` | 后端 | ✅ [AccountLanguageReader] | ✅ [ai.lightspeed.tipsy.shell.i18n.AccountLanguageWriter] | **已修**（§2.37）：只写服务端 → 被信封旧值倒灌回英文 |
- * | `user-storage` 其余字段 | 后端 | 只读 `languageCode` | ❌ | 壳不消费，无风险；将来要写照 `AccountLanguageWriter` 的 merge |
+ * | `user-storage` 完整用户快照 | 后端 `/user/info` | ✅ 账号匹配预判 | ✅ `CurrentUserMirror` | Surface 无 userId 不拉聊天历史；换号不清会串账号字段 |
  * | `config-persist-storage.gender` | 本地偏好 | ✅ | ✅ `HomeFilterStore` | ⚠️ **待 owner**（§2.23.1）：信封缺失时刻意不写 → 全新安装永不持久化 |
  * | `config-persist-storage.nsfw` | **后端** `user.nsfw` | ✅ | ❌ 刻意无 `writeNsfw` | 壳写会破坏 RN 的单向镜像流（关了自己开回来）。写方是 Settings 的 `POST /user/nsfw`，本地镜像由 RN 订阅补 |
  * | `config-persist-storage.chatPageType` | 本地偏好 | ✅ | ✅ `ChatPageTypeStore` | 同 gender 的信封缺失问题（继承，非新增） |
@@ -52,9 +52,9 @@ import java.io.File
  * | `chat-persist-storage` 其余字段 / `chat-background-storage` | RN Surface | ❌ | ❌ | 方案 §4.1 明确归 RN |
  *
  * ⚠️ **写 Zustand 信封（`{state, version}`）一律 merge，不得整体覆盖** ——
- * 覆盖会静默清掉同信封里其余二十多个字段。本类只提供 [getString] /
- * [putString] 这对**原始**读写，**merge 语义由调用方负责**（见
- * `mergeGenderIntoEnvelope` / `AccountLanguageWriter.merge`）——
+ * 覆盖会静默清掉同信封里其余二十多个字段。本类只提供原始读写，
+ * `user-storage` 的生产 read-modify-write 必须收口到 `UserStorageRepository`；
+ * 其他信封的 merge 语义仍由调用方负责（见 `mergeGenderIntoEnvelope`）——
  * 这里不提供"改某个字段"之类的便利方法，免得有人绕过 merge 直接覆盖信封。
  *
  * ⚠️ **写完共享信封要发 `onUserStoreChanged`**：常驻 JS runtime 已 hydrate 过
@@ -78,6 +78,23 @@ class LegacyMmkvStore private constructor(private val mmkv: MMKV?) {
             return false
         }
         return instance.encode(key, value)
+    }
+
+    /**
+     * 删除一个原始键。Zustand 账号信封在 logout / 换号屏障处必须整键删除，
+     * 不能 merge 一组 null：未来新增字段若未列入 null 清单，仍可能从上一账号泄漏。
+     */
+    fun removeString(key: String): Boolean {
+        val instance = mmkv ?: run {
+            Log.w(TAG, "MMKV 不可用，删除被跳过：key=$key")
+            return false
+        }
+        return runCatching {
+            instance.removeValueForKey(key)
+            !instance.containsKey(key)
+        }.onFailure {
+            Log.e(TAG, "MMKV 删除失败：key=$key (${it.javaClass.simpleName})")
+        }.getOrDefault(false)
     }
 
     /** 用于诊断：MMKV 是否真的打开了（区分「没数据」与「打不开」）。 */

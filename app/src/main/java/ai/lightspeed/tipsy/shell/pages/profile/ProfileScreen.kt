@@ -3,6 +3,8 @@ package ai.lightspeed.tipsy.shell.pages.profile
 import ai.lightspeed.tipsy.shell.R
 import ai.lightspeed.tipsy.shell.i18n.rememberLocalizedString
 import ai.lightspeed.tipsy.shell.pages.home.HomeText
+import ai.lightspeed.tipsy.shell.tabs.TAB_BAR_CONTENT_HEIGHT
+import ai.lightspeed.tipsy.shell.tabs.androidTabBarBottomInsetDp
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -10,6 +12,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -98,6 +101,10 @@ fun ProfileScreen(
     onFollowingClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onWalletAction: (ProfileWalletAction) -> Unit,
+    /** RN 的底部滚动余量 + 壳的覆盖式 TabBar 高度，确保短列表也可滚动。 */
+    listBottomPadding: Dp,
+    /** 状态栏高度；与 `HomeScreen` 一样是实际 dp，不参与 `.s` 缩放。 */
+    statusBarPadding: Dp,
     avatarDecorationImageUrl: String? = null,
     onSocialLinkClick: (String) -> Unit = {},
     /** P5 卡片 ⋮ 菜单（全部经 ViewModel/Fragment，本层零决策）。 */
@@ -108,8 +115,6 @@ fun ProfileScreen(
     onMenuTogglePin: (ProfileCreatedItem) -> Unit = {},
     onDeleteConfirm: () -> Unit = {},
     onDeleteDismiss: () -> Unit = {},
-    /** 状态栏高度；与 `HomeScreen` 一样是实际 dp，不参与 `.s` 缩放。 */
-    statusBarPadding: Dp,
     modifier: Modifier = Modifier,
 ) {
     val gridState = rememberLazyGridState()
@@ -173,6 +178,7 @@ fun ProfileScreen(
                             state = state,
                             avatarDecorationImageUrl = avatarDecorationImageUrl,
                             gridState = gridState,
+                            listBottomPadding = listBottomPadding,
                             // 头像行锚点换算，见类注释。列表首屏内容不足时至少留一点呼吸
                             headerTopPadding = (AVATAR_TOP_ANCHOR.dp - statusBarPadding -
                                 TOP_BAR_HEIGHT.dp).coerceAtLeast(MIN_HEADER_TOP.dp),
@@ -361,6 +367,7 @@ private fun ProfileGrid(
     state: ProfileState,
     avatarDecorationImageUrl: String?,
     gridState: LazyGridState,
+    listBottomPadding: Dp,
     headerTopPadding: Dp,
     onTabSelected: (ProfileTab) -> Unit,
     onEditProfileClick: () -> Unit,
@@ -378,6 +385,7 @@ private fun ProfileGrid(
     LazyVerticalGrid(
         columns = GridCells.Fixed(ProfileStyle.COLUMN_COUNT),
         state = gridState,
+        contentPadding = PaddingValues(bottom = listBottomPadding),
         horizontalArrangement = Arrangement.spacedBy(ProfileStyle.GRID_SPACING.dp),
         verticalArrangement = Arrangement.spacedBy(ProfileStyle.GRID_SPACING.dp),
         modifier = Modifier
@@ -712,6 +720,25 @@ private const val TAB_BAR_PADDING = 10
 private const val MEMORY_CARD_MARGIN = 10
 private const val MEMORY_CARD_BOTTOM = 7
 private const val ROLE_CARD_BOTTOM = 11
+
+/**
+ * 自己视角 Profile 的列表底部余量。
+ *
+ * RN `CharacterGrid.tsx` 使用 `paddingBottom: s(bottom + 400)`：400 不是普通的
+ * TabBar 避让，而是让内容不足一屏时也能把大头部滚出视口。React Navigation
+ * 会把 Android TabBar 从 scene 高度里扣掉；壳的 `fragment_tab_host.xml` 则把
+ * TabBar 覆盖在 `tab_content` 上，所以还要显式补上 TabBar 的完整高度。
+ *
+ * 公式分成两段，避免把系统 inset 与 TabBar 的 inset 规则混成一个近似值：
+ * - RN 页面自身：`s(safeBottom + 400)`（按 RN 原式，safeBottom 也在 `s` 内）
+ * - 壳覆盖层：`s(48) + androidTabBarBottomInsetDp(...)`
+ */
+internal fun profileListBottomPaddingDp(safeBottomDp: Float, scaleFactor: Float): Float =
+    (safeBottomDp + PROFILE_LIST_BOTTOM_EXTRA) * scaleFactor +
+        TAB_BAR_CONTENT_HEIGHT * scaleFactor +
+        androidTabBarBottomInsetDp(safeBottomDp, scaleFactor)
+
+private const val PROFILE_LIST_BOTTOM_EXTRA = 400f
 
 // P5 删除确认弹窗（TipsyModal.tsx：modalView 80%/圆角10/paddingTop20；
 // Android 三段渐变 :207-210；title 18 / content 16 / btn 16、btnArea 56 高、
