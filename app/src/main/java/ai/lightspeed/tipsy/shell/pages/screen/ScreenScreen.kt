@@ -520,7 +520,7 @@ private fun StatsRow(
             },
             label = HomeText.formatMessageCount(likeState.count),
             testTag = "screen_card_like",
-            iconModifier = Modifier.graphicsLayer {
+            modifier = Modifier.graphicsLayer {
                 scaleX = likeScale.value
                 scaleY = likeScale.value
             },
@@ -547,7 +547,7 @@ private fun ActionButton(
     iconRes: Int,
     label: String,
     testTag: String,
-    iconModifier: Modifier = Modifier,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     Column(
@@ -560,7 +560,7 @@ private fun ActionButton(
             painter = painterResource(iconRes),
             // 语义由相邻计数与 testTag 承载；图标本身是装饰
             contentDescription = null,
-            modifier = iconModifier.size(ACTION_ICON_SIZE.dp),
+            modifier = modifier.size(ACTION_ICON_SIZE.dp),
         )
         Text(
             text = label,
