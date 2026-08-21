@@ -24,6 +24,7 @@ on:
     paths:
       - 'app/**'
       - 'gradle/**'
+      - 'scripts/**'
       - '*.gradle'
       - 'gradle.properties'
       - '.github/workflows/android-ci.yml'
@@ -142,8 +143,8 @@ jobs:
         run: npm ci
 
       - name: 建仓库根 node_modules 软链
-        # ADR-004：ExpoGradleHelperExtension 硬编码从 Gradle root 解析 RN，无覆盖入口。
-        # 这个软链不入库，每个环境都要重建 —— CI 漏掉会以 autolinking 失败告终。
+        # ADR-004：兼容仍以非标准 Gradle root 为 JS package 解析起点的模块。
+        # Node executable 由绝对路径契约处理；目录软链仍须在每个环境重建。
         run: |
           set -euo pipefail
           ln -sfn tipsy-app/node_modules node_modules
@@ -173,6 +174,14 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Node 绝对路径契约（PATH 不含 node）
+        # 覆盖 settings、Expo autolinking/constants、RN codegen 与
+        # Reanimated/Worklets validator。
+        # 脚本会刻意从 PATH 移除 setup-node，防止依赖升级重新引入裸 `node`。
+        run: |
+          export TIPSY_NODE_EXECUTABLE="$(node --print process.execPath)"
+          ./scripts/check-node-contract.sh
 
       - name: Android lint（硬门）
         # abortOnError + warningsAsErrors 在 app/build.gradle 里配置；

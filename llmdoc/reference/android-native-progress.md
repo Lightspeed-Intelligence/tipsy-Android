@@ -140,9 +140,9 @@ RN/Expo 生态多处假设 `Gradle root = <rn-project>/android`，本仓布局�
 | 第三方模块（apple-authentication / skia 等） | 从 `rootProject.projectDir` 向上找 node_modules | `ext.reactNativeAndroidRoot` 指向 **RN 包根** |
 | `react.cliFile` | 默认 RN `cli.js`，但 Expo 工程无 `@react-native-community/cli` | 改 `@expo/cli` + `bundleCommand=export:embed` |
 
-**另一个已知限制**：`expoAutolinking.exclude` 对 `expo-updates` 等无效 —— `AutolinkingCommandBuilder`
-把多值 `--exclude` 与 `--project-root` 拼进同一 argv，variadic 参数会吞掉后续 flag
-（实测 `--exclude` 在 `--project-root` 之前时不生效）。故 W0 的隔离用「禁用任务」实现。
+**历史限制已补丁化**：upstream `AutolinkingCommandBuilder` 曾把多个 `--exclude` 值拼进
+同一 argv，导致 variadic 解析静默失效；`tipsy-app` 的版本化 patch 现按值重复 flag。
+W0 仍保留任务级熔断，防止依赖升级/补丁漂移时误启用 OTA。
 
 **磁盘**：debug 默认出四个 ABI，单 flavor 中间产物可达数 GB；曾因磁盘写满导致
 `packageRuStoreDebug` 失败且**不提示空间不足**。现 debug 只出 `arm64-v8a`。
@@ -155,8 +155,8 @@ RN/Expo 生态多处假设 `Gradle root = <rn-project>/android`，本仓布局�
 | 根 `node_modules` 符号链接 | ✅ 已建（不入库，见 `.gitignore`；换机器/CI 需重建） |
 | `sdkmanager` | 曾观察到不可用（未装 cmdline-tools）。W0 需实测并提供明确环境检查与 CI 安装路径 |
 | emulator image | 未固定。W0 记录实际可用的 API 24 / API 36 image |
-| Node / npm | ✅ 实测 node `v22.22.3` / npm `10.9.8`；settings.gradle 有四级显式解析（见方案 ADR-004 第 3 条） |
-| 从 Android Studio 启动 sync | ✅ **2026-08-14 根治**（此前 08-10/11/13 三次复发均只治症状）。需**两层**，缺一层即失败：① `local.properties` 写 `tipsy.node.executable`（用 fnm 的 `aliases/default` 路径，不是 `which node`）；② **用 `/Applications/Android Studio (Tipsy).app` 启动**（Dock 换成它）。**两者都不入库，换机器需重做**（重建方式见下）。<br>**根因**：`exec` 解析 program name 读 **native process environ**，而 Studio 的 "shell environment loaded" 只补 **JVM 层 env map** —— 故报错里 JVM `$PATH` 含 node、fork 仍 `error=2`。且 runningboardd 按 bundle id **缓存** native 启动环境、缓存**跨 ⌘Q 存活**。<br>⚠️ **`launchctl setenv` / LaunchAgent 从原理上治不了**（只改「launchd 往后发什么」，无法失效已缓存那份）；旧 LaunchAgent 已退役到 `~/Library/LaunchAgents/disabled/`。**别再往那个方向试。**<br>**包装 app 重建**：bundle 里放 `Contents/MacOS/launch-studio`，首行 `#!/bin/zsh -l`（登录 shell 重建 PATH 后 `exec` 真 `Android Studio.app/Contents/MacOS/studio`），`chmod +x` + `lsregister -f`。等价临时手段：终端跑 `/Applications/Android\ Studio.app/Contents/MacOS/studio &`。日志 `$TMPDIR/tipsy-studio-launcher.log`。<br>验证包装 app 必须用 Finder/`osascript` 启动，**不能用 `open`**（会泄漏当前 shell 环境，测出假通过）。查证用 `ps eww <studio-pid> \| tr ' ' '\n' \| grep ^PATH=` 看进程**实际**的 PATH，别看 `launchctl getenv`。<br>缺第二层时 `settings.gradle` 会**在 1 秒内明确报错**并给出三步修复。详见方案 ADR-004 第 3 条 |
+| Node / npm | ✅ 实测 node `v22.22.3` / npm `10.9.8`；settings.gradle 有四级绝对路径解析（见方案 ADR-004 第 3 条） |
+| 从 Android Studio 启动 sync | ✅ **2026-08-21 改为仓库级绝对 Node 契约并完成无 PATH 验证。** `settings.gradle` 只用绝对路径并发布 `gradle.ext.tipsyNodeExecutable`；RN 官方入口、Expo/第三方无入口调用点分别由公开配置与 `tipsy-app/patches` 消费。开发机跑一次 `./scripts/bootstrap-android.sh`，以后直接打开原版 `/Applications/Android Studio.app`。实测全新 `npm ci` 的 13 个 patch 全部应用；最终版 `./scripts/check-node-contract.sh` 在 PATH 不能解析 Node 时强制重跑 37 个 tasks，覆盖 51 projects、RN/Expo 两套 autolinking、Expo constants、RN codegen、Reanimated/Worklets preBuild（环境变量模式 `BUILD SUCCESSFUL in 23s`）。bootstrap 使用的 local-properties 模式另以故意错误的 `TIPSY_NODE_EXECUTABLE` 启动，仍明确输出来源为 `local.properties` 并完成同一 37-task gate（`BUILD SUCCESSFUL in 14s`）。CI 已加入环境变量模式的同一 gate，阻止依赖升级回归。旧 `Android Studio (Tipsy).app` / launchctl / LaunchAgent 方案已退役，不再是项目依赖。详见方案 ADR-004 第 3 条 |
 
 ### 2.4 已经不用做的事（RN 侧已就绪，实测）
 
@@ -4185,7 +4185,7 @@ W2 真机验证新增的一项（2026-08-12，§2.23.1）：
 | 原分支上的内容 | 现在在哪 |
 |---|---|
 | iOS 迁移复盘（时间线 / 十条经验 / 反模式） | 方案 §1.3 归属表、§3.2 各 ADR、§1.2.1 十条经验与反模式、§8.4 列表纪律、§10 风险登记 |
-| Node 可执行文件解析（fnm/nvm 下 GUI 启动 sync 失败） | 方案 ADR-004 第 3 条（四级解析优先级 + launchd GUI 域 PATH 两层，含 2026-08-10 对「PATH 前置」的订正） |
+| Node 可执行文件解析（fnm/nvm 下 GUI 启动 sync 失败） | 方案 ADR-004 第 3 条（2026-08-21 已由绝对 Node + dependency patch + 无 PATH CI gate 取代 GUI PATH / 包装 App） |
 | 三渠道 / config plugin / 桥模块等硬约束 | 方案 §2（**已在 pin `93d2c5551` 重新核实过源码**，不依赖旧报告） |
 | CNG prebuild 审计报告（基线 `cbd521f02`） | 不再引用。其结论中可核实的部分已重新核实；**RN lint/test/doctor 的具体红项数量待 W0 实跑** |
 

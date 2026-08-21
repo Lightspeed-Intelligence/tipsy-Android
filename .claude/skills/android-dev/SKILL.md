@@ -173,7 +173,7 @@ build type 加 `buildConfigField` 时别漏它，漏了编译不过。
 | release 包对外暴露调试 Activity，普通构建不报错 | `expo-dev-client` 在 `package.json` 里是 `dependencies`，autolinking 把 `ui-tooling` 的 `PreviewActivity`（`exported=true`）合并进 release manifest。**每次新增 RN 依赖都要复查 release manifest diff** |
 | 本机 lint 绿、CI 上 13 条新增 | lint baseline 对 app 模块外的文件记的是**机器相关绝对路径**，CI 上匹配不到。baseline 只放 app 模块内的相对路径条目 |
 | `packageRuStoreDebug` 失败且不提示空间不足 | 磁盘写满。debug 默认出四个 ABI，单 flavor 中间产物可达数 GB。现 debug 只出 `arm64-v8a` |
-| Android Studio 从 Dock 启动 sync 失败（`error=2`） | 需**两层**配置：`local.properties` 的 `tipsy.node.executable` + launchd GUI 域 PATH。改完 PATH 必须 **⌘Q 退出 Studio 再开**（Sync / Invalidate Caches / `--stop` 都不够）。查证用 `ps eww <pid>` 看进程实际 PATH，别看 `launchctl getenv` |
+| Android Studio 从 Dock 启动 sync 失败（`error=2`） | 先跑 `./scripts/bootstrap-android.sh`，再用原版 Studio。Node 必须经 `gradle.ext.tipsyNodeExecutable` 绝对路径契约传到所有调用点；用 `./scripts/check-node-contract.sh` 在无 Node PATH 下复验。不要恢复包装 App / launchctl 方案 |
 | CI 报 `git@github.com: Permission denied (publickey)`，但凭据是好的 | `git submodule sync` 会把 local config 的 URL 覆盖回 `.gitmodules` 的 SSH 值。顺序必须是先 `sync` 再 `config` |
 | 覆盖升级「验过了」但线上掉数据 | `adb install -r` 用 debug 签名重装**不算**证据（签名不同，数据目录不继承）。三个 applicationId 的结果**不可外推**，各跑一遍 |
 
@@ -359,8 +359,9 @@ lint 的三类「有新版可用」检查已 disable，**所以 lint 不会提�
 **W0/W1 是时间盒**：目标是「够用就往下走」，不是做完美。别在这两波做完整的存储
 registry、CI nightly/release gate、对等矩阵——按页面波次增量填。
 
-**这些不在本仓权限内**：改 `tipsy-app/node_modules`（裸 `node` 调用点无覆盖入口，
-壳侧没有合法手段修好它）；改 `tipsy-app` 的依赖分类。
+**这些不在本仓权限内**：直接保留对 `tipsy-app/node_modules` 的手工修改；改动依赖源码时
+必须在 `tipsy-app/patches/` 生成版本化 patch-package 补丁、保留 standalone 的 upstream
+fallback，并通过无 Node PATH 契约检查。未经对应 RN owner 评审，不改 `tipsy-app` 的依赖分类。
 
 **缺前提时不要假装验证过**：Google 登录要求每个 applicationId × 每个签名证书的 SHA-1
 登记到 Firebase，壳的 debug keystore 与现网包不同 → **没有这些指纹，`/login/firebase`
