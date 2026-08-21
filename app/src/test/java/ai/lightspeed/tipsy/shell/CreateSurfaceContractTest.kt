@@ -96,7 +96,7 @@ class CreateSurfaceContractTest {
     }
 
     @Test
-    fun `10 个创建微栈目标与 RN 注册双向一致`() {
+    fun `13 个创建微栈目标与 RN 注册双向一致`() {
         val inRn = Regex("<Stack\\.Screen\\s+name=\"([^\"]+)\"")
             .findAll(navigatorSource)
             .map { it.groupValues[1] }

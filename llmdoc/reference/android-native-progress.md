@@ -1,6 +1,6 @@
 # Tipsy Android 原生化迁移：现状（唯一状态真值）
 
-> 更新：2026-08-20 ｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
+> 更新：2026-08-21（RN 已合流 release/1.4.6 并 bump pin，§2.56）｜ Android 壳：**W0 完成**（gate 过 + API24/37 双端验证 + manifest 快照 + lint 硬门）；
 > **G1 CI 已激活且在 main 上真绿**（§2.10 / §2.22）
 >
 > **W1 基本收尾**（细化方案见 [`../architecture/android-w1-plan.md`](../architecture/android-w1-plan.md)）：
@@ -64,7 +64,7 @@
 
 - **波次进度**：W0 完成；**W1 完成**（契约层已在 CI 组合验证（§2.22）；**P9 已完成**（§2.36）；§12 关闭链记为已接受偏差）；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 已随 PR #25 并入 main（§2.30）；**Search P1 主链路已实现并完成 directApk 冒烟**（§2.31）；**P2 筛选器已实现**（§2.34，Search 完整对等）；**EditProfile 已完成静态预接/账号隔离/刷新接力**（§2.43），但 production policy 仍关闭；**P7 完成 = 头像框 + 渠道图标**（§2.44，PR #41 + 收尾 PR #43，含 AuthMode 契约修正与失败保留语义）；**P5 卡片 ⋮ 菜单完成**（§2.45，PR #46：编辑原始 JSON 透传 `CreateSurface` 编辑态、删除/置顶非乐观 + 重拉对账；**owner 模拟器冒烟目测 PASS**，2026-08-19）；**ChatList P2 ChatMap 已生产接线**（§2.47，2026-08-20：接手 #42 draft 收尾 —— 纵向滚动/连续楼层/卡片点击/四词条 + bump pin，模拟器全链路实测）—— **W3 业务面全部落地**，剩 EditProfile §9.1 设备矩阵与累积真机冒烟。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`、`pages/chatlist/`、`pages/search/`、`pages/screen/`**；EditProfile 刷新接力落在 `pages/profile/ProfileRefreshHub` 与 `tipsy-auth.notifyProfileChanged`。
-- **submodule**：pin **`f4fe474d2`**（§2.51 的桥三件套 openComments/openChatDetail/openFeedback + 测试修复；前一 pin `93c8647f3` 是 §2.47 ChatMap 四词条，更早的 `5ba22c8bb` 是 §2.46 账号缓存清理 + KeyboardProvider inset patch）。⚠️ `da4f65a` 与 PR #34 的三处壳改动**必须同时存在**：指针回退则 exclude 仍失效，而 styles/lifecycle 两处已让构建变绿 —— 会得到「构建通过但图片仍坏」的假绿。
+- **submodule**：pin **`86191c090`**（§2.56 的 release/1.4.6 合流 merge commit，含另一路并行推进的 `c7477d632` Gradle 去 node PATH 依赖 patch；前一 pin `f4fe474d2` 是 §2.51 的桥三件套 openComments/openChatDetail/openFeedback + 测试修复）。⚠️ `da4f65a` 与 PR #34 的三处壳改动**必须同时存在**：指针回退则 exclude 仍失效，而 styles/lifecycle 两处已让构建变绿 —— 会得到「构建通过但图片仍坏」的假绿。
 - **已验证**：main 上 PR #25 的 G1 Fast Gate 全绿。W3 Search P1 提交前快照的本机证据：`lintDirectApkDebug` 无新增（baseline 5 条）、`assembleGooglePlayDebug`/`assembleDirectApkDebug` 通过、**DirectApk app 单测 695 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿；directApk 真机主链路冒烟 PASS（§2.31）。提交前审查再新增 13 条、扩展 2 条回归测试并修正并发/auth/Router/点击归因/分页去重行为，最终源码预计 708 条；**最终 head 未在本机重跑 Gradle，交 G1 验证**。
 - **他人主页已实现**（§2.32，2026-08-14）：6 文件 1,469 行，`AppRoute.UserProfile` 进白名单 —— **搜索 → 创作者 → 他人主页是壳的第一条端到端可用路径**。审计推翻了「复用自己视角」的前提（七处偏差）：只有 **1 个 tab**（RN 注释说两个，代码是一个）、数据源另有四条、`size` **200 且不翻页**、`/user/get/public` 走 `axiosAuth` 会对游客弹登录页、`/plot/list/creator` **现网从未被调用**、关注按钮在 `ProfileHeader.tsx` 而非 `user-profile.tsx`。真机冒烟 **NOT RUN**。
 - **Settings 列表 + 语言页已实现**（§2.33，8 文件 1,501 行）：补上了真实功能缺失 —— 此前**壳内没有任何入口能改语言**。审计订正三处：语言页**要原生实现**（RN 与 iOS 双证据）、`supportedLanguages` 壳内**恒为空**必须自己拉、Limitless 开关是 `nsfw` 的**唯一写方**且仅 directApk 可见。渠道 gating 收在 `SettingsRow` 并对三渠道各有单测。7 个 Surface 子屏（`AppRoute.SettingsSubScreen`）仍被明确拒绝。真机冒烟 **NOT RUN**。
@@ -3936,6 +3936,84 @@ production-ready。
 **模拟器/真机视觉冒烟 NOT RUN**（记入真机批次累积清单：点赞乐观回滚、
 评论数退出刷新、CharacterDetail 直达、tagline 双击预览）。
 
+### 2.56 RN 合流 release/1.4.6 + pin bump（2026-08-21）
+
+`feat/android-native` 合入远端 `release/1.4.6`（135 个上游业务提交），
+merge commit **`86191c090`** 已推远端并 bump 为壳 pin。合并中途另一路并行
+推进的 `c7477d632`（Gradle 去 node PATH 依赖的 6 个 patch）出现在远端，
+已 reset 重做合并将其保留在第一父链上。
+
+#### 冲突解决（5 文件，全部两边互补保留）
+
+- `index.surfaces.js`：登出清理并存 —— 壳侧聊天首页 LRU 清理（§2.46）+
+  上游新增的 `resetUserWalletInfo`。
+- `modules/tipsy-auth/src/index.ts`：`notifyProfileChanged`（§2.43）与上游
+  新增的 `notifyChattedListChanged` 两个可选声明并存。
+- `scripts/export-shell-locales.mjs`：保留双壳 OUTPUT_TARGETS 探测（§2.16），
+  上游新引入的 `TIPSY_SHELL_LOCALES_OUTPUT` 环境变量作为**显式覆盖**优先于
+  探测（iOS release 流程在用，语义与其引入时一致）。
+- `user-profile.tsx` / `EditProfileSurface.tsx`：import 合并；上游把
+  EditProfile 容器换成 `TrackedNavigationContainer`（埋点包装），与 §2.43
+  的账号闸正交，已核实共存正确。
+
+另修一处**依赖重装暴露的测试脆弱性**：`editProfileMutationCoordinator.test.ts`
+按微任务 tick 数写的瞬时断言（实现里 `catch().then()` 是两层微任务，
+`await Promise.resolve()` 只让一层，tick 数随构建工具转译漂移）改为显式
+started 信号。FIFO 行为本身无变化。RN 全量 vitest 的 **18 个失败文件已在
+纯上游 `release/1.4.6` worktree 复现**（jest 全局缺失/解析错误等存量），
+按纪律不顺手修。
+
+#### ⚠️ 上游带入 `@tipsy/tracker`：第一个经 npm 私有 git 依赖进壳的原生模块
+
+`package.json` 新增 `git+ssh://…/tipsy-tracking.git#007a8cf` 依赖，是
+**Expo module，autolinking 自动进三个 APK**：`:tipsy-tracker-bridge`
+（`expo.modules.tracker.TrackerModule`）+ `:tipsy-tracker-measure`
+（vendored measure.sh APM，`sh.measure.android`）。已核查：
+
+- `MeasureInitProvider`（ContentProvider 自启动）**只记录冷启动时间戳**，
+  不读配置不 init SDK 本体 —— 与 FB SDK 缺 meta-data 即 SIGABRT（方案 §12.6）
+  不同类，无启动风险；authorities 按 `${applicationId}` 三渠道隔离。
+- release merged manifest 新增仅两个组件：`MsrBugReportActivity`
+  （无 intent-filter，默认不导出）+ 上述 provider（`exported="false"`）。
+  largeHeap 在位、开发期组件黑名单零命中、通用社交 scheme 零命中。
+- Gradle 兼容：minSdk 24 / JVM 17 / compileSdk 35（bridge）与 36（measure，
+  从壳 ext 解析）；serialization/compose 插件版本随壳 `kotlinVersion=2.1.20`。
+- **CI 影响**：lockfile 的 `git+ssh://` 在无 SSH key 的 runner 上必挂 npm ci。
+  G1 + nightly 两个 job 共 **3 处 npm ci 前已加全局 insteadOf**（ssh 两种形式
+  → 带 PAT_TOKEN 的 HTTPS，iOS CI 同解）。⚠️ **PAT_TOKEN 的签发账号必须对
+  `tipsy-tracking` 有读权限** —— 本 PR 的 G1 首跑即是验证；缺权限的症状是
+  npm ci 报 git exit 128。
+
+#### 新桥欠账（+1）
+
+上游 RN 已在建群/群成员变更后调 `TipsyAuth.notifyChattedListChanged?.()`
+（iOS 壳先行）。Android 桥**未注册**该方法 —— `?.()` 方法级守卫下静默降级：
+**RN Surface 内建群后原生 ChatList 不会刷新**。待补（注册数 20 → 21 那刀），
+已记入 §3 横切表。
+
+#### 静态 gate 如设计般拦住了两类 RN 漂移
+
+pin bump 后壳单测**初跑 7 条失败,全部来自 Surface 静态 gate** —— 这正是
+它们的存在目的(RN 升级时把「壳该跟着改什么」暴露出来),两类都已同步:
+
+1. **RN 侧 12 个 Surface 的微根容器全部换成 `TrackedNavigationContainer`**
+   （NavigationContainer 的埋点包装,内部行为等价）——
+   `SurfaceDependencyChecklist` 6 处组件名已同步,壳侧无运行时改动。
+2. **CreateStack 新增剧情卡三屏**（PlotCardManagement/Drafts/StoryDesign,
+   注册序紧跟 Create）—— `CREATE_STACK_TARGETS` 10 → **13**,微栈防死链锁
+   继续有效;壳侧 CreateSurface 挂的微栈天然可达新屏,无需别的改动。
+
+#### 验证（提交前快照）
+
+- 三 flavor debug assemble 全过（googlePlay 全量 13m22s / directApk + ruStore 增量）。
+- `:app:processGooglePlayReleaseMainManifest` 复跑并逐项复查（见上）。
+  ⚠️ 后台首跑时该 task 产物仍是 Aug 18 旧文件（怀疑 UP-TO-DATE 误判），
+  显式单跑后才刷新 —— **复查 manifest 前先确认产物 mtime**。
+- 壳 app 单测 **1153 条 failures=0 / skipped=0**（含上述静态 gate 修复后复跑）、
+  `:tipsy-auth` 15 条全绿、`lintDirectApkDebug` 过。G1 复验以 CI 为准。
+- RN 侧：全仓 tsc 通过；壳相关单测（EditProfile 协调器/通知、tracking core、
+  authPageExposure）51 条全绿。
+
 
 
 
@@ -3953,7 +4031,7 @@ production-ready。
 | 能力 | 状态 | 落地处 |
 | --- | --- | --- |
 | Auth 所有权 | 🟡 **closeout 已实现且 CI 已验**（§2.22），完整用户会话待 merge-head CI | `shell/auth/` + `shell/user/`（§2.13 / §2.18 / §2.46）。single-flight/generation/原子条件清理已收口；Application 统一发布 Native store 与 RN `user-storage`，登录要求完整快照成功后才广播；历史 token 迁移未完（P2） |
-| `tipsy-auth` Android 实现 | 🟡 **桥已注册、能力 PARTIAL** | `modules/tipsy-auth/android/` + `ShellAuthProvider`；主线程约束已落地。§2.36 回填了 `requestLogin` / `openUserProfile` 系三个**标签过期的桩**（debug 会抛）—— ⚠️ **能力落地后必须回来改 override**，且现由 5 条单测钉死；§2.43 新增可选零参 `notifyProfileChanged`，Android 注册方法数 **17**，旧 iOS/旧壳无需同步实现；仍未实现的只有 `notifyOnboardingCompleted`（W4） |
+| `tipsy-auth` Android 实现 | 🟡 **桥已注册、能力 PARTIAL** | `modules/tipsy-auth/android/` + `ShellAuthProvider`；主线程约束已落地。§2.36 回填了 `requestLogin` / `openUserProfile` 系三个**标签过期的桩**（debug 会抛）—— ⚠️ **能力落地后必须回来改 override**，且现由 5 条单测钉死；§2.43 新增可选零参 `notifyProfileChanged`，Android 注册方法数 **20**（§2.51 后），旧 iOS/旧壳无需同步实现；仍未实现的有 `notifyOnboardingCompleted`（W4）与 **`notifyChattedListChanged`（§2.56 合流带入，iOS 壳先行；RN 建群/群成员变更后原生 ChatList 不刷新，静默降级，待补）** |
 | 网络层 | 🟡 **closeout 已实现且 CI 已验**（§2.22） | `shell/network/`（§2.14 / §2.18）。过期 token 发送守门与双入口共享 gate 已实现。**未引 Retrofit** |
 | i18n | 🟢 **已完成**（含语言设置页 + 信封回写） | `shell/i18n/`（§2.16）。壳是唯一 writer；key-based 查表 + 两条 normalize 规则 + Compose 自订阅组件。**原生语言设置页已实现**（§2.33）—— RN 的 `SettingsSurface` 白名单刻意不含 `Language`，iOS 侧也是原生 `LanguageViewController`。写入走 `POST /user/set_language` **+ 回写 `user-storage` 信封**（§2.38，2026-08-18）—— ⚠️ 原记「不经 Zustand 信封」，**那正是 §2.37 语言倒灌的根因**，已修：`AccountLanguageWriter` merge + `notifyUserStoreChanged`。真机冒烟仍未跑（§9.1「语言切换」列待复跑） |
 | Router / 深链 | 🟡 parser/router 机制已落地，**生产白名单六个目标** | `shell/router/`；三个纯原生（`Search` §2.31 / `UserProfile` §2.32 / `Settings` §2.33）+ 三个 Surface 目标（`ChatDetail` / `MiniPhoneChat` §2.36 + `Create` §2.40）。带参路由用谓词解除去重；无参 data-object 路由必须在退栈后按类型解除，否则只能打开一次。`EditProfile` 已预接解除但 policy 仍关闭（§2.43） |
