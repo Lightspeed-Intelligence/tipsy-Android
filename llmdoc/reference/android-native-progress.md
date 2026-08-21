@@ -76,7 +76,7 @@
 - **Tab3 创建入口已接通**（§2.40，2026-08-18，219 行）：`AppRoute.Create` 进白名单，Tab3 的 ➕ 从「只打一行日志」变成挂 `CreateSurface` 直达创建表单 —— **五个 Tab 全部可用**。壳只传 `createEnterSource` 一个 prop，**刻意不复刻** RN tabPress 那四个参数（Surface 自决落地页，§2.30 纪律）。⚠️ 真机抓到**类别性**缺陷并已修：`AppRoute.Create()` 无参 ⇒ 实例恒相等 ⇒ 去重不解除就「只能用一次」，ChatDetail 因每次带不同 characterId 而侥幸未暴露；后续每个无参路由都要配解除。✅ §2.41 已补微根/微栈/注册/bootstrap 机器断言；⚠️ §9.1 的 8 个设备/生命周期验收格仍全 `✎`。
 - **Screen P1 + P2 代码已实现**（§2.35 / §2.42）：P1 落 AB 端点分流、归因、首屏缓存与会话埋点；P2 让 `showcase` 首次接入 Media3、有界播放器池、±1 窗口、RN Android buffer、动态 50MB cache、三轴播放门与声音开关。PR #39 最终 head `13cc633` 的 G1 全绿；⚠️ feed 无 showcase，真实视频/cache 失败/API24–33 层序/audio focus 四项仍 NOT RUN，故**不是 production-ready**。
 - **Search P2 筛选器已实现**（§2.34，4 文件 723 行）：性别/排序/分级抽屉 + 二级标签栏，Search 达成完整对等。`SearchTagOrderTest` **逐条对拍 RN 的 144 行现成单测**。⚠️ 分级筛选的门是「非 GooglePlay && nsfw 开」，与 Settings 的 Limitless（只有 directApk）**不同轴** —— RuStore 在这里算可选。
-- **不存在 / 未验**：Screen P2 已落代码但四项核心验收未跑，next-item/fade/firstInteractive/P3 仍无；Sentry、Qt 实际上报、core/feature 模块均无；**G3 nightly 已建且首跑全绿**（§2.54）。生产路由白名单 **14 类**（§2.53 后）：三纯原生 + 十一 Surface/带参目标（+RoleCard）。13 个业务 Surface：**9 启用**（ChatDetail/Create/Settings/EditProfile/Comments/Notification/GemsSubscription/UserCoins/RoleCard）+ **2 并入 Settings**（DeleteAccount/Widget，§2.53 判定，注册仅为 OTA 偏斜保留）+ 1 待评估（Onboarding，需新注册链路）+ Debug 不计。各 Surface 的真机格仍在累积清单。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1）与 **Follow 出口无 Surface 可用**。
+- **不存在 / 未验**：Screen P2 已落代码但四项核心验收未跑，next-item/fade/firstInteractive/P3 仍无（卡片四类交互已对齐，§2.55）；Sentry、Qt 实际上报、core/feature 模块均无；**G3 nightly 已建且首跑全绿**（§2.54）。生产路由白名单 **15 类**（§2.55 后）：三纯原生 + 十二 Surface/带参目标（+RoleCard、+CharacterDetail）。13 个业务 Surface：**9 启用**（ChatDetail/Create/Settings/EditProfile/Comments/Notification/GemsSubscription/UserCoins/RoleCard）+ **2 并入 Settings**（DeleteAccount/Widget，§2.53 判定，注册仅为 OTA 偏斜保留）+ 1 待评估（Onboarding，需新注册链路）+ Debug 不计。各 Surface 的真机格仍在累积清单。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1）与 **Follow 出口无 Surface 可用**。
 
 ## 1. 波次状态
 
@@ -3894,6 +3894,47 @@ Macrobenchmark（要基准模块，单独一刀）、全链路 instrumentation
 （run 32442144461），三 job 全绿 —— 三 flavor debug + googlePlayRelease
 （R8 全开）+ manifest grep 过，API 24/36 双档 instrumentation 过
 （`-PreactNativeArchitectures=x86_64` 的 ABI 覆盖在 CI 真实生效）。
+
+### 2.55 W4 Screen 卡片交互对齐（2026-08-21，PR #57，补账）
+
+> 本条为**事后补账**：PR #57 合入时未同步进度文档，由文档核查补记。
+> 改动本身 G1 绿（run 32445323796）。
+
+Screen 卡片从「只能看」到四类交互可用：
+
+- **点赞**：`ScreenInteractionApi`（新文件）走 `AuthMode.REQUIRED`（对齐 RN
+  `axiosAuth`），与列表的 OPPORTUNISTIC 推荐链**分接缝** —— 交互失败不取消
+  在飞分页。乐观切换 + 失败回滚 + `character_stats` 权威对账；ViewModel
+  全部写回点都有 `generations.snapshot()` 逐点校验（§2.23 的登出串号纪律）。
+- **评论**：进已启用的 `CommentsSurface`；退出后按
+  `pendingCommentCountTargetId` 刷新权威评论总数 —— 触发器是 Activity
+  FragmentManager 的 back stack 监听（Surface 容器是 sibling，Screen 不走
+  hidden/stop 轴），**必须 onDestroyView 反注册**。
+- **头像/角色名 → 角色详情**：新增 `AppRoute.CharacterDetail` 进生产白名单
+  （**14 → 15 类**）。与 `ChatDetail` 分开建模的原因：前者是明确目标屏
+  （`initialScreen: 'CharacterDetail'`，RN 侧 `ChatDetailSurface.tsx:310`
+  已有该分支），后者必须把聊天/影院/html 分流留给 Surface 自决 —— 混用会
+  迫使普通 CTA 也带 `initialScreen`，重新引入 §2.30 禁止的壳侧分流副本。
+  同挂 `ChatDetailSurface`，共用 TAG 与谓词版退栈解除。
+- **创作者名 → 原生他人主页**（既有 UserProfile 路由）。
+- **Tagline**：四行摘要 + 点击/双击全屏预览（`ScreenTagline.kt`，Dialog 不
+  改变 Fragment 生命周期）。文本契约对齐 RN `FeedMediaItem.overlayTagline`
+  同序：先按 `is_translated` 选 `{{user}}` 语言并替换占位符，再只对
+  googlePlay 渠道打码 —— 卡片与预览必须复用同一结果，否则展开后重新露出
+  原始占位符。
+
+分享本次只对齐视觉与埋点；`MediaShareModal` 仍属后续独立迁移包。
+§2.42 的 P3 状态机欠账（自动 tagline 轮播等）**未因本刀闭合**；四项
+🔴 NOT RUN（真实 showcase 视频等）也**维持原状** —— Screen P2 仍不得标
+production-ready。
+
+`SurfaceProps` 侧把 ChatDetail 的 preload 构造提炼为 `buildChatPreload`
+私有函数供两个 route 复用（嵌套 preload 纪律不变，见 §2.36）。
+
+验证：`ScreenViewModelTest` 25 条（+likes/评论对账）、`ScreenTaglineTest`
+3 条、AppRouterTest/SurfacePropsTest 相应更新；G1 全绿。
+**模拟器/真机视觉冒烟 NOT RUN**（记入真机批次累积清单：点赞乐观回滚、
+评论数退出刷新、CharacterDetail 直达、tagline 双击预览）。
 
 
 
