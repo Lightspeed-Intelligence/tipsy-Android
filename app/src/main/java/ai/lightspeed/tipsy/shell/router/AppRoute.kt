@@ -109,6 +109,20 @@ sealed interface AppRoute {
     }
 
     /**
+     * Screen 的头像/角色名 → `ChatDetailSurface` 内的 `CharacterDetail`。
+     *
+     * 与 [ChatDetail] 分开建模：前者是明确目标屏，后者必须把聊天/影院/html
+     * 分流留给 Surface 自决。混用会迫使普通 CTA 也携带 `initialScreen`，重新
+     * 引入 §2.30 禁止的壳侧分流副本。
+     */
+    data class CharacterDetail(
+        val characterId: String,
+        val preload: ChatDetailPreload? = null,
+    ) : AppRoute {
+        override val requiresAuth = true
+    }
+
+    /**
      * `chatEnterSource` 的取值（`types/chat.ts` 的 `ChatEnterSource`）。
      *
      * 壳侧只用得到这几个 —— 每个原生列表页各对应一个入口。

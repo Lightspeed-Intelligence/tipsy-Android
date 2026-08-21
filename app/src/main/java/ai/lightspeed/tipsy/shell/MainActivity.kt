@@ -136,7 +136,7 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
                         tagForUserProfile(route.userId),
                     ) == null
             }
-            // ChatDetail / mini phone 同样必须用**谓词版**（P9）：两者都带参
+            // ChatDetail / CharacterDetail / mini phone 同样必须用**谓词版**（P9）：都带参
             // （characterId + 判定素材），相等判定拿不到那些值就永远不成立，
             // 表现是「退出聊天后再点同一个角色永远打不开」。
             //
@@ -145,7 +145,9 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
             // 且壳内不叠两层聊天页 —— 容器没了就说明那条路由已关闭。
             if (supportFragmentManager.findFragmentByTag(TAG_CHAT_DETAIL_SURFACE) == null) {
                 router.onDestinationClosed { route ->
-                    route is AppRoute.ChatDetail || route is AppRoute.MiniPhoneChat
+                    route is AppRoute.ChatDetail ||
+                        route is AppRoute.CharacterDetail ||
+                        route is AppRoute.MiniPhoneChat
                 }
             }
             // Create 同理（W4）。⚠️ 这条**必须有**，而且它比 ChatDetail 更容易踩：
@@ -332,6 +334,7 @@ class MainActivity : AppCompatActivity(), DefaultHardwareBackBtnHandler {
                 // P9：ChatDetail 与 mini phone 是**同一个 Surface 的不同初始屏**，
                 // 不是两个 Surface（对齐 useChatNavigation.toChatPage 的分支）
                 is AppRoute.ChatDetail,
+                is AppRoute.CharacterDetail,
                 is AppRoute.MiniPhoneChat,
                 -> openSurface("ChatDetailSurface", route)
                 // W3：原生全屏页（不是 Surface）。白名单里为什么允许它们见

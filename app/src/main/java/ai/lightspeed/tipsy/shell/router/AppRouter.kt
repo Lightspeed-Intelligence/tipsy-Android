@@ -23,9 +23,10 @@ object ProductionRoutePolicy {
      * 点击仍会被拒绝（列表内部再走一次 Router）。
      * 语言页由 Settings 压栈打开，**不是独立路由目标**（RN 侧也没有深链到它）。
      *
-     * ## `ChatDetail` / `MiniPhoneChat` 是第一批进来的 **RN Surface**（P9）
+     * ## ChatDetail 家族是第一批进来的 **RN Surface**（P9）
      *
-     * 它们与上面三个不同轴 —— 走的是 `ChatDetailSurface`，所以确实要过 §9.1。
+     * `ChatDetail` / `CharacterDetail` / `MiniPhoneChat` 与上面三个不同轴 ——
+     * 都走 `ChatDetailSurface`，所以确实要过 §9.1。
      * 放开的依据（进度文档 §2.36）：
      * - 微根 18 项已逐行核对 `ChatDetailSurface.tsx:546-631`，顺序一致
      * - 5 个微栈目标已枚举，均在栈内（不存在 `RoleCardSurface` 那种死链）
@@ -47,6 +48,8 @@ object ProductionRoutePolicy {
         AppRoute.UserProfile::class.java,
         AppRoute.Settings::class.java,
         AppRoute.ChatDetail::class.java,
+        // Screen 头像/角色名直达同一 ChatDetailSurface 的 CharacterDetail 微栈。
+        AppRoute.CharacterDetail::class.java,
         AppRoute.MiniPhoneChat::class.java,
         // Tab3 创建入口（W4）。CreateSurface 在 RN 侧已注册
         //（`index.surfaces.js:136`），且 §9.1 的单层容器/popSurface 收口

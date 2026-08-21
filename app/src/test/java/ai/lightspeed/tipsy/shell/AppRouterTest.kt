@@ -278,17 +278,18 @@ class AppRouterTest {
     }
 
     /**
-     * P9：`ChatDetail` 与 `MiniPhoneChat` 进白名单 —— 四个原生列表页的
-     * 卡片点击至此**第一次真的有下一屏**。
+     * P9：ChatDetail 家族进白名单 —— 普通卡片、Screen 头像与 mini phone
+     * 三类入口都能进入同一个 Surface 的正确子屏。
      *
      * 这条锁的是「白名单与导航分支同时更新」：只加白名单不加
      * `ShellNavigator.navigate` 分支会走到 `error()`（那是刻意的，
      * 但要在这里先红）。
      */
     @Test
-    fun `ChatDetail 与 MiniPhone 在生产白名单内`() {
+    fun `ChatDetail CharacterDetail 与 MiniPhone 在生产白名单内`() {
         for (type in listOf(
             AppRoute.ChatDetail::class.java,
+            AppRoute.CharacterDetail::class.java,
             AppRoute.MiniPhoneChat::class.java,
         )) {
             assertTrue(

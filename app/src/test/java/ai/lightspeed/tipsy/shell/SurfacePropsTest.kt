@@ -233,6 +233,25 @@ class SurfacePropsTest {
     }
 
     @Test
+    fun `CharacterDetail 直达角色详情并携带首帧 preload`() {
+        val props = SurfaceProps.forRoute(
+            AppRoute.CharacterDetail(
+                characterId = "c1",
+                preload = ChatDetailPreload(
+                    nickname = "Evelyn",
+                    imageUrl = "https://cdn/character.jpg",
+                ),
+            ),
+        )
+
+        assertEquals("c1", props["characterId"])
+        assertEquals("CharacterDetail", props["initialScreen"])
+        val preload = props["preload"] as Map<*, *>
+        assertEquals("Evelyn", preload["nickname"])
+        assertEquals("https://cdn/character.jpg", preload["imageUrl"])
+    }
+
+    @Test
     fun `UserProfile 传 userId 但不传推荐归因`() {
         val props = SurfaceProps.forRoute(
             AppRoute.UserProfile(userId = "u1", recommendationContextJSON = """{"a":1}"""),
@@ -283,6 +302,7 @@ class SurfacePropsTest {
     fun `业务 props 不得使用壳自有字段名`() {
         for (route in listOf<AppRoute>(
             AppRoute.ChatDetail("c"),
+            AppRoute.CharacterDetail("c"),
             AppRoute.MiniPhoneChat("c"),
             AppRoute.UserProfile("u"),
         )) {
@@ -300,6 +320,7 @@ class SurfacePropsTest {
         // initial props 会进 Bundle，可能落入 saved instance state / ANR trace / 崩溃日志
         for (route in listOf<AppRoute>(
             AppRoute.ChatDetail("c"),
+            AppRoute.CharacterDetail("c"),
             AppRoute.MiniPhoneChat("c"),
             AppRoute.UserProfile("u"),
         )) {

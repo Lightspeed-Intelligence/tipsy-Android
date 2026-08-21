@@ -5,6 +5,7 @@ import ai.lightspeed.tipsy.shell.pages.screen.ScreenCardEvent
 import ai.lightspeed.tipsy.shell.pages.screen.ScreenEndpoint
 import ai.lightspeed.tipsy.shell.pages.screen.ScreenFeedItem
 import ai.lightspeed.tipsy.shell.pages.screen.ScreenFirstScreenCache
+import ai.lightspeed.tipsy.shell.pages.screen.ScreenInteractionSource
 import ai.lightspeed.tipsy.shell.pages.screen.ScreenMediaSourceType
 import ai.lightspeed.tipsy.shell.pages.screen.ScreenPage
 import ai.lightspeed.tipsy.shell.pages.screen.ScreenSessionTracker
@@ -285,6 +286,82 @@ class ScreenViewModelTest {
         assertTrue(events.isEmpty())
     }
 
+    // ── 卡片交互 ─────────────────────────────────────
+
+    @Test
+    fun `当前卡首次出现会读取点赞状态且不改列表计数`() = runTest {
+        val api = FakeApi().apply {
+            pages = mapOf(0 to page(listOf(item("a"), item("b", likeCount = 7))))
+        }
+        val interactions = FakeInteractions().apply { likeStatuses["b"] = true }
+        val vm = viewModel(api, owner = "u1", interactions = interactions)
+
+        vm.onEndpointResolved(flagEnabled = true)
+        advanceUntilIdle()
+
+        val like = vm.state.value.likeStateFor(vm.state.value.currentItem!!)
+        assertTrue(like.isLiked)
+        assertTrue(like.isResolved)
+        assertEquals(7L, like.count)
+        assertEquals(listOf("b"), interactions.statusCalls)
+    }
+
+    @Test
+    fun `点赞成功后按 echo 对账并增加计数`() = runTest {
+        val api = FakeApi().apply {
+            pages = mapOf(0 to page(listOf(item("a"), item("b", likeCount = 7))))
+        }
+        val interactions = FakeInteractions()
+        val vm = viewModel(api, owner = "u1", interactions = interactions)
+        vm.onEndpointResolved(flagEnabled = true)
+        advanceUntilIdle()
+
+        vm.toggleCurrentLike()
+        advanceUntilIdle()
+
+        val like = vm.state.value.likeStateFor(vm.state.value.currentItem!!)
+        assertTrue(like.isLiked)
+        assertEquals(8L, like.count)
+        assertFalse(like.isSubmitting)
+        assertEquals(listOf("b"), interactions.toggleCalls)
+    }
+
+    @Test
+    fun `点赞请求失败完整回滚`() = runTest {
+        val api = FakeApi().apply {
+            pages = mapOf(0 to page(listOf(item("a"), item("b", likeCount = 7))))
+        }
+        val interactions = FakeInteractions().apply { failToggle = true }
+        val vm = viewModel(api, owner = "u1", interactions = interactions)
+        vm.onEndpointResolved(flagEnabled = true)
+        advanceUntilIdle()
+
+        vm.toggleCurrentLike()
+        advanceUntilIdle()
+
+        val like = vm.state.value.likeStateFor(vm.state.value.currentItem!!)
+        assertFalse(like.isLiked)
+        assertEquals(7L, like.count)
+        assertFalse(like.isSubmitting)
+    }
+
+    @Test
+    fun `评论页关闭后权威总数回填对应卡片`() = runTest {
+        val api = FakeApi().apply {
+            pages = mapOf(0 to page(listOf(item("a"), item("b", commentCount = 2))))
+        }
+        val interactions = FakeInteractions().apply { commentCounts["b"] = 9L }
+        val vm = viewModel(api, owner = "u1", interactions = interactions)
+        vm.onEndpointResolved(flagEnabled = true)
+        advanceUntilIdle()
+
+        vm.refreshCommentCount("b")
+        advanceUntilIdle()
+
+        assertEquals(9L, vm.state.value.currentItem?.commentCount)
+        assertEquals(listOf("b"), interactions.commentCalls)
+    }
+
     // ── 分页与失败 ──────────────────────────────────
 
     @Test
@@ -386,11 +463,13 @@ class ScreenViewModelTest {
     private fun TestScope.viewModel(
         api: FakeApi,
         owner: String?,
+        interactions: FakeInteractions = FakeInteractions(),
         cache: ScreenFirstScreenCache = FakeCache(),
         generations: Generations = Generations(),
         events: MutableList<Pair<String, Map<String, String>>> = mutableListOf(),
     ) = ScreenViewModel(
         api = api,
+        interactions = interactions,
         tracker = ScreenSessionTracker(
             sessionIdFactory = { "sess-fixed" },
             track = { name, params -> events += name to params },
@@ -429,6 +508,31 @@ class ScreenViewModelTest {
         }
     }
 
+    private class FakeInteractions : ScreenInteractionSource {
+        val likeStatuses = mutableMapOf<String, Boolean>()
+        val commentCounts = mutableMapOf<String, Long>()
+        val statusCalls = mutableListOf<String>()
+        val toggleCalls = mutableListOf<String>()
+        val commentCalls = mutableListOf<String>()
+        var failToggle = false
+
+        override suspend fun fetchLikeStatus(characterId: String): Boolean {
+            statusCalls += characterId
+            return likeStatuses[characterId] ?: false
+        }
+
+        override suspend fun toggleLike(characterId: String) {
+            toggleCalls += characterId
+            if (failToggle) throw RuntimeException("toggle boom")
+            likeStatuses[characterId] = !(likeStatuses[characterId] ?: false)
+        }
+
+        override suspend fun fetchCommentCount(characterId: String): Long {
+            commentCalls += characterId
+            return commentCounts[characterId] ?: 0L
+        }
+    }
+
     private class FakeCache : ScreenFirstScreenCache {
         var preset: ScreenFeedItem? = null
         var stored: ScreenFeedItem? = null
@@ -445,7 +549,11 @@ class ScreenViewModelTest {
         sessionId: String? = "sess-1",
     ) = ScreenPage(items = items, requestId = requestId, sessionId = sessionId)
 
-    private fun item(id: String) = ScreenFeedItem(
+    private fun item(
+        id: String,
+        likeCount: Long = 0L,
+        commentCount: Long = 0L,
+    ) = ScreenFeedItem(
         characterId = id,
         mediaSourceType = ScreenMediaSourceType.STATIC_IMAGE,
         backgroundUrl = null,
@@ -458,8 +566,8 @@ class ScreenViewModelTest {
         creatorNickname = null,
         creatorAvatarUrl = null,
         avatarUrl = null,
-        likeCount = 0,
-        commentCount = 0,
+        likeCount = likeCount,
+        commentCount = commentCount,
         totalMessages = 0,
         primaryColor = null,
         gender = null,

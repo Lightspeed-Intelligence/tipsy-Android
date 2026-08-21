@@ -44,6 +44,7 @@ import kotlinx.coroutines.launch
  */
 class ScreenViewModel(
     private val api: ScreenSource,
+    private val interactions: ScreenInteractionSource,
     private val tracker: ScreenSessionTracker,
     /** 首屏缓存读写；注入是为了测试（生产是 MMKV 实现）。 */
     private val cache: ScreenFirstScreenCache,
@@ -62,6 +63,11 @@ class ScreenViewModel(
     private val coroutineScope: CoroutineScope get() = scope ?: viewModelScope
 
     private var inFlight: Job? = null
+
+    /** 分页链之外的卡片交互任务；互不取消，也不会被翻页请求覆盖。 */
+    private val likeStatusJobs = mutableMapOf<String, Job>()
+    private val likeMutationJobs = mutableMapOf<String, Job>()
+    private val commentCountJobs = mutableMapOf<String, Job>()
 
     /**
      * 上一次响应的 session_id —— **只在翻页时回传**。
@@ -144,6 +150,7 @@ class ScreenViewModel(
         if (index == s.currentIndex || index !in s.items.indices) return
         _state.value = s.copy(currentIndex = index)
         reportCurrentExposure()
+        loadCurrentLikeStatus()
         maybeLoadMore(index)
     }
 
@@ -187,6 +194,98 @@ class ScreenViewModel(
     }
 
     /**
+     * 点赞/取消点赞：RN `VideoActionButtons` 的同序实现。
+     *
+     * 列表 count 是操作前基线；先乐观更新，接口成功后用 echo 的最终布尔值
+     * 对账，接口失败则完整回滚。echo 自身失败只保留乐观结果。
+     */
+    fun toggleCurrentLike() {
+        if (ownerUserIdProvider().isNullOrBlank()) return
+        val item = _state.value.currentItem ?: return
+        val characterId = item.characterId
+        val previous = _state.value.likeStateFor(item)
+        if (previous.isSubmitting || likeMutationJobs[characterId]?.isActive == true) return
+
+        // 初始 echo 若仍在飞，不能让迟到结果覆盖本次用户操作。
+        likeStatusJobs.remove(characterId)?.cancel()
+        val optimisticLiked = !previous.isLiked
+        val optimistic = previous.copy(
+            isLiked = optimisticLiked,
+            count = (previous.count + if (optimisticLiked) 1L else -1L).coerceAtLeast(0L),
+            isResolved = true,
+            isSubmitting = true,
+            animationPulse = previous.animationPulse + if (optimisticLiked) 1L else 0L,
+        )
+        updateLikeState(characterId, optimistic)
+
+        val snapshot = generations.snapshot()
+        likeMutationJobs[characterId] = coroutineScope.launch {
+            try {
+                interactions.toggleLike(characterId)
+                val echoed = runCatching { interactions.fetchLikeStatus(characterId) }
+                    .onFailure { logWarn("点赞成功但回显失败，保留乐观状态", it) }
+                    .getOrNull()
+                if (!generations.isAuthValid(snapshot)) return@launch
+
+                val reconciled = if (echoed == null) {
+                    optimistic.copy(isSubmitting = false)
+                } else {
+                    optimistic.copy(
+                        isLiked = echoed,
+                        count = (previous.count + when {
+                                echoed == previous.isLiked -> 0L
+                                echoed -> 1L
+                                else -> -1L
+                            }).coerceAtLeast(0L),
+                        isSubmitting = false,
+                    )
+                }
+                updateLikeState(characterId, reconciled)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (!generations.isAuthValid(snapshot)) return@launch
+                logWarn("点赞操作失败，已回滚", e)
+                updateLikeState(characterId, previous.copy(isSubmitting = false))
+            } finally {
+                likeMutationJobs.remove(characterId)
+            }
+        }
+    }
+
+    /** 评论 Surface 关闭后拉一次权威总数，覆盖新增、回复与删除三种变化。 */
+    fun refreshCommentCount(characterId: String) {
+        if (characterId.isBlank() || ownerUserIdProvider().isNullOrBlank()) return
+        if (commentCountJobs[characterId]?.isActive == true) return
+        val snapshot = generations.snapshot()
+        commentCountJobs[characterId] = coroutineScope.launch {
+            try {
+                val count = interactions.fetchCommentCount(characterId)
+                if (!generations.isAuthValid(snapshot)) return@launch
+                val s = _state.value
+                if (s.items.none { it.characterId == characterId }) return@launch
+                _state.value = s.copy(
+                    items = s.items.map { item ->
+                        if (item.characterId == characterId) {
+                            item.copy(commentCount = count.coerceAtLeast(0L))
+                        } else {
+                            item
+                        }
+                    },
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (generations.isAuthValid(snapshot)) {
+                    logWarn("刷新评论总数失败，保留列表值", e)
+                }
+            } finally {
+                commentCountJobs.remove(characterId)
+            }
+        }
+    }
+
+    /**
      * 登录态变化。
      *
      * ⚠️ **换号要重解析 AB** —— 配置按 owner 缓存（`service.ts:30-32`），
@@ -195,6 +294,7 @@ class ScreenViewModel(
      */
     fun onAuthChanged() {
         inFlight?.cancel()
+        cancelInteractionJobs()
         tracker.endSession()
         listSessionId = null
         signature = ""
@@ -329,6 +429,8 @@ class ScreenViewModel(
         nextPage = page + 1
         _state.value = s.copy(
             items = merged,
+            // 只保留仍在当前 feed 中的账号态；新卡继续用列表 count 等待 echo。
+            likeStates = s.likeStates.filterKeys { id -> merged.any { it.characterId == id } },
             currentIndex = if (page == 0) 0 else s.currentIndex,
             isLoading = false,
             isRefreshing = false,
@@ -338,6 +440,58 @@ class ScreenViewModel(
             hasReachedEnd = items.isEmpty(),
         )
         if (page == 0) reportCurrentExposure()
+        loadCurrentLikeStatus()
+    }
+
+    /** 当前卡首次出现时读取账号态点赞；失败静默保留列表展示。 */
+    private fun loadCurrentLikeStatus() {
+        if (ownerUserIdProvider().isNullOrBlank()) return
+        val item = _state.value.currentItem ?: return
+        val characterId = item.characterId
+        val current = _state.value.likeStateFor(item)
+        if (current.isResolved || current.isSubmitting) return
+        if (likeStatusJobs[characterId]?.isActive == true) return
+
+        val snapshot = generations.snapshot()
+        likeStatusJobs[characterId] = coroutineScope.launch {
+            try {
+                val isLiked = interactions.fetchLikeStatus(characterId)
+                if (!generations.isAuthValid(snapshot)) return@launch
+                val latestItem = _state.value.items.firstOrNull {
+                    it.characterId == characterId
+                } ?: return@launch
+                val latest = _state.value.likeStateFor(latestItem)
+                // 用户操作已经接管该状态时，迟到的初始 echo 不再覆盖。
+                if (latest.isSubmitting || latest.isResolved) return@launch
+                updateLikeState(
+                    characterId,
+                    latest.copy(isLiked = isLiked, isResolved = true),
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                if (generations.isAuthValid(snapshot)) {
+                    logWarn("读取点赞状态失败，保留未选中态", e)
+                }
+            } finally {
+                likeStatusJobs.remove(characterId)
+            }
+        }
+    }
+
+    private fun updateLikeState(characterId: String, likeState: ScreenLikeState) {
+        val s = _state.value
+        if (s.items.none { it.characterId == characterId }) return
+        _state.value = s.copy(likeStates = s.likeStates + (characterId to likeState))
+    }
+
+    private fun cancelInteractionJobs() {
+        likeStatusJobs.values.forEach(Job::cancel)
+        likeMutationJobs.values.forEach(Job::cancel)
+        commentCountJobs.values.forEach(Job::cancel)
+        likeStatusJobs.clear()
+        likeMutationJobs.clear()
+        commentCountJobs.clear()
     }
 
     private fun reportCurrentExposure() {

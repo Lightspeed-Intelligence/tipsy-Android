@@ -12,6 +12,11 @@ package ai.lightspeed.tipsy.shell.pages.screen
  */
 data class ScreenState(
     val items: List<ScreenFeedItem> = emptyList(),
+    /**
+     * 点赞是账号态，不能写进首屏公共缓存中的 [ScreenFeedItem]。
+     * 按 characterId 单独存，刷新/换号时可独立丢弃。
+     */
+    val likeStates: Map<String, ScreenLikeState> = emptyMap(),
     val currentIndex: Int = 0,
     val endpoint: ScreenEndpoint? = null,
     val isLoading: Boolean = false,
@@ -30,7 +35,23 @@ data class ScreenState(
     /** 空态：加载完成但没有内容，且不是错误态。 */
     val showsEmpty: Boolean
         get() = items.isEmpty() && !isLoading && !isRetryable
+
+    /** 未拉到 echo 前，计数仍使用列表响应，选中态安全回落为 false。 */
+    fun likeStateFor(item: ScreenFeedItem): ScreenLikeState =
+        likeStates[item.characterId] ?: ScreenLikeState(count = item.likeCount)
 }
+
+/** 一张 Screen 卡的账号态点赞快照。 */
+data class ScreenLikeState(
+    val isLiked: Boolean = false,
+    val count: Long = 0L,
+    /** 已完成 `/user/character_stats` 初始回显。 */
+    val isResolved: Boolean = false,
+    /** 防止连续点击产生两个互相覆盖的 toggle。 */
+    val isSubmitting: Boolean = false,
+    /** 仅在未点赞 → 点赞时递增，Compose 用它触发一次弹跳动画。 */
+    val animationPulse: Long = 0L,
+)
 
 /**
  * 首屏缓存的**签名**（`showcaseCacheSignature`，`screen.tsx:216-234`）。
