@@ -1,5 +1,6 @@
 package ai.lightspeed.tipsy.shell.pages.screen
 
+import ai.lightspeed.tipsy.shell.BuildConfig
 import ai.lightspeed.tipsy.shell.R
 import androidx.media3.common.util.UnstableApi
 import androidx.compose.foundation.Image
@@ -8,6 +9,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.res.painterResource
 import ai.lightspeed.tipsy.shell.i18n.rememberLocalizedString
+import ai.lightspeed.tipsy.shell.i18n.rememberCurrentLanguage
 import ai.lightspeed.tipsy.shell.pages.home.HomeText
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -157,6 +159,7 @@ private fun ScreenPager(
     bottomPadding: Dp,
 ) {
     val pagerState = rememberPagerState(pageCount = { state.items.size })
+    var taglinePreviewText by remember { mutableStateOf<String?>(null) }
 
     // 翻页 → 通知 ViewModel（曝光埋点 + 触发预拉都在那边）
     LaunchedEffect(pagerState) {
@@ -198,6 +201,7 @@ private fun ScreenPager(
                     onStartChat = onStartChat,
                     onCharacterClick = onCharacterClick,
                     onCreatorClick = onCreatorClick,
+                    onTaglineExpand = { taglinePreviewText = it },
                     onCardEvent = onCardEvent,
                     statusBarPadding = statusBarPadding,
                     bottomPadding = bottomPadding,
@@ -216,6 +220,13 @@ private fun ScreenPager(
                 .padding(top = statusBarPadding)
                 .padding(end = SOUND_BUTTON_END_PADDING.dp, top = SOUND_BUTTON_TOP_PADDING.dp),
         )
+
+        taglinePreviewText?.let { previewText ->
+            ScreenTaglinePreview(
+                text = previewText,
+                onDismiss = { taglinePreviewText = null },
+            )
+        }
     }
 }
 
@@ -268,10 +279,26 @@ private fun ScreenCard(
     onStartChat: () -> Unit,
     onCharacterClick: (ScreenFeedItem) -> Unit,
     onCreatorClick: (ScreenFeedItem) -> Unit,
+    onTaglineExpand: (String) -> Unit,
     onCardEvent: (ScreenCardEvent) -> Unit,
     statusBarPadding: Dp,
     bottomPadding: Dp,
 ) {
+    val language by rememberCurrentLanguage()
+    val resolvedTagline = remember(
+        item.tagline,
+        item.nickname,
+        item.isTranslated,
+        language,
+    ) {
+        resolveScreenTagline(
+            tagline = item.tagline,
+            nickname = item.nickname.orEmpty(),
+            isTranslated = item.isTranslated,
+            languageCode = language,
+            isGooglePlay = BuildConfig.DOWNLOAD_CHANNEL == CHANNEL_GOOGLE_PLAY,
+        )
+    }
     Box(Modifier.fillMaxSize()) {
         // 背景图：静图/动图直接显示；showcase 把封面作为视频首帧前的 overlay
         val imageUrl = when (item.mediaSourceType) {
@@ -355,27 +382,18 @@ private fun ScreenCard(
         )
 
         Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .fillMaxWidth()
-                .padding(
-                    start = CONTENT_HORIZONTAL_PADDING.dp,
-                    end = CONTENT_HORIZONTAL_PADDING.dp,
-                    bottom = bottomPadding + CONTENT_BOTTOM_GAP.dp,
-                ),
+                .padding(bottom = bottomPadding + CONTENT_BOTTOM_GAP.dp),
         ) {
-            if (item.tagline.isNotBlank()) {
-                Text(
-                    text = item.tagline,
-                    color = Color.White.copy(alpha = TEXT_SECONDARY_ALPHA),
-                    fontSize = TAGLINE_FONT.sp,
-                    // P1 只做折叠态两行；展开（FeedMediaTaglineOverlay 531 行）
-                    // 属二期，方案已标「iOS 至今仍在二期清单」
-                    maxLines = TAGLINE_MAX_LINES,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.testTag("screen_card_tagline"),
+            if (resolvedTagline.isNotBlank()) {
+                ScreenTaglineCard(
+                    text = resolvedTagline,
+                    onExpand = { onTaglineExpand(resolvedTagline) },
                 )
-                Spacer(Modifier.height(CONTENT_GAP.dp))
+                Spacer(Modifier.height(TAGLINE_META_GAP.dp))
             }
             ScreenMetaBar(
                 item = item,
@@ -383,9 +401,13 @@ private fun ScreenCard(
                 onCharacterClick = onCharacterClick,
                 onCreatorClick = onCreatorClick,
                 onCardEvent = onCardEvent,
+                modifier = Modifier.padding(horizontal = CONTENT_HORIZONTAL_PADDING.dp),
             )
             Spacer(Modifier.height(CONTENT_GAP.dp))
-            ChatCta(onClick = onStartChat)
+            ChatCta(
+                onClick = onStartChat,
+                modifier = Modifier.padding(horizontal = CONTENT_HORIZONTAL_PADDING.dp),
+            )
         }
 
         Spacer(Modifier.height(statusBarPadding))
@@ -405,9 +427,10 @@ private fun ScreenMetaBar(
     onCharacterClick: (ScreenFeedItem) -> Unit,
     onCreatorClick: (ScreenFeedItem) -> Unit,
     onCardEvent: (ScreenCardEvent) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AsyncImage(
@@ -491,9 +514,9 @@ private fun StatsRow(
     ) {
         ActionButton(
             iconRes = if (likeState.isLiked) {
-                R.drawable.ic_profile_tab_like_press
+                R.drawable.ic_screen_like_selected
             } else {
-                R.drawable.ic_profile_tab_like
+                R.drawable.ic_screen_like
             },
             label = HomeText.formatMessageCount(likeState.count),
             testTag = "screen_card_like",
@@ -558,10 +581,13 @@ private fun ActionButton(
 }
 
 @Composable
-private fun ChatCta(onClick: () -> Unit) {
+private fun ChatCta(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Box(
         contentAlignment = Alignment.Center,
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .height(STORY_CTA_HEIGHT.dp)
             .clip(RoundedCornerShape(STORY_CTA_RADIUS.dp))
@@ -652,9 +678,8 @@ private const val CONTENT_HORIZONTAL_PADDING = 12
 /** CTA 底边距底栏 10（iOS `contentBottomInset`；RN 对应 showcase base inset）。 */
 private const val CONTENT_BOTTOM_GAP = 10
 private const val CONTENT_GAP = 12
-private const val TAGLINE_MAX_LINES = 2
+private const val TAGLINE_META_GAP = 16
 private const val NICKNAME_FONT = 14
-private const val TAGLINE_FONT = 14
 private const val CREATOR_FONT = 13
 private const val CREATOR_ALPHA = 0.5f
 private const val AVATAR_SIZE = 40
@@ -685,3 +710,5 @@ private const val RETRY_CTA_H_PADDING = 24
 private const val RETRY_CTA_FONT = 15
 private val RETRY_CTA_BACKGROUND = Color(0xFFAD403B)
 private const val EMPTY_FONT = 14
+
+private const val CHANNEL_GOOGLE_PLAY = "GooglePlay"

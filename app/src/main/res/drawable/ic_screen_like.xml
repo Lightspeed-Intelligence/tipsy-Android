@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Keep the 40x40 viewport and inset from the RN Screen like asset. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="40dp"
+    android:height="40dp"
+    android:viewportWidth="40"
+    android:viewportHeight="40">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M26.2573,8.05859C30.3425,8.05859 33.6541,11.3703 33.6541,15.4554C33.6541,17.5286 32.7996,19.4009 31.4255,20.7439L20.0895,31.7784L8.72557,20.7112C7.37168,19.3707 6.5326,17.5112 6.53253,15.4554C6.53253,11.3703 9.84419,8.05859 13.9293,8.05859C16.5027,8.05859 18.7683,9.37311 20.0933,11.3669C21.4184,9.37311 23.6839,8.05859 26.2573,8.05859Z" />
+</vector>
