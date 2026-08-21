@@ -2,10 +2,9 @@
 .gradle
 /local.properties
 
-# RN 依赖软链：仓库根 -> tipsy-app/node_modules（ADR-004）。
-# Expo 的 ExpoGradleHelperExtension.getReactNativeDir 硬编码从 Gradle root 跑
-# `node --print require.resolve('react-native/package.json')` 且无覆盖入口，
-# 故必须在仓库根提供此软链。由开发者/CI 各自创建，不入库。
+# RN 依赖布局软链：仓库根 -> tipsy-app/node_modules（ADR-004）。
+# 若第三方 Gradle 插件仍从非标准仓库根解析 JS 包，这个入口让解析结果一致。
+# Node 可执行文件本身由绝对路径契约解决；软链由 bootstrap/CI 创建，不入库。
 /node_modules
 
 # MCP 网关本地产物

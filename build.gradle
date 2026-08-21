@@ -36,6 +36,19 @@ plugins {
     alias libs.plugins.kotlin.compose apply false
 }
 
+// 非标准 brownfield 布局不允许第三方模块自己用裸 "node"
+// require.resolve。同时发布到 rootProject.ext 和 app.ext，覆盖两类常见的
+// safeExtGet / safeAppExtGet 实现（Reanimated、Worklets、Screens 等）。
+def reactNativeNodeModulesDir = new File(rootDir, 'tipsy-app/node_modules/react-native').absolutePath
+def reactNativeWorkletsNodeModulesDir = new File(rootDir, 'tipsy-app/node_modules/react-native-worklets').absolutePath
+ext.REACT_NATIVE_NODE_MODULES_DIR = reactNativeNodeModulesDir
+ext.REACT_NATIVE_WORKLETS_NODE_MODULES_DIR = reactNativeWorkletsNodeModulesDir
+
+// 根工程先于各 library 求值，因此预先写入 app.ext；app/build.gradle
+// 也会声明同一契约，使 app 单独阅读时不依赖隐式时序。
+project(':app').ext.REACT_NATIVE_NODE_MODULES_DIR = reactNativeNodeModulesDir
+project(':app').ext.REACT_NATIVE_WORKLETS_NODE_MODULES_DIR = reactNativeWorkletsNodeModulesDir
+
 // withRemoveAgoraMediaProjection 移植（方案 §2.3）：把 Agora full-sdk 换成
 // voice-sdk 并排除屏幕共享模块。RN 侧靠 config plugin 在 prebuild 时改 gradle，
 // 壳不跑 prebuild，必须在此手工复刻，否则会：
@@ -91,4 +104,3 @@ allprojects {
         }
     }
 }
-

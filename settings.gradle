@@ -1,11 +1,12 @@
 // Tipsy Android 原生壳 —— settings（Groovy DSL，方案 ADR-004：全仓不混 .gradle.kts）
 //
 // 布局差异：Gradle root = 仓库根，RN 业务在 ./tipsy-app（git submodule）。
-// 标准 Expo 布局是 Gradle root = <rn-project>/android，因此需要两处显式处理：
+// 标准 Expo 布局是 Gradle root = <rn-project>/android，因此需要三处显式处理：
 //   1. expoAutolinking.projectRoot 指向 tipsy-app（官方公开可覆盖项）
-//   2. 仓库根的 node_modules 软链（见 .gitignore 说明）——
-//      ExpoGradleHelperExtension.getReactNativeDir 硬编码从 Gradle root 跑
-//      `node --print require.resolve('react-native/package.json')` 且无覆盖入口
+//   2. 仓库根的 node_modules 软链（见 .gitignore 说明），兼容仍以
+//      Gradle root 为 package resolution 起点的 RN/Expo 模块
+//   3. 本文件发布 gradle.ext.tipsyNodeExecutable，供依赖补丁覆盖
+//      upstream 硬编码的裸 `node`（契约不存在时回退 upstream 行为）
 //
 // 本文件的 includeBuild / plugins / autolinking 写法对齐 CNG 生成的参考工程
 // （`npx expo prebuild --platform android` 的产物），只改布局相关的路径。
@@ -36,7 +37,8 @@ pluginManagement {
     }
 
     // 优先级：环境变量（CI）→ local.properties（开发机，不入库）
-    //        → Gradle property（可选团队默认）→ 回退裸 "node" 走 $PATH
+    //        → Gradle property（可选团队默认）→ 逐项扫描 JVM 的 PATH。
+    // 无论从哪里找到，后续都只传绝对路径，不再 fork 裸 "node"。
     def candidates = [
         [source: 'TIPSY_NODE_EXECUTABLE 环境变量',
          value : trimToNull(providers.environmentVariable('TIPSY_NODE_EXECUTABLE').getOrElse(''))],
@@ -46,104 +48,76 @@ pluginManagement {
          value : trimToNull(providers.gradleProperty('tipsy.node.executable').getOrElse(''))],
     ].findAll { it.value != null }
 
-    def nodeExecutable = 'node'
-    def nodeSource = '$PATH 查找'
+    File discoveredNode = null
+    def nodeSource = null
     if (!candidates.isEmpty()) {
         def selected = candidates.first()
         def file = new File(selected.value)
         if (!file.isAbsolute()) {
-            throw new GradleException("${selected.source} 必须是绝对路径，当前为 '${selected.value}'。")
+            throw new GradleException(
+                "${selected.source} 必须是绝对路径，当前为 '${selected.value}'。\n" +
+                "请在仓库根运行 ./scripts/bootstrap-android.sh 重建本机配置。"
+            )
         }
         if (!file.isFile() || !file.canExecute()) {
-            throw new GradleException("${selected.source} 指向 '${selected.value}'，它不是可执行文件。")
+            throw new GradleException(
+                "${selected.source} 指向 '${selected.value}'，它不是可执行文件。\n" +
+                "请在仓库根运行 ./scripts/bootstrap-android.sh 重建本机配置。"
+            )
         }
-        nodeExecutable = file.absolutePath
+        discoveredNode = file.absoluteFile
         nodeSource = selected.source
+    } else {
+        def pathValue = System.getenv('PATH') ?: ''
+        def nodeNames = System.getProperty('os.name', '').toLowerCase(Locale.ROOT).contains('windows')
+            ? ['node.exe', 'node']
+            : ['node']
+
+        // 不用 `command -v` / `where` / 裸 `node` 当探针：逐项查 File
+        // 才能在 Studio sync 的 JVM 环境内可移植、不依赖 shell。
+        for (String rawEntry : pathValue.split(java.util.regex.Pattern.quote(File.pathSeparator), -1)) {
+            def entry = rawEntry.trim()
+            if (entry.length() >= 2 && entry.startsWith('"') && entry.endsWith('"')) {
+                entry = entry.substring(1, entry.length() - 1)
+            }
+            if (entry.isEmpty()) continue
+
+            def directory = new File(entry).absoluteFile
+            for (String nodeName : nodeNames) {
+                def file = new File(directory, nodeName)
+                if (file.isFile() && file.canExecute()) {
+                    discoveredNode = file.absoluteFile
+                    break
+                }
+            }
+            if (discoveredNode != null) break
+        }
+
+        if (discoveredNode == null) {
+            throw new GradleException(
+                "未在当前 JVM 的 PATH 中找到可执行的 node。\n" +
+                "PATH：${pathValue ?: '(空)'}\n" +
+                "请先在能正常运行 node 的终端执行 ./scripts/bootstrap-android.sh。\n" +
+                "CI 也可设置 TIPSY_NODE_EXECUTABLE，或在 local.properties 写入\n" +
+                "  tipsy.node.executable=/absolute/path/to/node"
+            )
+        }
+        nodeSource = 'JVM PATH 扫描'
     }
 
-    // ── 裸 "node" 调用点的前置检查（不是兜底，是提前失败）────────────────
-    //
-    // 上面解析出的绝对路径只对**显式传参**的调用点有效（commandLine(nodeExecutable, …)）。
-    // 但 Expo 的 AutolinkingCommandBuilder 硬编码裸 "node" 且无覆盖入口，
-    // 又位于禁止修改的 tipsy-app/node_modules —— 那些调用点**只能靠进程自身的 PATH**。
-    //
-    // ⚠️ 这里曾经放过一段「把 node 目录前置进 daemon PATH」的 hack
-    //    （ProcessEnvironment.maybeSetEnvironmentVariable）。**实测无效已删**：
-    //    子进程确实继承了新 PATH（sh -c 'command -v node' 能找到），
-    //    但 Gradle 解析 program name 时不看它，同一次构建内
-    //    providers.exec { commandLine('node', …) } 仍抛 error=2。
-    //    且那段包在 catch (Throwable ignored) 里静默失败，会让人误以为有兜底。
-    //
-    // 真正的解法是让**进程本身**的 PATH 含 node 目录：
-    //   - 终端跑 ./gradlew：shell PATH 已含（fnm/nvm 会注入），天然可用
-    //   - Android Studio：**用 `/Applications/Android Studio (Tipsy).app` 启动**。
-    //     那是个 `#!/bin/zsh -l` 的包装 app：登录 shell 重建 PATH 后再 exec 真正的
-    //     Studio，因此 native environ 一定含 node。日志见
-    //     $TMPDIR/tipsy-studio-launcher.log。等价手段是从终端直接跑
-    //     `/Applications/Android\ Studio.app/Contents/MacOS/studio &`。
-    //
-    // ⚠️ **`launchctl setenv` / LaunchAgent 治不了这个坑**（2026-08-14 定论，
-    //    2026-08-10/11/13/14 四次复发换来的结论，别再往那个方向试）：
-    //    exec 解析 program name 读的是**native process environ**，而 Studio 的
-    //    "shell environment import" 只补 JVM 层的 env map。两者可以不一致 ——
-    //    这正是报错里 $PATH 看着是好的、fork 却仍 error=2 的原因。
-    //    且 runningboardd 按 bundle id **缓存** app 的 native 启动环境、缓存跨 ⌘Q 存活，
-    //    launchctl setenv 只改「launchd 往后发什么」，**无法失效已缓存的那份**。
-    //
-    // 所以这里只做检查并**明确报错**，而不是假装能修好 —— 否则失败点会漂移到
-    // 某个 plugin 内部，报出无上下文的 `Cannot run program "node"`。
-    // ⚠️ 探针必须**真的 fork 一次裸 `node`**，不能只读 System.getenv('PATH')。
-    //    2026-08-12 实测：旧的 System.getenv('PATH') 检查会**误放行**。
-    //    Studio 用 Tooling API 在自己进程里跑 settings 脚本，而它启动时导入过一次
-    //    shell 环境（idea.log: "shell environment loaded (/bin/zsh, 30 vars)"），
-    //    于是 JVM 自身的 $PATH 含 node、fork 出去的子进程却只有裸
-    //    /usr/bin:/bin:/usr/sbin:/sbin —— 检查通过，构建随后死在 Expo 内部，
-    //    同一次构建的日志里既有 "[Tipsy] node vX" 又有 Cannot run program "node"。
-    //    只有 fork 才测得到 Expo 真正走的那条路。
-    def bareNodeError = null
+    // 用已找到的**绝对路径**询问 Node 自身的 process.execPath，
+    // 消除 fnm/nvm/asdf 的 shim/软链接差异。这一步同样不 fork 裸 node。
+    String nodeExecutable
     try {
-        providers.exec {
-            commandLine('node', '--version')
-        }.standardOutput.asText.get()
-    } catch (Exception e) {
-        bareNodeError = e.message ?: e.toString()
-    }
-    if (bareNodeError != null) {
-        throw new GradleException(
-            "fork 子进程时找不到可执行的 `node` —— 这正是 Expo autolinking 的调用方式。\n" +
-            "\n" +
-            "已解析到 node 绝对路径（${nodeSource}）：${nodeExecutable}\n" +
-            "但它**不够** —— Expo 的 autolinking plugin 硬编码裸 `node`，\n" +
-            "只能靠进程自身的 \$PATH 解析，无法用参数覆盖。\n" +
-            "\n" +
-            "当前 JVM 的 \$PATH：${System.getenv('PATH') ?: '(空)'}\n" +
-            "（它可能看着是好的而子进程仍失败：Studio 启动时导入过 shell 环境。）\n" +
-            "原始错误：${bareNodeError}\n" +
-            "\n" +
-            "这说明 Studio 不是用包装 app 启动的（从 Dock 直接开原版 Studio 会命中\n" +
-            "runningboardd 缓存的裸 environ）。**三步修好**（终端里执行）：\n" +
-            "  1) ./gradlew --stop                        # 旧 daemon 带着坏 PATH，会被复用\n" +
-            "  2) ⌘Q 完全退出 Android Studio\n" +
-            "  3) 打开 `/Applications/Android Studio (Tipsy).app`（Dock 里换成这个图标）\n" +
-            "     它是 `#!/bin/zsh -l` 包装：先用登录 shell 重建 PATH 再 exec 真 Studio。\n" +
-            "     日志：\$TMPDIR/tipsy-studio-launcher.log\n" +
-            "     等价手段：终端跑 `/Applications/Android\\ Studio.app/Contents/MacOS/studio &`\n" +
-            "     若包装 app 不存在，见 llmdoc/reference/android-native-progress.md §2.3 重建。\n" +
-            "\n" +
-            "⚠️ **别再试 `launchctl setenv` / LaunchAgent** —— 已证实无效（详见上方注释）：\n" +
-            "   exec 解析 program name 读 native environ，Studio 只补 JVM env map，\n" +
-            "   且 runningboardd 的 bundle 级缓存跨 ⌘Q 存活、launchctl 无法使其失效。\n" +
-            "\n" +
-            "诊断要看**进程实际**的 PATH（不是 launchctl getenv，两者不一致正是本坑特征）：\n" +
-            "  ps eww \$(pgrep -f 'MacOS/studio' | head -1) | tr ' ' '\\n' | grep ^PATH=\n" +
-            "\n" +
-            "从终端跑通常不会遇到（shell PATH 已含 node）。\n" +
-            "详见 llmdoc/reference/android-native-progress.md 的 §2.3 与方案 ADR-004 第 3 条。"
-        )
-    }
+        def normalizedPath = providers.exec {
+            commandLine(discoveredNode.absolutePath, '--print', 'process.execPath')
+        }.standardOutput.asText.get().trim()
+        def normalizedNode = new File(normalizedPath)
+        if (!normalizedNode.isAbsolute() || !normalizedNode.isFile() || !normalizedNode.canExecute()) {
+            throw new GradleException("process.execPath 返回了无效路径 '${normalizedPath}'。")
+        }
+        nodeExecutable = normalizedNode.canonicalFile.absolutePath
 
-    // 尽早验证，替代 Gradle 无上下文的报错
-    try {
         def nodeVersion = providers.exec {
             commandLine(nodeExecutable, '--version')
         }.standardOutput.asText.get().trim()
@@ -152,8 +126,9 @@ pluginManagement {
         println "[Tipsy] node ${nodeVersion}（来源：${nodeSource}）"
     } catch (Exception e) {
         throw new GradleException(
-            "无法执行 node（来源：${nodeSource}，路径：${nodeExecutable}）。\n" +
-            "请设置 TIPSY_NODE_EXECUTABLE 环境变量，或在 local.properties 写入\n" +
+            "无法规范化或执行 node（来源：${nodeSource}，路径：${discoveredNode.absolutePath}）。\n" +
+            "请先在仓库根运行 ./scripts/bootstrap-android.sh 重建本机配置。\n" +
+            "CI 也可设置 TIPSY_NODE_EXECUTABLE，或在 local.properties 写入\n" +
             "  tipsy.node.executable=/absolute/path/to/node\n" +
             "原始错误：${e.message}"
         )
@@ -167,6 +142,7 @@ pluginManagement {
                 "require.resolve('@react-native/gradle-plugin/package.json', { paths: [require.resolve('react-native/package.json')] })")
         }.standardOutput.asText.get().trim()
     ).getParentFile().absolutePath
+    gradle.ext.tipsyReactNativeGradlePlugin = reactNativeGradlePlugin
     includeBuild(reactNativeGradlePlugin)
 
     // Expo autolinking plugin（included build）
@@ -231,4 +207,6 @@ expoAutolinking.useExpoModules()
 rootProject.name = 'tipsy-Android'
 
 include ':app'
-includeBuild(expoAutolinking.reactNativeGradlePlugin)
+// 不读 expoAutolinking.reactNativeGradlePlugin：该 lazy property 内部会再 fork
+// 一次裸 "node"。复用 pluginManagement 阶段已用绝对 Node 解析的路径。
+includeBuild(gradle.ext.tipsyReactNativeGradlePlugin)

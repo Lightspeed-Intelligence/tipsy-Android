@@ -270,7 +270,7 @@ var projectRoot: File = settings.rootDir
 
    即官方**明确支持**非 `/android` 布局。`settings.gradle` 里设 `expoAutolinking.projectRoot = file("tipsy-app")` 再 `useExpoModules()` 即可，配套 `reactNativeGradlePlugin` / `reactNative` 两个 lazy 属性也都以 `projectRoot` 为 workingDir 解析。
 
-2. **`ExpoGradleHelperExtension.getReactNativeDir` 硬编码 `project.rootDir`，且无 override**。已核实 `expo-modules-core/expo-module-gradle-plugin/.../ExpoGradleHelperExtension.kt`：
+2. **`ExpoGradleHelperExtension.getReactNativeDir` 仍以 `project.rootDir` 为解析起点，且无目录 override**。已核实 `expo-modules-core/expo-module-gradle-plugin/.../ExpoGradleHelperExtension.kt` 的 upstream 实现：
 
 ```kotlin
 reactNativeDir = reactNativeDirFromSource ?: File(
@@ -281,7 +281,7 @@ reactNativeDir = reactNativeDirFromSource ?: File(
 ).parentFile
 ```
 
-   **解法：在仓库根做 `node_modules` 符号链接指向 `tipsy-app/node_modules`**，让从仓库根跑的 `require.resolve('react-native/package.json')` 自然命中。这正是 iOS 壳在用的方案（实测 `Tipsy-iOS/node_modules -> tipsy-app/node_modules`，且 `.eas/build/*.yml` 三个 profile 都有 `ln -sf tipsy-app/node_modules node_modules` 步骤）。
+   **目录解法：在仓库根做 `node_modules` 符号链接指向 `tipsy-app/node_modules`**，让从仓库根跑的 `require.resolve('react-native/package.json')` 自然命中；Node executable 则由第 3 条的绝对路径契约处理。这正是 iOS 壳在用的目录方案（实测 `Tipsy-iOS/node_modules -> tipsy-app/node_modules`，且 `.eas/build/*.yml` 三个 profile 都有 `ln -sf tipsy-app/node_modules node_modules` 步骤）。
 
 > **W0 实测结论（2026-08-08）**：上面两个支点**均已验证成立** —— 51 个 project 正确 autolink，
 > 三个 flavor 的 debug 包构建通过，**未使用任何反射**。但实测另外发现**第三类问题**：
@@ -292,53 +292,35 @@ reactNativeDir = reactNativeDirFromSource ?: File(
 > 完整清单与处理方式见进度文档 §2.2.2 —— 新增依赖后若再撞同类报错，
 > **先在报错任务的 workingDir 手工复现那条 node 命令拿到真实 stderr**，再决定怎么改。
 >
-> 另有一项已知限制：`expoAutolinking.exclude` 对经 `useExpoModules()` 链接的模块无效
-> （`AutolinkingCommandBuilder` 把多值 `--exclude` 与 `--project-root` 拼进同一 argv，
-> variadic 参数吞掉后续 flag）。**W0 的严格隔离因此改用「禁用相关任务」实现**，
-> 不能依赖 exclude 列表。
+> 历史上 `AutolinkingCommandBuilder` 会把多个 `--exclude` 值拼进同一 argv，导致
+> variadic 解析静默失效；`tipsy-app` 的版本化 patch 已改为逐值重复 flag。
+> W0 同时保留「禁用相关任务」的熔断，防止依赖升级/补丁漂移时误启用 OTA。
 
 > **不采用反射 hack** 去改写 `ExpoGradleHelperExtension` 的私有 `lateinit` 字段缓存：依赖私有字段名、Kotlin backing field、Gradle decorated subclass 与回调时序——脆、且不承诺 configuration cache 兼容。符号链接 + 公开的 `projectRoot` 覆盖是两个稳定支点，优先用它们。若实测仍有解析缺口，先补最小 shim（如非递归的 `tipsy-app/android` 占位软链，对齐 iOS 的 `ios/` shim 做法），再考虑反射，且必须写下删除条件。
 
-3. **Node 可执行文件必须显式解析（已实测，W0 必做；落地方式于 2026-08-10 订正，见本条末）**。上面两个支点都靠 `providers.exec` 跑 `node --print require.resolve(...)`，**Node 因此是本仓库真实的构建输入**（RN Gradle plugin、Expo autolinking、Hermes bundle 全部 shell out 到它）。而 Expo/RN 的调用点都是裸 `"node"`、依赖 `$PATH`：
+3. **Node executable 是仓库级构建契约（2026-08-21 取代 GUI PATH / 包装 App 方案）**。Node 是本仓库真实的构建输入：RN Gradle plugin、Expo autolinking、Hermes bundle 以及多个第三方 validator 都会 fork 它。fnm / nvm / asdf 的 shell PATH 不应成为 Gradle sync 是否成功的隐含条件。
 
-   - fnm / nvm / asdf **只在交互式 shell 注入 PATH**。从 Finder/Dock 启动的 Android Studio、launchd、多数 CI runner 都读不到 → Gradle sync 报 `A problem occurred starting process 'command 'node''`，且报错无任何上下文。
-   - **Expo 的 settings 插件硬编码裸 `"node"` 且无覆盖入口**（`ExpoAutolinkingSettingsPlugin`、`ExpoAutolinkingSettingsExtension`、`AutolinkingCommandBuilder`），又位于禁止修改的 `tipsy-app/node_modules` → 光靠显式传参覆盖不了全部调用点。
+   **唯一解析与发布点：`settings.gradle`**
+   - 按 `TIPSY_NODE_EXECUTABLE` → `local.properties` 的 `tipsy.node.executable` → 同名 Gradle property → **逐项扫描 JVM PATH 文件**的优先级寻找候选；最后一层只查文件，不 fork 裸 `node`。
+   - 用候选的绝对路径执行 `--print process.execPath` 并 canonicalize。这样 fnm 的 `multishells/<pid>_<timestamp>` 临时链接不会被写进本机配置。
+   - 结果发布为本次 build 的 `gradle.ext.tipsyNodeExecutable`。本仓 settings/include 解析、`react.nodeExecutableAndArgs`、Expo/RN 依赖都消费同一个值；不用 JVM 全局 system property，避免 Gradle daemon 跨仓串值。
+   - `pluginManagement` 必须是 settings 第一条语句，所以解析逻辑留在该 block 内；后续只复用结果，禁止再各自探测 Node。
 
-   **落地方式**——分两层，**缺任何一层 GUI 启动的 sync 都会失败**：
+   **无公开入口的 dependency 调用点：版本化 `patch-package`**
+   - `tipsy-app/patches/` 覆盖 Expo autolinking 的 settings / command builder / package-list task、Expo Modules Core/Constants、NetInfo、Reanimated 与 Worklets 的裸调用点。
+   - 每个补丁优先读取 `gradle.ext.tipsyNodeExecutable`，契约不存在时回退 upstream 的 `"node"`，因此 `tipsy-app` 的 standalone Android 构建行为不被壳仓绑死。
+   - `npm ci` 的 postinstall 会应用这些补丁；升级对应依赖时，patch-package 的版本绑定和下面的 CI gate 共同强制重新审计，不能静默退回 PATH。
 
-   **第一层：本仓自己的调用点用显式路径**（`settings.gradle` 已实现）
-   - 按优先级解析：`TIPSY_NODE_EXECUTABLE` 环境变量（CI）→ `local.properties` 的 `tipsy.node.executable`（开发机，不跟踪）→ 同名 Gradle property（团队默认）→ 回退裸 `"node"` 走 PATH（保持原行为）。
-   - 解析结果校验绝对路径 + 可执行位，并在 settings 阶段先跑一次 `node --version` 验证，失败时给出**带解析来源**的可操作报错。
-   - 同时设置 `react.nodeExecutableAndArgs`（默认也是裸 `"node"`，影响 Hermes bundle 与 codegen）。
-   - `pluginManagement` 必须是 settings 脚本的第一条语句，所以这段逻辑**不能挪进 applied script 或顶层方法**，只能内联后经 `gradle.extraProperties` republish 给后续构建使用。
-   - 填 `local.properties` 时**不要用 `which node` 的输出**：fnm 给的是 `~/.local/state/fnm_multishells/<pid>_<ts>/bin/node`，带 PID 与时间戳，换 shell 即失效。用 `~/.local/share/fnm/aliases/default/bin/node`（nvm 对应 `~/.nvm/versions/node/<v>/bin/node`，升级 node 后需改）。
+   **开发机只需一次 bootstrap**
+   - 在仓库根执行 `./scripts/bootstrap-android.sh`。它校验 submodule pin、用绝对 Node 调 npm、安装锁定依赖、重建根 `node_modules` 软链，并只更新 `local.properties` 的 `tipsy.node.executable`，保留 SDK 路径与本机 secret；最终 gate 会刻意取消环境变量，验证 Studio 实际读取的就是该 property。
+   - 之后直接从 Finder/Dock 打开原版 `/Applications/Android Studio.app` 即可；不再需要 `Android Studio (Tipsy).app`、LaunchAgent、`launchctl setenv` 或从终端启动 Studio。
+   - Node 安装位置变化后重跑 bootstrap 即可。若只想复验现有环境，执行 `./scripts/check-node-contract.sh`。
 
-   **第二层：node_modules 内的裸 `"node"` 调用点只能靠 PATH**
-   - `ExpoAutolinkingSettingsPlugin.getExpoGradlePluginsFile` 用裸 `"node"` 跑 `providers.exec`（SDK 54 实测），位于禁止修改的 `tipsy-app/node_modules`、无覆盖入口。第一层的显式路径**覆盖不到它**。
-   - 开发机：让 **launchd GUI 域**的 PATH 含 node 目录——Finder/Dock 启动的应用只继承 GUI 域环境，不读 `~/.zshrc`。手工 `launchctl setenv PATH` 重启即丢，须固化成 `RunAtLoad` 的 LaunchAgent。**改完必须完全退出并重启 Android Studio**：进程环境在启动时快照，已在跑的实例改不动。
-   - CI / 命令行：正常的 `$PATH` 即可（shell 环境本来就有 node），无需额外处理。
+   **回归门**
+   - `check-node-contract.sh` 构造一个刻意不含 `node` 的 PATH，强制 rerun 并执行 `projects`、RN/Expo 两套 package-list、Expo constants、RN codegen、Reanimated/Worklets preBuild。正常通过即证明这些活跃链路只使用绝对 Node。
+   - `.github/workflows/android-ci.yml` 在 lint/assemble 前运行同一脚本。新增或升级依赖若重新引入活跃的裸 `node`，PR 会在配置/生成阶段直接失败。
 
-   > **订正（2026-08-10 实测）**：本条原写「把解析出的 node 目录前置到 daemon PATH 即可兜住裸 `"node"` 的调用点」，**该做法无效**。用 `ProcessEnvironment.maybeSetEnvironmentVariable('PATH', ...)` patch 后，子进程确实继承了新 PATH（`sh -c 'command -v node'` 能找到），**但 Gradle 解析 program name 时不看它** —— 同一次构建内 `providers.exec { commandLine('node','--version') }` 仍抛 `Cannot run program "node": error=2`。`settings.gradle` 里那段代码还包在 `catch (Throwable ignored)` 中，失败时完全静默，因此长期未暴露。真正的修法是上面第二层。原结论中「必须早于首次 `providers.exec`」的时序约束也随之失去意义。
-   >
-   > **验证方式**（复现 GUI 环境，比开 Studio 快）：
-   > `env -i HOME=$HOME USER=$USER PATH="$(launchctl getenv PATH)" JAVA_HOME=<studio-jbr> ./gradlew --no-daemon projects`
-   > 要复现「GUI 域也没有 node」的最坏情形，把 `PATH` 换成 `/usr/bin:/bin:/usr/sbin:/sbin`。
-   >
-   > **那段无效代码已删除（2026-08-10）**，换成 `settings.gradle` 里的**前置检查**：
-   > 若当前进程 `$PATH` 里找不到可执行的 `node`，**在 1 秒内失败**并给出可操作步骤
-   > （launchctl 命令带展开后的完整值 + `--stop` + **完全退出 Studio**）。
-   >
-   > 为什么改成「提前失败」而不是继续找兜底：裸 `node` 的调用点在
-   > `tipsy-app/node_modules`（禁止修改）且无覆盖入口，**壳侧没有任何合法手段能修好它**。
-   > 留一段静默失败的 hack 只会让人误以为有兜底，从而看不懂为什么还报错 ——
-   > 失败点会漂移到某个 plugin 内部，报出无上下文的 `Cannot run program "node"`
-   > （本次就是这样重现的：Studio 进程 PATH 是 `/usr/bin:/bin:/usr/sbin:/sbin`）。
-   >
-   > ⚠️ **最容易忽略的一点**：`launchctl setenv` 只影响**此后新启动**的进程。
-   > 已在跑的 Studio 继承的是**它自己启动那一刻**的环境 —— 所以 Sync、
-   > Invalidate Caches、乃至 `./gradlew --stop` 都不够，**必须 ⌘Q 退出 Studio 再打开**。
-   > 判断依据：`ps eww <studio-pid> | tr ' ' '\n' | grep ^PATH=` 看进程**实际**的 PATH，
-   > 而不是看 `launchctl getenv PATH`（后者是「新进程会拿到什么」，两者可能不一致）。
+   > 历史说明：2026-08-10～14 的 GUI PATH、LaunchAgent 与包装 App 都是在「不能改 dependency 调用点」前提下的机器级绕行。`tipsy-app` 已有受版本控制的 patch-package 机制，因此该前提不成立；这些方式从 2026-08-21 起不再是项目方案。
 
 **其余 Gradle 决定**：
 - **Groovy DSL**，全仓不混 `.gradle.kts`。Expo SDK 54 / RN 0.81.4 的 settings/root/app 模板与文档都以 Groovy 为基线，`autolinking_implementation.gradle` 本身就是 Groovy 脚本。**当前脚手架是 `.kts`，需要改写**。
