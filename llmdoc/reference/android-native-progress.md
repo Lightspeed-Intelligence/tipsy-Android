@@ -76,7 +76,7 @@
 - **Tab3 创建入口已接通**（§2.40，2026-08-18，219 行）：`AppRoute.Create` 进白名单，Tab3 的 ➕ 从「只打一行日志」变成挂 `CreateSurface` 直达创建表单 —— **五个 Tab 全部可用**。壳只传 `createEnterSource` 一个 prop，**刻意不复刻** RN tabPress 那四个参数（Surface 自决落地页，§2.30 纪律）。⚠️ 真机抓到**类别性**缺陷并已修：`AppRoute.Create()` 无参 ⇒ 实例恒相等 ⇒ 去重不解除就「只能用一次」，ChatDetail 因每次带不同 characterId 而侥幸未暴露；后续每个无参路由都要配解除。✅ §2.41 已补微根/微栈/注册/bootstrap 机器断言；⚠️ §9.1 的 8 个设备/生命周期验收格仍全 `✎`。
 - **Screen P1 + P2 代码已实现**（§2.35 / §2.42）：P1 落 AB 端点分流、归因、首屏缓存与会话埋点；P2 让 `showcase` 首次接入 Media3、有界播放器池、±1 窗口、RN Android buffer、动态 50MB cache、三轴播放门与声音开关。PR #39 最终 head `13cc633` 的 G1 全绿；⚠️ feed 无 showcase，真实视频/cache 失败/API24–33 层序/audio focus 四项仍 NOT RUN，故**不是 production-ready**。
 - **Search P2 筛选器已实现**（§2.34，4 文件 723 行）：性别/排序/分级抽屉 + 二级标签栏，Search 达成完整对等。`SearchTagOrderTest` **逐条对拍 RN 的 144 行现成单测**。⚠️ 分级筛选的门是「非 GooglePlay && nsfw 开」，与 Settings 的 Limitless（只有 directApk）**不同轴** —— RuStore 在这里算可选。
-- **不存在 / 未验**：Screen P2 已落代码但四项核心验收未跑，next-item/fade/firstInteractive/P3 仍无；Sentry、Qt 实际上报、core/feature 模块均无；**G3 nightly 已建**（§2.54，首跑待验）。生产路由白名单 **14 类**（§2.53 后）：三纯原生 + 十一 Surface/带参目标（+RoleCard）。13 个业务 Surface：**9 启用**（ChatDetail/Create/Settings/EditProfile/Comments/Notification/GemsSubscription/UserCoins/RoleCard）+ **2 并入 Settings**（DeleteAccount/Widget，§2.53 判定，注册仅为 OTA 偏斜保留）+ 1 待评估（Onboarding，需新注册链路）+ Debug 不计。各 Surface 的真机格仍在累积清单。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1）与 **Follow 出口无 Surface 可用**。
+- **不存在 / 未验**：Screen P2 已落代码但四项核心验收未跑，next-item/fade/firstInteractive/P3 仍无；Sentry、Qt 实际上报、core/feature 模块均无；**G3 nightly 已建且首跑全绿**（§2.54）。生产路由白名单 **14 类**（§2.53 后）：三纯原生 + 十一 Surface/带参目标（+RoleCard）。13 个业务 Surface：**9 启用**（ChatDetail/Create/Settings/EditProfile/Comments/Notification/GemsSubscription/UserCoins/RoleCard）+ **2 并入 Settings**（DeleteAccount/Widget，§2.53 判定，注册仅为 OTA 偏斜保留）+ 1 待评估（Onboarding，需新注册链路）+ Debug 不计。各 Surface 的真机格仍在累积清单。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1）与 **Follow 出口无 Surface 可用**。
 
 ## 1. 波次状态
 
@@ -3890,8 +3890,10 @@ Macrobenchmark（要基准模块，单独一刀）、全链路 instrumentation
 不是冒烟）、低内存/GMS 真机（物理设备，属真机批次）。
 
 失败处置：nightly 红不阻塞 PR（阻塞对象是灰度候选），但要当天处理 ——
-它拦的类别 G1 全看不见。⚠️ **首次真实运行未发生**（schedule 明晨才跑，
-workflow_dispatch 可手动提前验）；三条 Gradle task 名已本机核实存在。
+它拦的类别 G1 全看不见。首跑已验：合入当天 workflow_dispatch 手动触发
+（run 32442144461），三 job 全绿 —— 三 flavor debug + googlePlayRelease
+（R8 全开）+ manifest grep 过，API 24/36 双档 instrumentation 过
+（`-PreactNativeArchitectures=x86_64` 的 ABI 覆盖在 CI 真实生效）。
 
 
 
