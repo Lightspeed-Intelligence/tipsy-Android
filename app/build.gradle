@@ -11,6 +11,11 @@ plugins {
 // RN Gradle plugin：由 settings 的 autolinking 引入，提供 react { } 扩展
 apply plugin: 'com.facebook.react'
 
+// 与根工程同一布局契约：第三方 RN 模块应读这两个公开
+// app.ext 路径，不应回退到内部的裸 `node require.resolve(...)`。
+ext.REACT_NATIVE_NODE_MODULES_DIR = rootProject.ext.REACT_NATIVE_NODE_MODULES_DIR
+ext.REACT_NATIVE_WORKLETS_NODE_MODULES_DIR = rootProject.ext.REACT_NATIVE_WORKLETS_NODE_MODULES_DIR
+
 // ── 风控密钥（X-Client-ID 的 AES-128 key）────────────────────────────
 //
 // 这**是真凭据**，所以不进 git（方案 §12.7：真凭据一律走 CI secret）。
@@ -38,6 +43,9 @@ react {
     root = file('../tipsy-app')
     reactNativeDir = file('../tipsy-app/node_modules/react-native')
     codegenDir = file('../tipsy-app/node_modules/@react-native/codegen')
+    // RN Gradle plugin 的 bundle/codegen/Hermes 任务默认同样是裸 "node"。
+    // 与 settings/Expo 共用本次 Gradle build 解析的唯一绝对路径。
+    nodeExecutableAndArgs = [gradle.ext.tipsyNodeExecutable]
     // Expo 工程不依赖 @react-native-community/cli，打包走 Expo CLI，
     // 否则 RN 的 cli.js 会提示缺 @react-native-community/cli 并退出 1
     // （对齐 CNG 参考工程：cliFile=@expo/cli + bundleCommand=export:embed）。
@@ -320,15 +328,14 @@ dependencies {
 // expo-updates（OTA）在 W0 不启用 —— 方案 §5.3 明确 W1~W3 只用 embedded bundle，
 // OTA 属 W4 且必须先定 channel/runtime/entry 三重隔离方案。
 //
-// 为什么是禁用任务而不是从 autolinking 排除：
-//   1. `expoAutolinking.exclude` 对 expo-updates 无效 —— 它经 useExpoModules()
-//      的 resolve 链接，而 AutolinkingCommandBuilder 把多值 --exclude 与
-//      --project-root 拼进同一 argv，variadic 参数会吞掉后续 flag（实测：
-//      --exclude 在 --project-root 之前时不生效）。
-//   2. 该插件的 create*UpdatesResources 任务把 projectRoot 按
+// 双保险：settings 的 exclude 负责不链接，任务 gate 防止依赖升级/补丁漂移时误启用。
+//   1. upstream 曾把多值 --exclude 拼成一个 argv，现由 tipsy-app 中版本化的
+//      expo-modules-autolinking patch 改为逐值重复 flag；patch-package 的版本绑定
+//      会在依赖升级时强制重新审计。
+//   2. 若未来仍意外链接，该插件的 create*UpdatesResources 任务把 projectRoot 按
 //      「Gradle root 的父目录」推导（假设 <rn-project>/android 布局），本仓会算到
 //      仓库父目录；而该 Property 在执行期已 final，配置期与 doFirst 都改不动。
-// 结论：W0 直接跳过这些任务。W4 接 OTA 时删除本段，并按 §5.3 处理 projectRoot
+// 结论：W0 保留任务级熔断。W4 接 OTA 时删除本段，并按 §5.3 处理 projectRoot
 // （可能需要向 upstream 提 issue 或改用 UpdatesController.overrideConfiguration）。
 tasks.matching { it.name ==~ /create.*UpdatesResources/ }.configureEach {
     enabled = false
