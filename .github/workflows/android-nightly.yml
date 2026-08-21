@@ -1,0 +1,238 @@
+# Android 壳的 G3 nightly（方案 §5.4）。
+#
+# G1（android-ci.yml）是 PR fast gate，刻意只跑 googlePlayDebug 一个 flavor、
+# 不跑 release、不跑设备 —— 本文件补上那些「PR 门不拦」的类别：
+#
+#   1. **三 flavor 全量 assemble**：flavor 专属问题（applicationId/渠道资源/
+#      buildConfigField）G1 只覆盖 googlePlay 一档。
+#   2. **release 打包**（googlePlay，未签名）：release 专属问题 —— W0 抓到的
+#      「autolinking 把 dev-launcher 的 PreviewActivity(exported=true) 合并进
+#      release manifest」就属此类，debug 构建永远不报。
+#   3. **release manifest 快照 diff**：exported 组件、权限、largeHeap ——
+#      每次新增 RN 依赖都可能静默改变 merged manifest（§2.2.2 教训）。
+#   4. **API 24 + API 36 emulator instrumentation**：设备矩阵的最低两档
+#      （minSdk 兼容 + target 行为）。现有 androidTest 三件：
+#      MmkvInteropTest（共享存储互操作）、LoginInsetTest（inset 回归）、
+#      ChatMapMeasurementTest（廊道测量契约）。
+#
+# ⚠️ 与方案 §5.4 G3 行的差距（刻意留给后续，不假装已覆盖）：
+#   - Macrobenchmark（startup / scroll / Surface 首帧）未建 —— 需要基准模块
+#     与专用 benchmark variant，单独一刀。
+#   - 「启动、tabs、Native↔RN、deep link、auth 切换」的全链路 instrumentation
+#     未写 —— 现有三个 androidTest 是留存的回归测试，不是全链路冒烟。
+#   - 低内存真机 / Google Play 服务真机是**物理设备**要求，CI 覆盖不了，
+#     属真机冒烟批次（进度文档累积清单）。
+#
+# 失败处置：nightly 红了不阻塞 PR 合并（阻塞对象是「灰度候选」，方案 §5.4），
+# 但要当天处理 —— 它拦的类别 G1 全都看不见，放着等于裸奔。
+name: Android Nightly (G3)
+
+on:
+  schedule:
+    # 北京时间每天 03:30（UTC 19:30）—— 避开工作时段与 update-llmdoc 的 UTC 21:00
+    - cron: '30 19 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: android-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  full-assemble:
+    name: 三 flavor 全量 + release 打包
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout（含私有子模块 tipsy-app）
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+          persist-credentials: false
+
+      - name: 拉取 tipsy-app 子模块
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PAT_TOKEN:-}" ]; then
+            echo "::error::缺少 PAT_TOKEN secret"; exit 1
+          fi
+          git submodule sync tipsy-app
+          git config submodule.tipsy-app.url \
+            "https://x-access-token:${PAT_TOKEN}@github.com/Lightspeed-Intelligence/tipsy-app.git"
+          git submodule update --init tipsy-app
+          EXPECTED=$(git rev-parse HEAD:tipsy-app)
+          ACTUAL=$(git -C tipsy-app rev-parse HEAD)
+          if [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "::error::子模块 SHA 与 pin 不一致"; exit 1
+          fi
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tipsy-app/package-lock.json
+
+      - name: 安装 RN 依赖
+        working-directory: tipsy-app
+        run: npm ci
+
+      - name: 建仓库根 node_modules 软链
+        run: |
+          ln -sfn tipsy-app/node_modules node_modules
+          test -e node_modules/expo/package.json
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 安装 NDK 与 CMake
+        run: |
+          yes | sdkmanager --install "ndk;27.1.12297006" "cmake;3.22.1" >/dev/null
+
+      - name: Setup Gradle（含依赖缓存）
+        uses: gradle/actions/setup-gradle@v4
+
+      # 三 flavor debug 全量：G1 只跑 googlePlay，flavor 专属问题在这里拦。
+      # 磁盘账：Linux runner 约 14GB 可用，debug 单 ABI（arm64）× 3 flavor 放得下；
+      # 若将来爆盘，按 flavor 拆 job 并各自 rm -rf build 中间产物
+      - name: Assemble 三 flavor debug
+        run: |
+          ./gradlew :app:assembleGooglePlayDebug :app:assembleDirectApkDebug \
+            :app:assembleRuStoreDebug --no-daemon --stacktrace
+
+      # release 打包（未签名，minify + shrink 全开）：R8/资源收缩/release
+      # manifest 的问题只有这条能暴露。只跑 googlePlay —— release 的三 flavor
+      # 差异仅 applicationId/API 地址（buildConfigField），R8 行为一致
+      - name: Assemble googlePlayRelease（未签名）
+        run: ./gradlew :app:assembleGooglePlayRelease --no-daemon --stacktrace
+
+      # release merged manifest 守门：exported 组件与敏感权限白名单。
+      # MergedManifestTest 的断言基于单测（G1 已跑），这里做的是**产物级** grep ——
+      # 双保险：单测断言可能因 assumeTrue 静默失效，产物 grep 不会
+      - name: release manifest 产物级检查
+        run: |
+          set -euo pipefail
+          MANIFEST=$(find app/build/intermediates/merged_manifests -path "*GooglePlayRelease*" -name AndroidManifest.xml | head -1)
+          if [ -z "$MANIFEST" ]; then
+            echo "::error::找不到 release merged manifest"; exit 1
+          fi
+          echo "manifest: $MANIFEST"
+          # 开发期组件不得进 release（W0 实测事故：dev-launcher 的 PreviewActivity）
+          if grep -E "PreviewActivity|DevLauncherActivity|DevMenuActivity" "$MANIFEST"; then
+            echo "::error::release manifest 含开发期组件 —— autolinking 把 dev 依赖带进 release 了"
+            exit 1
+          fi
+          # largeHeap 必须在（Screen/ExoPlayer OOM 缓解，withAndroidLargeHeap 的手工移植）
+          if ! grep -q 'android:largeHeap="true"' "$MANIFEST"; then
+            echo "::error::release manifest 缺 largeHeap —— Screen 波次的 OOM 缓解丢了"
+            exit 1
+          fi
+
+      - name: 上传 release manifest 快照
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest
+          path: app/build/intermediates/merged_manifests/**/AndroidManifest.xml
+          if-no-files-found: warn
+
+  instrumentation:
+    name: emulator instrumentation（API ${{ matrix.api-level }}）
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        # 设备矩阵最低两档（方案 §5.4）：API 24 = minSdk 兼容；API 36 = target 行为
+        api-level: [24, 36]
+
+    steps:
+      - name: Checkout（含私有子模块 tipsy-app）
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+          persist-credentials: false
+
+      - name: 拉取 tipsy-app 子模块
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          set -euo pipefail
+          git submodule sync tipsy-app
+          git config submodule.tipsy-app.url \
+            "https://x-access-token:${PAT_TOKEN}@github.com/Lightspeed-Intelligence/tipsy-app.git"
+          git submodule update --init tipsy-app
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tipsy-app/package-lock.json
+
+      - name: 安装 RN 依赖
+        working-directory: tipsy-app
+        run: npm ci
+
+      - name: 建仓库根 node_modules 软链
+        run: |
+          ln -sfn tipsy-app/node_modules node_modules
+          test -e node_modules/expo/package.json
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: 安装 NDK 与 CMake
+        run: |
+          yes | sdkmanager --install "ndk;27.1.12297006" "cmake;3.22.1" >/dev/null
+
+      - name: Setup Gradle（含依赖缓存）
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: 启用 KVM（硬件加速，官方推荐配方）
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # ⚠️ Linux runner 模拟器是 x86_64，而 gradle.properties 的
+      # reactNativeArchitectures 只列 armeabi-v7a/arm64-v8a —— 缺 x86_64 时
+      # RN 核心库（libhermes/libreactnative/libappmodules）不出该 ABI，
+      # 装模拟器直接起不来。用 RN **官方属性**覆盖（-P 优先于
+      # gradle.properties），实测四个核心库齐全；第三方预编译 AAR 本就
+      # 全 ABI 打包不受影响。用 directApk：行为最接近现网 APK 直发
+      - name: instrumentation（directApkDebug）
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          script: |
+            ./gradlew :app:connectedDirectApkDebugAndroidTest -PreactNativeArchitectures=x86_64 --no-daemon --stacktrace
+
+      - name: 上传 instrumentation 报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: androidtest-api${{ matrix.api-level }}
+          path: app/build/reports/androidTests/
+          if-no-files-found: warn
