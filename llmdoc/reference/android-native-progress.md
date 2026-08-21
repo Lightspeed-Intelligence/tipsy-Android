@@ -76,7 +76,7 @@
 - **Tab3 创建入口已接通**（§2.40，2026-08-18，219 行）：`AppRoute.Create` 进白名单，Tab3 的 ➕ 从「只打一行日志」变成挂 `CreateSurface` 直达创建表单 —— **五个 Tab 全部可用**。壳只传 `createEnterSource` 一个 prop，**刻意不复刻** RN tabPress 那四个参数（Surface 自决落地页，§2.30 纪律）。⚠️ 真机抓到**类别性**缺陷并已修：`AppRoute.Create()` 无参 ⇒ 实例恒相等 ⇒ 去重不解除就「只能用一次」，ChatDetail 因每次带不同 characterId 而侥幸未暴露；后续每个无参路由都要配解除。✅ §2.41 已补微根/微栈/注册/bootstrap 机器断言；⚠️ §9.1 的 8 个设备/生命周期验收格仍全 `✎`。
 - **Screen P1 + P2 代码已实现**（§2.35 / §2.42）：P1 落 AB 端点分流、归因、首屏缓存与会话埋点；P2 让 `showcase` 首次接入 Media3、有界播放器池、±1 窗口、RN Android buffer、动态 50MB cache、三轴播放门与声音开关。PR #39 最终 head `13cc633` 的 G1 全绿；⚠️ feed 无 showcase，真实视频/cache 失败/API24–33 层序/audio focus 四项仍 NOT RUN，故**不是 production-ready**。
 - **Search P2 筛选器已实现**（§2.34，4 文件 723 行）：性别/排序/分级抽屉 + 二级标签栏，Search 达成完整对等。`SearchTagOrderTest` **逐条对拍 RN 的 144 行现成单测**。⚠️ 分级筛选的门是「非 GooglePlay && nsfw 开」，与 Settings 的 Limitless（只有 directApk）**不同轴** —— RuStore 在这里算可选。
-- **不存在 / 未验**：Screen P2 已落代码但四项核心验收未跑，next-item/fade/firstInteractive/P3 仍无；Sentry、Qt 实际上报、core/feature 模块、**G3 nightly** 均无。生产路由白名单 **14 类**（§2.53 后）：三纯原生 + 十一 Surface/带参目标（+RoleCard）。13 个业务 Surface：**9 启用**（ChatDetail/Create/Settings/EditProfile/Comments/Notification/GemsSubscription/UserCoins/RoleCard）+ **2 并入 Settings**（DeleteAccount/Widget，§2.53 判定，注册仅为 OTA 偏斜保留）+ 1 待评估（Onboarding，需新注册链路）+ Debug 不计。各 Surface 的真机格仍在累积清单。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1）与 **Follow 出口无 Surface 可用**。
+- **不存在 / 未验**：Screen P2 已落代码但四项核心验收未跑，next-item/fade/firstInteractive/P3 仍无；Sentry、Qt 实际上报、core/feature 模块均无；**G3 nightly 已建**（§2.54，首跑待验）。生产路由白名单 **14 类**（§2.53 后）：三纯原生 + 十一 Surface/带参目标（+RoleCard）。13 个业务 Surface：**9 启用**（ChatDetail/Create/Settings/EditProfile/Comments/Notification/GemsSubscription/UserCoins/RoleCard）+ **2 并入 Settings**（DeleteAccount/Widget，§2.53 判定，注册仅为 OTA 偏斜保留）+ 1 待评估（Onboarding，需新注册链路）+ Debug 不计。各 Surface 的真机格仍在累积清单。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1）与 **Follow 出口无 Surface 可用**。
 
 ## 1. 波次状态
 
@@ -3852,6 +3852,47 @@ route/Contract，13 个业务 Surface 的「全启用」判据修正为 **11 个
 （`notifyOnboardingCompleted` 桥方法已注册但壳侧 provider 仍
 `notImplemented(W4)`），且只对**全新注册**触发 —— 模拟器可造新号但
 注册链路依赖邮箱验证码。留待与真机冒烟同批处理。
+
+### 2.54 G3 nightly 已建（2026-08-21）
+
+`.github/workflows/android-nightly.yml`（北京时间每天 03:30 +
+workflow_dispatch），补 G1 刻意不拦的四类：
+
+1. **三 flavor 全量 debug assemble** —— flavor 专属问题（applicationId/
+   渠道资源/buildConfigField）G1 只覆盖 googlePlay 一档。
+2. **googlePlayRelease 打包**（未签名，minify+shrink 全开）—— release
+   专属问题（W0 的 dev-launcher PreviewActivity 事故属此类）。release
+   三 flavor 差异仅 buildConfigField，R8 行为一致，故只打一个。
+3. **release manifest 产物级 grep**：开发期组件黑名单 + largeHeap 在位。
+   与 MergedManifestTest 双保险 —— 单测断言可因 assumeTrue 静默失效，
+   产物 grep 不会。
+4. **API 24 + API 36 emulator instrumentation**（directApkDebug，
+   现有三个 androidTest：MmkvInterop/LoginInset/ChatMapMeasurement）。
+
+#### 一处实测 ABI 坑（改 CI 前先在本机抓到）
+
+Linux runner 模拟器是 x86_64，而 `gradle.properties` 的
+`reactNativeArchitectures` 只列 arm 双 ABI —— 缺 x86_64 时 RN 核心库
+（libhermes/libreactnative/libappmodules/libhermestooling）**不出该 ABI**，
+装模拟器直接起不来。解法：nightly 用 RN 官方属性
+`-PreactNativeArchitectures=x86_64` 覆盖（-P 优先于 gradle.properties，
+本机实测四核心库齐全）。⚠️ 顺带核实一条**文档偏差**：debug 的
+`abiFilters 'arm64-v8a'`（§2.2.2「debug 只出 arm64」）实际**从未单 ABI
+生效** —— 第三方预编译 AAR（Agora/NitroIap 等）的 armeabi-v7a 一直在
+APK 里；`ndk.abiFilters` 只控制本仓编译的 native 库，不过滤 AAR 自带的。
+包体积影响早已存在，非本刀引入，修复属独立优化（packagingOptions
+exclude），先记账不顺手改。
+
+#### 与方案 §5.4 G3 行的差距（刻意留白，不假装覆盖）
+
+Macrobenchmark（要基准模块，单独一刀）、全链路 instrumentation
+（启动/tabs/deep link/auth 切换 —— 现有三个 androidTest 是留存回归，
+不是冒烟）、低内存/GMS 真机（物理设备，属真机批次）。
+
+失败处置：nightly 红不阻塞 PR（阻塞对象是灰度候选），但要当天处理 ——
+它拦的类别 G1 全看不见。⚠️ **首次真实运行未发生**（schedule 明晨才跑，
+workflow_dispatch 可手动提前验）；三条 Gradle task 名已本机核实存在。
+
 
 
 
