@@ -3,6 +3,7 @@ package ai.lightspeed.tipsy.shell.pages.chatlist
 import ai.lightspeed.tipsy.shell.BuildConfig
 import ai.lightspeed.tipsy.shell.TipsyApplication
 import ai.lightspeed.tipsy.shell.auth.AuthStateHub
+import ai.lightspeed.tipsy.shell.bridge.RefreshSignalHub
 import ai.lightspeed.tipsy.shell.i18n.L10n
 import ai.lightspeed.tipsy.shell.i18n.rememberCurrentLanguage
 import ai.lightspeed.tipsy.shell.pages.home.HomeText
@@ -89,6 +90,13 @@ class ChatListFragment : Fragment() {
         }
     }
 
+    /**
+     * 桥 `notifyChattedListChanged` → 即时静默重拉（建群/群成员变更）。
+     * 进程级 hub，onDestroy 必须反注册（同 authObserver 的泄漏约束）。
+     */
+    private val chattedListChangedListener =
+        RefreshSignalHub.Listener { viewModel.onChattedListChangedSignal() }
+
     private var hasReportedFirstExposure = false
 
     override fun onCreateView(
@@ -98,6 +106,7 @@ class ChatListFragment : Fragment() {
     ): View {
         val app = requireActivity().application as TipsyApplication
         app.authStateHub.addObserver(authObserver)
+        app.chattedListChangedHub.addListener(chattedListChangedListener)
 
         val composeView = ComposeView(requireContext()).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
@@ -192,8 +201,9 @@ class ChatListFragment : Fragment() {
     }
 
     override fun onDestroy() {
-        (requireActivity().application as TipsyApplication)
-            .authStateHub.removeObserver(authObserver)
+        val app = requireActivity().application as TipsyApplication
+        app.chattedListChangedHub.removeListener(chattedListChangedListener)
+        app.authStateHub.removeObserver(authObserver)
         super.onDestroy()
     }
 

@@ -323,6 +323,45 @@ class ChatListViewModelTest {
         assertEquals(1, pageTypeWrites.size)
     }
 
+    // ── 桥信号：notifyChattedListChanged ─────────────────────
+
+    /** 建群信号 = 即时静默重拉第 0 页（iOS silentRefreshFirstPage 同义）。 */
+    @Test
+    fun `chattedList 信号后静默重拉且列表收敛到新数据`() = runTest {
+        val api = RecordingApi()
+        api.pages = listOf(pageOf(thread("a")))
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        assertEquals(listOf("a"), vm.state.value.threads.map { it.itemId })
+
+        // 服务端多了新建的群会话 g
+        api.pages = listOf(pageOf(thread("g"), thread("a")))
+        vm.onChattedListChangedSignal()
+        // 静默：不转圈（isRefreshing 是下拉刷新的 UI 位）
+        assertTrue(!vm.state.value.isRefreshing)
+        advanceUntilIdle()
+
+        assertEquals(listOf(0, 0), api.listCalls)
+        assertEquals(listOf("g", "a"), vm.state.value.threads.map { it.itemId })
+    }
+
+    /** 未拉过首屏 / 未登录时信号 no-op —— 首次进入本来就拉全新数据。 */
+    @Test
+    fun `chattedList 信号在首屏前与未登录时不发请求`() = runTest {
+        val api = RecordingApi()
+        api.pages = listOf(pageOf(thread("a")))
+        val notLoaded = viewModel(api)
+        notLoaded.onChattedListChangedSignal()
+        advanceUntilIdle()
+        assertTrue(api.listCalls.isEmpty())
+
+        val guest = viewModel(api, userId = null)
+        guest.onChattedListChangedSignal()
+        advanceUntilIdle()
+        assertTrue(api.listCalls.isEmpty())
+    }
+
     // ── fixtures ────────────────────────────────────────────
 
     private lateinit var generations: Generations

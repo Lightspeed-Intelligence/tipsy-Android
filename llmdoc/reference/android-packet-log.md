@@ -4018,3 +4018,56 @@ assembleGooglePlayDebug、release manifest、app 单测、桥单测与 skipped=0
 模拟器/真机仍需覆盖：API 28 权限允许/拒绝、API 29+ MediaStore、
 六渠道已安装/未安装/取消、外跳往返 Dialog 与播放恢复、池满封面降级、
 真实 showcase 与 animated image MIME。
+
+### 2.58 W4：跨 Surface 刷新信号双桥补齐（2026-08-22）
+
+补掉 §2.56 记的桥欠账并顺带查出同族第二个：`notifyChattedListChanged`
+（建群/群成员变更 → 原生 ChatList）与 **`notifyCreatedCharactersChanged`**
+（CreateSurface 创建/编辑成功 → 原生 Profile 创作列表，`profileDetail.tsx:1574`，
+iOS 先行）。两者此前都在 `?.()` 方法级守卫下**静默降级** —— 建群后列表不出现、
+创建角色后创作 tab 不更新，不报错不崩溃。
+
+#### 落地（RN 仓 `9d9240143`，pin bump；壳侧 2 新文件 + 9 修改）
+
+- **桥（三层同构 §2.51）**：契约 `SurfaceProfileContract` 增
+  `notifyCreatedCharactersChanged`、新增 `SurfaceChatListContract`；两个
+  `AsyncFunction` 经 `onMain` 注册（Android 注册方法数 **20 → 22**）；
+  `MainThreadDispatchTest` 覆盖表 12 → **14**。两方法刻意无参 ——
+  信号不携带账号，壳从 token 真值自守边界（同 `notifyProfileChanged` 的理由）。
+- **provider 守卫按 iOS 对齐且刻意不对称**：createdCharacters 有账号才转发
+  （iOS `guard userId`，登出瞬间迟到的成功回执不触发刷新）；chattedList
+  无守卫直接广播（iOS NotificationCenter 同义，边界由消费方守）。
+- **壳侧新增 `RefreshSignalHub`**（进程级无 payload fan-out）：**即时通知而非
+  markStale/onAppear** —— Tab 切换是 show/hide（无生命周期）、Surface 是
+  sibling（关闭不重走 onStart），「标脏等下次 appear」在建群返回路径上
+  永远不触发。信号丢失是刻意语义：目标 Fragment 未挂载 = 无人订阅 = 丢弃，
+  首次挂载本来就拉全新数据。有账号语义的接力仍走 `ProfileRefreshHub`，
+  两个 hub 不合并。
+- **ChatList 消费**：`onChattedListChangedSignal` = iOS `silentRefreshFirstPage`
+  对应物 —— 不置 `isRefreshing`（不转圈）、保留旧列表、打断旧链从第 0 页重拉
+  （复用删除/置顶对账的 `reloadFromServer` 模式；已翻出的后续页刻意丢弃，
+  三端刷新形态各异但都收敛服务端真值，壳不为此引入第三种形态）。
+  首屏前 / 未登录 no-op。
+- **Profile 消费**：`onCreatedCharactersChangedSignal` 按可见性分流 ——
+  创作 tab 选中 → 就地 `reloadCreatedTab`（含首屏失败停在错误态的场景：
+  创建成功是比手动重试更强的重试理由）；其它 tab 选中 → **不打断其在飞链**，
+  把创作 tab 作废成未加载态、切回时 `loadFirstPageIfNeeded` 重拉
+  （invalidate 语义 = RN mutate；iOS 是 markPending + 可见时消费，壳的
+  单在飞链下这是等价形态）；未加载过 → no-op。
+- **静态双向锁**：新增 `BridgeSignalContractTest`（2 条，§2.51 纪律）——
+  RN 调用点消失或桥注册名漂移都会红。**已反向验证**：临时改掉注册名 →
+  1 条红；还原 → 绿。
+
+#### 验证
+
+- 本机：`:tipsy-auth:testDebugUnitTest` **15 条** skipped=0（报告 mtime 核对）；
+  壳侧四套件 `ShellAuthProviderTest` 36 + `ChatListViewModelTest` 16 +
+  `ProfileViewModelTest` 58 + `BridgeSignalContractTest` 2，failures=0 /
+  skipped=0（新增 3+2+3 条：provider 双守卫与转发、ChatList 静默重拉/双 no-op、
+  Profile 三分流）；`lintDirectApkDebug` 无新增（baseline 仍 5 条）；
+  `assembleGooglePlayDebug` 过。完整门禁交 PR G1。
+- **未动** manifest / flavor；RN 侧改动已推 `feat/android-native`
+  （`1f018aee6` → `9d9240143`，仅 tipsy-auth 模块 6 文件），壳只 bump 指针。
+- **设备验证 NOT RUN**（按累积纪律记入真机清单）：真机建群 → 返回 ChatList
+  列表即时出现新群；创建角色 → Profile 创作 tab 出现新卡（创作 tab 停留与
+  切走两条路径）；RN runtime 未启动时信号自然不存在（无需验证路径）。

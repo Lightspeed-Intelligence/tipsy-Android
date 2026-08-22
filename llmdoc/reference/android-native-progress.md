@@ -1,10 +1,10 @@
 # Tipsy Android 原生化迁移：现状（唯一状态真值）
 
-> 更新：2026-08-22（Screen 原生分享已并入 main —— PR #60，G1 全绿；§2.57）
+> 更新：2026-08-22（跨 Surface 刷新信号双桥补齐 —— §2.58，pin `9d9240143`）
 >
 > **状态只有一份**：速览见 §0，波次见 §1，横切能力见 §3，Surface 验收见 §4，
 > 未决问题见 §5。逐刀记录（§2.x）在
-> [android-packet-log.md](android-packet-log.md)（最新 §2.57），本文 §2 只留指针。
+> [android-packet-log.md](android-packet-log.md)（最新 §2.58），本文 §2 只留指针。
 > 本头部不再复制状态快照 —— 此前头部与 §0/§1 三重记录同一状态，
 > 已实际发生漂移（ChatMap/分享/EditProfile 三处头部滞后于正文），2026-08-22 收敛。
 >
@@ -50,7 +50,7 @@
 
 ## 2. 逐刀工程记录（已拆分至日志文件）
 
-§2 的逐刀记录（§2.1–§2.57：每刀的实测约束、踩坑与验证证据）已于 2026-08-22
+§2 的逐刀记录（§2.1 起：每刀的实测约束、踩坑与验证证据）已于 2026-08-22
 整体拆至 [android-packet-log.md](android-packet-log.md)，**小节编号原文保留**。
 
 - **本文其余章节引用的 §2.x，一律指日志文件的同号小节**；代码注释 / 技能 /
@@ -64,7 +64,7 @@
 | 能力 | 状态 | 落地处 |
 | --- | --- | --- |
 | Auth 所有权 | 🟡 **closeout 已实现且 CI 已验**（§2.22），完整用户会话待 merge-head CI | `shell/auth/` + `shell/user/`（§2.13 / §2.18 / §2.46）。single-flight/generation/原子条件清理已收口；Application 统一发布 Native store 与 RN `user-storage`，登录要求完整快照成功后才广播；历史 token 迁移未完（P2） |
-| `tipsy-auth` Android 实现 | 🟡 **桥已注册、能力 PARTIAL** | `modules/tipsy-auth/android/` + `ShellAuthProvider`；主线程约束已落地。§2.36 回填了 `requestLogin` / `openUserProfile` 系三个**标签过期的桩**（debug 会抛）—— ⚠️ **能力落地后必须回来改 override**，且现由 5 条单测钉死；§2.43 新增可选零参 `notifyProfileChanged`，Android 注册方法数 **20**（§2.51 后），旧 iOS/旧壳无需同步实现；仍未实现的有 `notifyOnboardingCompleted`（W4）与 **`notifyChattedListChanged`（§2.56 合流带入，iOS 壳先行；RN 建群/群成员变更后原生 ChatList 不刷新，静默降级，待补）** |
+| `tipsy-auth` Android 实现 | 🟡 **桥已注册、能力 PARTIAL** | `modules/tipsy-auth/android/` + `ShellAuthProvider`；主线程约束已落地。§2.36 回填了 `requestLogin` / `openUserProfile` 系三个**标签过期的桩**（debug 会抛）—— ⚠️ **能力落地后必须回来改 override**，且现由 5 条单测钉死；§2.43 新增可选零参 `notifyProfileChanged`；**§2.58 补齐 `notifyChattedListChanged` + `notifyCreatedCharactersChanged`**（建群/创建角色后的原生列表刷新，双向静态锁 `BridgeSignalContractTest`），Android 注册方法数 **22**；仍未实现的桩只剩 `notifyOnboardingCompleted`（W4，Onboarding 评估时回填） |
 | 网络层 | 🟡 **closeout 已实现且 CI 已验**（§2.22） | `shell/network/`（§2.14 / §2.18）。过期 token 发送守门与双入口共享 gate 已实现。**未引 Retrofit** |
 | i18n | 🟢 **已完成**（含语言设置页 + 信封回写） | `shell/i18n/`（§2.16）。壳是唯一 writer；key-based 查表 + 两条 normalize 规则 + Compose 自订阅组件。**原生语言设置页已实现**（§2.33）—— RN 的 `SettingsSurface` 白名单刻意不含 `Language`，iOS 侧也是原生 `LanguageViewController`。写入走 `POST /user/set_language` **+ 回写 `user-storage` 信封**（§2.38，2026-08-18）—— ⚠️ 原记「不经 Zustand 信封」，**那正是 §2.37 语言倒灌的根因**，已修：`AccountLanguageWriter` merge + `notifyUserStoreChanged`。§9.1「语言切换」列已复跑 **PASS**（§2.39，⚠️ 模拟器）；真机仍在累积清单 |
 | Router / 深链 | 🟡 parser/router 机制已落地，**生产白名单 15 类**（§2.55 后） | `shell/router/`（真值 = `AppRouter.kt` 的 `ProductionRoutePolicy`）；3 纯原生（`Search` §2.31 / `UserProfile` §2.32 / `Settings` §2.33）+ 12 个 Surface/带参目标（`ChatDetail`/`MiniPhoneChat`/`CharacterDetail`、`Create`/`EditCharacter`、`SettingsSubScreen`、`EditProfile`、`Comments`、`Letter`、`GemsPurchase`/`UserCoins`、`RoleCard`，§2.36–§2.55）。带参路由用谓词解除去重；无参 data-object 路由必须在退栈后按类型解除，否则只能打开一次。深链 parser 有了但 push/深链入口本身仍未接（Push 🔴） |

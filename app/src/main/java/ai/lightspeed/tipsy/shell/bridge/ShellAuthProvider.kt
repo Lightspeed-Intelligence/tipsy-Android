@@ -86,6 +86,20 @@ class ShellAuthProvider(
      * userId 由本 provider 从 [tokenStore] 解析，桥方法不接收 JS userId。
      */
     private val onProfileRefreshRequested: (ownerUserId: String) -> Unit = {},
+    /**
+     * CreateSurface 创建/编辑角色成功后的创作列表失效信号
+     * （`create/profileDetail.tsx:1574`，iOS 先行）。无账号 payload ——
+     * 本 provider 确认当前确有登录账号后才转发（iOS `guard userId` 同义），
+     * 消费方（Profile）自守 tab 边界与登出复位。
+     */
+    private val onCreatedCharactersChanged: () -> Unit = {},
+    /**
+     * RN Surface 建群/群成员变更后的会话列表刷新信号
+     * （`ChatGroupSettingsPanel.tsx:118`、`chat-group-member-picker.tsx:600`）。
+     * iOS 同义实现是无守卫即时广播（NotificationCenter → silentRefreshFirstPage），
+     * 这里同样不加账号守卫 —— 消费方的 hasLoadedOnce/登出复位已构成边界。
+     */
+    private val onChattedListChanged: () -> Unit = {},
     /** token 真值（W1-P1）。 */
     private val tokenStore: ShellTokenStore,
     /**
@@ -382,6 +396,28 @@ class ShellAuthProvider(
             return
         }
         onProfileRefreshRequested(ownerUserId)
+    }
+
+    /**
+     * 创作列表失效信号。守卫语义对齐 iOS（`guard let userId … else return`）：
+     * 登出瞬间迟到的成功回执不该触发任何刷新（消费方随后也会被登出复位兜底）。
+     */
+    override fun notifyCreatedCharactersChanged() {
+        val ownerUserId = tokenStore.currentUserId()
+        if (ownerUserId.isNullOrBlank()) {
+            logger.log(
+                Logger.Level.WARN,
+                "收到 createdCharactersChanged 但当前无有效 Native userId，已忽略",
+            )
+            return
+        }
+        onCreatedCharactersChanged()
+    }
+
+    // ── SurfaceChatListContract ─────────────────────────────────
+
+    override fun notifyChattedListChanged() {
+        onChattedListChanged()
     }
 
     // ── 未实现项的统一出口 ────────────────────────────────────────

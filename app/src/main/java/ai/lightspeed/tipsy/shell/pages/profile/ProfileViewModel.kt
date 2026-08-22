@@ -113,6 +113,26 @@ class ProfileViewModel(
     }
 
     /**
+     * 桥 `notifyCreatedCharactersChanged` 的创作列表失效信号（CreateSurface
+     * 创建/编辑成功，`profileDetail.tsx:1574`；账号存在性已在 provider 守卫）。
+     *
+     * iOS 是「markPending + 可见时消费」；壳的单在飞链对应物按可见性分流：
+     * - 创作 tab 正被选中 → 就地重拉（Surface 是 sibling，关闭时底下的
+     *   Fragment 不重走 onStart —— 不立即拉就没有下一个触发点）。首屏失败
+     *   停在错误态时同样重拉，创建成功是比「手动重试」更强的重试理由；
+     * - 其它 tab 选中 → **不打断它的在飞链**，把创作 tab 作废成未加载态，
+     *   切回时 `loadFirstPageIfNeeded` 重拉（invalidate 语义，同 RN mutate）；
+     * - 其它 tab 选中且创作 tab 从未加载 → no-op（首次进入本来就拉全新数据）。
+     */
+    fun onCreatedCharactersChangedSignal() {
+        if (_state.value.selectedTab == ProfileTab.CREATED) {
+            reloadCreatedTab()
+        } else if (_state.value.pagingOf(ProfileTab.CREATED).hasLoadedOnce) {
+            updatePaging(ProfileTab.CREATED) { ProfileTabPaging() }
+        }
+    }
+
+    /**
      * 切 tab。
      *
      * 新 tab 没数据才拉首屏；已有数据直接复用（RN 每个 tab 是独立

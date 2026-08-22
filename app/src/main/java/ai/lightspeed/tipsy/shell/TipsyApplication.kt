@@ -18,6 +18,7 @@ import ai.lightspeed.tipsy.shell.auth.LegacyMmkvStore
 import ai.lightspeed.tipsy.shell.auth.MmkvTokenPersistence
 import ai.lightspeed.tipsy.shell.auth.RefreshTokenApi
 import ai.lightspeed.tipsy.shell.auth.ShellTokenStore
+import ai.lightspeed.tipsy.shell.bridge.RefreshSignalHub
 import ai.lightspeed.tipsy.shell.bridge.ShellAuthProvider
 import ai.lightspeed.tipsy.shell.i18n.AccountLanguageReader
 import ai.lightspeed.tipsy.shell.i18n.AssetLocaleLoader
@@ -129,6 +130,19 @@ class TipsyApplication : Application(), ReactApplication {
      * 注册为 [authStateHub] observer，登录/登出/换号会同步清掉旧账号 pending。
      */
     val profileRefreshHub = ProfileRefreshHub()
+
+    /**
+     * RN Surface 建群/群成员变更 → 原生 ChatList 即时刷新
+     * （桥 `notifyChattedListChanged`，iOS 的 NotificationCenter 同义物）。
+     * 无账号语义的一次性信号，边界见 [RefreshSignalHub] 类注释。
+     */
+    val chattedListChangedHub = RefreshSignalHub()
+
+    /**
+     * CreateSurface 创建/编辑角色成功 → 原生 Profile 创作列表刷新
+     * （桥 `notifyCreatedCharactersChanged`，账号存在性已在 provider 守卫）。
+     */
+    val createdCharactersChangedHub = RefreshSignalHub()
 
     /** token 真值。W2 原生 Login 页登录成功后调 [ShellTokenStore.onLoggedIn]。 */
     lateinit var tokenStore: ShellTokenStore
@@ -394,6 +408,8 @@ class TipsyApplication : Application(), ReactApplication {
             onProfileRefreshRequested = { ownerUserId ->
                 profileRefreshHub.notifyProfileChanged(ownerUserId)
             },
+            onCreatedCharactersChanged = { createdCharactersChangedHub.notifySignal() },
+            onChattedListChanged = { chattedListChangedHub.notifySignal() },
             tokenStore = tokenStore,
             apiErrorGate = apiErrorGate,
             scope = appScope,
