@@ -953,16 +953,18 @@ git -C tipsy-app diff --name-status <wave-source-sha>..<candidate-sha> -- \
 
 `index.surfaces.js` 注册 13 个 component，但**其中 `DebugSurface` 永远只用于 debug/CI 回归**——不进 production route、不计入 production smoke、不进商店功能清单。**CI 需断言 `DebugSurface` 不出现在 release route 表里。**
 
-其余 12 个业务 Surface 按依赖与风险递增启用（每个独立填 §9.1 矩阵一行）：
+其余 12 个业务 Surface 按依赖与风险递增启用（每个独立填 §9.1 矩阵一行）。
+**各 Surface 的启用状态与矩阵进度不写在本文** —— 见进度文档 §4（唯一状态真值）：
 
 | 批次 | Surface | 时机 | 备注 |
 | --- | --- | --- | --- |
 | 0 | `DebugSurface` | W0 | 管线 gate，保持常绿；零业务依赖，用于二分「挂载层 vs 业务 import 链」 |
-| 1 | `ChatDetailSurface` | W1 | **第一个真实业务 Surface**，也是最重的一个（SSE、WebView DOM、媒体、深微栈）。它过了说明宿主可用。✅ **已启用**（进度文档 §2.36，2026-08-17）—— 微根 18 项机器断言 + 桥桩回填 + 判定素材透传；§9.1 真机十项待冒烟 |
+| 1 | `ChatDetailSurface` | W1 | **第一个真实业务 Surface**，也是最重的一个（SSE、WebView DOM、媒体、深微栈）。它过了说明宿主可用 |
 | 2 | `CreateSurface` | W2 | 五 Tab 的 Create 伪 Tab 落点；编辑走原始 JSON 透传（§8.1 Profile 行） |
 | 3 | `CommentsSurface` / `SettingsSurface` / `EditProfileSurface` | W3 | 分别由 Screen/Settings 列表/Profile 入口触达 |
 | 4 | `NotificationSurface` / `GemsSubscriptionSurface` / `UserCoinsSurface` | W4 | 涉及支付与站内信，需渠道分流验证 |
-| 5 | `OnboardingSurface` / `RoleCardSurface` / `WidgetSurface` / `DeleteAccountSurface` | W4 | Onboarding 需 auth 完成回执且只执行一次 |
+| 5 | `OnboardingSurface` / `RoleCardSurface` | W4 | Onboarding 需 auth 完成回执且只执行一次 |
+| — | ~~`WidgetSurface` / `DeleteAccountSurface`~~ | 不单独启用 | **已并入 `SettingsSurface` 的 Widget/Delete 屏**（RN 侧 2026-07 收编，进度文档 §2.53 判定）；`index.surfaces.js` 的独立注册仅为 OTA 版本偏斜保留，Android 不建独立 route/Contract |
 
 **未过 §9.1 矩阵的 Surface 不接生产入口。** 路由到未启用的 Surface 必须给出明确错误或安全 fallback，**不做 silent no-op**。
 
@@ -1016,25 +1018,16 @@ git -C tipsy-app diff --name-status <wave-source-sha>..<candidate-sha> -- \
 | DebugSurface | W0 | N/A | N/A | — | ✎ | ✎ | ✎ | ✎ | ✎ | W4 |
 | ChatDetailSurface | ✅ W1 | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | W4 |
 | CreateSurface | W2 | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | W4 |
-| EditProfileSurface | W3（仅预接，生产关闭） | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | W4 |
-| 其余 9 个 | W4 | — | — | — | — | — | — | — | — | — |
+| EditProfileSurface | W3 预接 / W4 验收 | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | ✎ | W4 |
+| 其余（批次 3–5 + Onboarding） | W4 | — | — | — | — | — | — | — | — | — |
 
 未填满的行**不得**标 production-ready。
 
-> **`ChatDetailSurface` 的填表进度不写在这里** —— 见进度文档 §2.36（实现、
-> 微根机器断言、桥桩回填）与 §2.37（§9.1 冒烟的逐项结果）。本文只定规则：
-> 路由已进生产白名单，但**这一行填满前不得标 production-ready**，
-> 且模拟器证据不算 —— 见进度文档 §2.5。
->
-> **`CreateSurface` 同样已放开路由但未填表**（进度文档 §2.40，2026-08-18，
-> Tab3 的 ➕）。§2.41 已补微根、root stack、10 个实际微栈目标、注册名与
-> `hydrateTags` 前置的机器断言，关闭此前“只有人工比对”的静态 gate 欠账。
-> ⚠️ 这仍不等于 §9.1：设备生命周期矩阵未填满前不得标 production-ready。
->
-> **`EditProfileSurface` 已按 W3 预接静态契约/测试源码、账号隔离与 Profile 刷新接力**
-> （进度文档 §2.43），但相关测试并未执行、生产 policy 仍关闭，
-> 该行 8 个设备/生命周期验收格仍全 `✎`。这解决“W3 还是 W4”
-> 的批次歧义，不改变“未填满矩阵不得启用”的门槛。
+> **各行的填表进度不写在这里** —— 状态唯一真值是进度文档 §4（含批次 3–5 的
+> 模拟器矩阵结果与每个 Surface 的专项缺口）。本文只定规则：
+> 1. 路由进生产白名单 ≠ production-ready —— **这一行填满前不得标**；
+> 2. **模拟器证据不算真机结论**（进度文档 §2.5）；
+> 3. 静态 gate / 机器断言不替代设备生命周期证据。
 
 ### 9.2 页面/横切能力对等（十类证据）
 
@@ -1114,6 +1107,9 @@ android.state.{loading,empty,error}
 ---
 
 ## 12. 开放问题（需决策才能推进）
+
+> 本节是开放问题的**原始登记**，按成文时（2026-08-08）保留，不随状态更新。
+> **各项的关闭 / 推迟 / 决策结果见进度文档 §5**（如 §12.4 已由源码证据关闭）。
 
 1. **Qt lifecycle listener 归属**：`QtPackage.createReactActivityLifecycleListeners()` 在 Activity onCreate 就 `preInit`。壳保留它（承认 analytics 有两个初始化点）还是从 autolinking 排除 `modules/qt` 由壳自管？——影响 §4.2 与埋点对拍。
 2. **OTA channel 命名与 flavor 维度**：三个 distribution × preview/production = 6 条 channel，还是用 `overrideConfiguration` 运行时注入单套 channel 名？后者更省，但需验证 EAS 侧的投递语义。

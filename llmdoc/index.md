@@ -22,13 +22,15 @@ RN 侧文档见 `tipsy-app/llmdoc/`；iOS 壳的同构实践见 `../Tipsy-iOS/ll
 | 文档 | 描述 |
 | --- | --- |
 | [android-native-migration-plan.md](architecture/android-native-migration-plan.md) | **迁移技术方案**：架构决策（5 个 ADR）、Android 四条硬约束、跨界契约、构建/渠道/OTA、波次计划、风险登记 |
+| [android-w1-plan.md](architecture/android-w1-plan.md) | W1 的**执行级细化**（任务依赖链、每步的实测约束）；状态一律看进度文档 |
 | [android-w1-closeout-ready.md](architecture/android-w1-closeout-ready.md) | W1 auth/network correctness 工作包的边界、验收与停止条件（**已完成并经 CI 验证**，见进度文档 §2.22） |
 
 ## 参考
 
 | 文档 | 描述 |
 | --- | --- |
-| [android-native-progress.md](reference/android-native-progress.md) | **状态权威**：波次进度、工程实况、与目标基线的偏差、未决问题 |
+| [android-native-progress.md](reference/android-native-progress.md) | **状态权威**：波次进度、横切能力、Surface 验收、未决问题。~250 行，可整读 |
+| [android-packet-log.md](reference/android-packet-log.md) | **逐刀工程日志**（append-only）：每个工作包的实测记录、踩坑与验证证据。小节编号 §2.x 延续自进度文档拆分前，历史引用「进度文档 §2.x」在此找同号小节 |
 | [android-bitmap-assets.md](reference/android-bitmap-assets.md) | 从 RN 移植的位图为何放 `drawable-nodpi`，以及 `IconMissingDensityFolder` 为何显式 disable |
 
 ---

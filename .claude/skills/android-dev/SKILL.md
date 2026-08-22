@@ -16,13 +16,14 @@ description: >
 
 ## 动手前：读哪段文档
 
-`llmdoc/` 是唯一依据（`index.md` 是入口）。三份文档职责不同，别混：
+`llmdoc/` 是唯一依据（`index.md` 是入口）。四份文档职责不同，别混：
 
 | 文档 | 是什么 |
 | --- | --- |
 | `architecture/android-native-migration-plan.md` | 决策与约束（ADR、硬约束、契约、验收矩阵）。**§8 是主体** |
 | `architecture/android-w1-plan.md` | W1 的执行级细化（每步的实测约束） |
-| `reference/android-native-progress.md` | **状态唯一真值**（波次进度、实测值、未决问题） |
+| `reference/android-native-progress.md` | **状态唯一真值**（波次进度、横切能力、Surface 验收、未决问题；~250 行可整读） |
+| `reference/android-packet-log.md` | **逐刀工程日志**（append-only）。「进度文档 §2.x」这类历史引用一律在此找同号小节；查某刀为什么这么做 / 踩了什么坑也看这里 |
 
 按要做的事挑着读，不要通读：
 
@@ -163,7 +164,7 @@ build type 加 `buildConfigField` 时别漏它，漏了编译不过。
 
 | 症状 | 真实原因 |
 | --- | --- |
-| `Process 'command 'node'' finished with non-zero exit value 1`（无其他信息） | RN/Expo 多处假设 `Gradle root = <rn-project>/android`，本仓布局让它们落到错误目录，真实 stderr 被 Gradle 吞掉。排查：在报错任务的 workingDir 手工复现那条 node 命令。已知五处见进度文档 §2.2.2 |
+| `Process 'command 'node'' finished with non-zero exit value 1`（无其他信息） | RN/Expo 多处假设 `Gradle root = <rn-project>/android`，本仓布局让它们落到错误目录，真实 stderr 被 Gradle 吞掉。排查：在报错任务的 workingDir 手工复现那条 node 命令。已知五处见工程日志 §2.2.2 |
 | 改了 JS 却不生效，且不报错 | Metro 端口没经 `resValue` 注入。RN 从 `R.integer.react_native_dev_server_port` 读，debug source set 的同名 integer **不会胜出**（库资源）。本工程用 8083 |
 | 挂 Surface 崩在 `onResume`，`ClassCastException` | `MainActivity` 没实现 `DefaultHardwareBackBtnHandler`。`reactDelegate.onHostResume()` 内部强转宿主 Activity。只有真机挂载才暴露 |
 | 点了没反应（Surface 内交互失效） | 微根缺项。见下面「启用 Surface」一节——这类**不报错不崩溃**，只能靠用户反馈发现 |
@@ -235,7 +236,7 @@ hydrate、Sentry runtime、Native navigation adapter、首帧/reappeared/close �
 | --- | --- | --- |
 | Hilt / Koin | 手写 `AppContainer`（ADR-005） | 不把 DI 引入与 brownfield 首次接入混在一起——两个都失败时无法二分。边界稳定后再单独评估 |
 | Navigation Compose | `AppCompatActivity` + FragmentManager（ADR-002） | FragmentManager 同时解决返回栈、saved state、predictive back、进程重建；`ReactFragment` 也要求 Fragment 宿主。纯 Compose Navigation 需单独 ADR + POC |
-| Retrofit | 手写 `ApiClient` + OkHttp | **已决定不引**（进度文档 §2.14）。三种鉴权模式 + 统一 envelope + tolerant scalar 都要自己控 |
+| Retrofit | 手写 `ApiClient` + OkHttp | **已决定不引**（工程日志 §2.14）。三种鉴权模式 + 统一 envelope + tolerant scalar 都要自己控 |
 | 新起 `OkHttpClient` | 注入 `TipsyApplication.sharedOkHttpClient()`（经反射取 RN 的） | 各起一套会让连接池 / DNS 缓存 / TLS session 变成两份，「同一后端两条链路」难查（RN 侧能连、原生页超时）。**共享是优化不是正确性前提**——取不到就退化成两个 client，别改成抛异常 |
 | DataStore / Room | MMKV（与 RN 同实例同目录） | 壳要**直读 RN 写的** MMKV 文件，这是 token 迁移主路径 |
 | `.gradle.kts` | Groovy DSL（ADR-004） | 全仓不混。Expo SDK 54 / RN 0.81.4 的模板与 `autolinking_implementation.gradle` 都是 Groovy |
