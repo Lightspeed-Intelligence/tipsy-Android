@@ -94,6 +94,8 @@ fun ScreenScreen(
     onStartChat: () -> Unit,
     onCharacterClick: (ScreenFeedItem) -> Unit,
     onCreatorClick: (ScreenFeedItem) -> Unit,
+    /** 携带点击时的卡片快照，避免 pager settledPage 迟到造成分享错卡。 */
+    onShareClick: (ScreenFeedItem) -> Unit,
     onCardEvent: (ScreenCardEvent) -> Unit,
     statusBarPadding: Dp,
     bottomPadding: Dp,
@@ -132,6 +134,7 @@ fun ScreenScreen(
                 onStartChat = onStartChat,
                 onCharacterClick = onCharacterClick,
                 onCreatorClick = onCreatorClick,
+                onShareClick = onShareClick,
                 onCardEvent = onCardEvent,
                 statusBarPadding = statusBarPadding,
                 bottomPadding = bottomPadding,
@@ -154,6 +157,7 @@ private fun ScreenPager(
     onStartChat: () -> Unit,
     onCharacterClick: (ScreenFeedItem) -> Unit,
     onCreatorClick: (ScreenFeedItem) -> Unit,
+    onShareClick: (ScreenFeedItem) -> Unit,
     onCardEvent: (ScreenCardEvent) -> Unit,
     statusBarPadding: Dp,
     bottomPadding: Dp,
@@ -201,6 +205,7 @@ private fun ScreenPager(
                     onStartChat = onStartChat,
                     onCharacterClick = onCharacterClick,
                     onCreatorClick = onCreatorClick,
+                    onShareClick = onShareClick,
                     onTaglineExpand = { taglinePreviewText = it },
                     onCardEvent = onCardEvent,
                     statusBarPadding = statusBarPadding,
@@ -279,6 +284,7 @@ private fun ScreenCard(
     onStartChat: () -> Unit,
     onCharacterClick: (ScreenFeedItem) -> Unit,
     onCreatorClick: (ScreenFeedItem) -> Unit,
+    onShareClick: (ScreenFeedItem) -> Unit,
     onTaglineExpand: (String) -> Unit,
     onCardEvent: (ScreenCardEvent) -> Unit,
     statusBarPadding: Dp,
@@ -400,6 +406,7 @@ private fun ScreenCard(
                 likeState = likeState,
                 onCharacterClick = onCharacterClick,
                 onCreatorClick = onCreatorClick,
+                onShareClick = onShareClick,
                 onCardEvent = onCardEvent,
                 modifier = Modifier.padding(horizontal = CONTENT_HORIZONTAL_PADDING.dp),
             )
@@ -426,6 +433,7 @@ private fun ScreenMetaBar(
     likeState: ScreenLikeState,
     onCharacterClick: (ScreenFeedItem) -> Unit,
     onCreatorClick: (ScreenFeedItem) -> Unit,
+    onShareClick: (ScreenFeedItem) -> Unit,
     onCardEvent: (ScreenCardEvent) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -477,7 +485,12 @@ private fun ScreenMetaBar(
             }
         }
         Spacer(Modifier.size(META_BAR_GAP.dp))
-        StatsRow(item = item, likeState = likeState, onCardEvent = onCardEvent)
+        StatsRow(
+            item = item,
+            likeState = likeState,
+            onShareClick = onShareClick,
+            onCardEvent = onCardEvent,
+        )
     }
 }
 
@@ -493,12 +506,14 @@ private fun ScreenMetaBar(
  * 点赞状态与计数来自 [ScreenLikeState]：初始 echo、乐观更新与失败回滚都在
  * ViewModel，UI 只负责选中图与一次弹跳动画。
  *
- * 分享同样只报埋点：`MediaShareModal` 426 行 + `react-native-share` 原生库属后续包。
+ * 分享走独立回调并携带这张卡的快照；不能在 Fragment 里重读 currentItem，
+ * 否则翻页动画与 settledPage 更新之间点击会把相邻卡分享出去。
  */
 @Composable
 private fun StatsRow(
     item: ScreenFeedItem,
     likeState: ScreenLikeState,
+    onShareClick: (ScreenFeedItem) -> Unit,
     onCardEvent: (ScreenCardEvent) -> Unit,
 ) {
     val likeScale = remember(item.characterId) { Animatable(1f) }
@@ -536,7 +551,7 @@ private fun StatsRow(
             iconRes = R.drawable.ic_screen_share,
             label = rememberLocalizedString("Share"),
             testTag = "screen_card_share",
-            onClick = { onCardEvent(ScreenCardEvent.SHARE_CLICK) },
+            onClick = { onShareClick(item) },
         )
     }
 }

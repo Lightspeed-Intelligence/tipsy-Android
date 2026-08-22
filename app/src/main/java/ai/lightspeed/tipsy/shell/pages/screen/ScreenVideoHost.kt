@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -82,6 +83,10 @@ fun ScreenVideoHost(
      */
     onFirstFrame: () -> Unit,
     modifier: Modifier = Modifier,
+    /** 分享预览循环；feed 默认 false，维持播完回封面的业务状态机。 */
+    loop: Boolean = false,
+    /** feed 用 ZOOM 铺满，分享预览传 FIT 保持完整媒体。 */
+    resizeMode: Int = AspectRatioFrameLayout.RESIZE_MODE_ZOOM,
 ) {
     if (url.isNullOrBlank()) return
 
@@ -95,7 +100,7 @@ fun ScreenVideoHost(
     // 都会 recycle + 重新 borrow**，把一个正在用、缓冲已就绪的播放器扔掉重来
     // （邻页 ↔ 当前页来回切时尤其明显：起播延迟、白白丢缓冲、还多几次
     // 解码器创建）。而真正要修的只是「借不到之后没有第二次机会」这一种情况。
-    var retryTick by remember(url) { mutableStateOf(0) }
+    var retryTick by remember(url) { mutableIntStateOf(0) }
     LaunchedEffect(url, isCurrent) {
         // 成为当前页且当前手上没有播放器 → 触发一次重试。
         // 此时别的卡多半已经归还了实例（池满是瞬时状态）
@@ -117,14 +122,14 @@ fun ScreenVideoHost(
     if (current == null) return
 
     // 播完 / 首帧：listener 的生命周期跟着 player 实例，换实例要重挂
-    DisposableEffect(current) {
+    DisposableEffect(current, loop) {
         val listener = object : Player.Listener {
             override fun onRenderedFirstFrame() {
                 onFirstFrame()
             }
 
             override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_ENDED) {
+                if (!loop && state == Player.STATE_ENDED) {
                     // 对齐 RN handleVideoEnd：暂停 + 回首帧 + 上层切 tagline
                     current.pause()
                     current.seekTo(0)
@@ -146,6 +151,10 @@ fun ScreenVideoHost(
         }
         current.addListener(listener)
         onDispose { current.removeListener(listener) }
+    }
+
+    LaunchedEffect(current, loop) {
+        current.repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
     }
 
     // ## 播放门：两种「不播」语义不同，别合并
@@ -211,13 +220,16 @@ fun ScreenVideoHost(
                 useController = false
                 // RN 是 resizeMode="cover" —— Media3 的对等是 ZOOM（裁切铺满），
                 // 不是 FIT（会留黑边）。全屏 feed 留黑边等于视觉不对等。
-                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                this.resizeMode = resizeMode
                 // 封面由上层的 Coil 图承担，PlayerView 自己不要画背景色，
                 // 否则首帧前会盖住封面变成黑屏 —— 正是缩略图时序要防的那个黑帧。
                 setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
             }
         },
-        update = { view -> view.player = current },
+        update = { view ->
+            view.resizeMode = resizeMode
+            view.player = current
+        },
         onRelease = { view -> view.player = null },
     )
 }

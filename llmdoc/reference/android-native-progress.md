@@ -38,7 +38,8 @@
 > 全部有真实页面**；`showcase` 已接 Media3、有界池、±1 窗口、RN Android buffer、
 > 动态 50MB cache、三轴播放门与声音开关。⚠️ 真实视频、cache 失败、API24–33
 > 层序、audio focus 四项仍 NOT RUN，**不得标 production-ready**；next-item / fade /
-> firstInteractive 与 P3 二期项仍未做。
+> firstInteractive 与 P3 其余二期项仍未做。Screen 原生分享已在工作区实现
+> （§2.57），Direct APK Debug Kotlin 编译与 lint 已过，但单测/设备验收尚未运行。
 > **Tab3 创建入口已接 CreateSurface**（§2.40，2026-08-18）：`AppRoute.Create`
 > 进白名单，**五个 Tab 全部可用**；模拟器三轮开关 + 连点幂等已验。
 > ⚠️ 真机实测出一个**类别性**缺陷并已修：无参路由（实例恒相等）若不解除
@@ -64,7 +65,7 @@
 
 - **波次进度**：W0 完成；**W1 完成**（契约层已在 CI 组合验证（§2.22）；**P9 已完成**（§2.36）；§12 关闭链记为已接受偏差）；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 进行中**：Profile 主体完成（§2.25–§2.29）；ChatList P1 已随 PR #25 并入 main（§2.30）；**Search P1 主链路已实现并完成 directApk 冒烟**（§2.31）；**P2 筛选器已实现**（§2.34，Search 完整对等）；**EditProfile 已完成静态预接/账号隔离/刷新接力**（§2.43），但 production policy 仍关闭；**P7 完成 = 头像框 + 渠道图标**（§2.44，PR #41 + 收尾 PR #43，含 AuthMode 契约修正与失败保留语义）；**P5 卡片 ⋮ 菜单完成**（§2.45，PR #46：编辑原始 JSON 透传 `CreateSurface` 编辑态、删除/置顶非乐观 + 重拉对账；**owner 模拟器冒烟目测 PASS**，2026-08-19）；**ChatList P2 ChatMap 已生产接线**（§2.47，2026-08-20：接手 #42 draft 收尾 —— 纵向滚动/连续楼层/卡片点击/四词条 + bump pin，模拟器全链路实测）—— **W3 业务面全部落地**，剩 EditProfile §9.1 设备矩阵与累积真机冒烟。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + **`user/`** + **`pages/login/`、`pages/home/`、`pages/profile/`、`pages/chatlist/`、`pages/search/`、`pages/screen/`**；EditProfile 刷新接力落在 `pages/profile/ProfileRefreshHub` 与 `tipsy-auth.notifyProfileChanged`。
-- **submodule**：pin **`86191c090`**（§2.56 的 release/1.4.6 合流 merge commit，含另一路并行推进的 `c7477d632` Gradle 去 node PATH 依赖 patch；前一 pin `f4fe474d2` 是 §2.51 的桥三件套 openComments/openChatDetail/openFeedback + 测试修复）。⚠️ `da4f65a` 与 PR #34 的三处壳改动**必须同时存在**：指针回退则 exclude 仍失效，而 styles/lifecycle 两处已让构建变绿 —— 会得到「构建通过但图片仍坏」的假绿。
+- **submodule**：pin **`1f018aee6`**（以 §2.56 的 release/1.4.6 合流 merge commit `86191c090` 为基线，§2.57 增补 Screen 原生分享所需的 5 个 shell locale keys；该基线含另一路并行推进的 `c7477d632` Gradle 去 node PATH 依赖 patch）。⚠️ `da4f65a` 与 PR #34 的三处壳改动**必须同时存在**：指针回退则 exclude 仍失效，而 styles/lifecycle 两处已让构建变绿 —— 会得到「构建通过但图片仍坏」的假绿。
 - **已验证**：main 上 PR #25 的 G1 Fast Gate 全绿。W3 Search P1 提交前快照的本机证据：`lintDirectApkDebug` 无新增（baseline 5 条）、`assembleGooglePlayDebug`/`assembleDirectApkDebug` 通过、**DirectApk app 单测 695 条，failures=0 / skipped=0**、`:tipsy-auth` 15 条全绿；directApk 真机主链路冒烟 PASS（§2.31）。提交前审查再新增 13 条、扩展 2 条回归测试并修正并发/auth/Router/点击归因/分页去重行为，最终源码预计 708 条；**最终 head 未在本机重跑 Gradle，交 G1 验证**。
 - **他人主页已实现**（§2.32，2026-08-14）：6 文件 1,469 行，`AppRoute.UserProfile` 进白名单 —— **搜索 → 创作者 → 他人主页是壳的第一条端到端可用路径**。审计推翻了「复用自己视角」的前提（七处偏差）：只有 **1 个 tab**（RN 注释说两个，代码是一个）、数据源另有四条、`size` **200 且不翻页**、`/user/get/public` 走 `axiosAuth` 会对游客弹登录页、`/plot/list/creator` **现网从未被调用**、关注按钮在 `ProfileHeader.tsx` 而非 `user-profile.tsx`。真机冒烟 **NOT RUN**。
 - **Settings 列表 + 语言页已实现**（§2.33，8 文件 1,501 行）：补上了真实功能缺失 —— 此前**壳内没有任何入口能改语言**。审计订正三处：语言页**要原生实现**（RN 与 iOS 双证据）、`supportedLanguages` 壳内**恒为空**必须自己拉、Limitless 开关是 `nsfw` 的**唯一写方**且仅 directApk 可见。渠道 gating 收在 `SettingsRow` 并对三渠道各有单测。7 个 Surface 子屏（`AppRoute.SettingsSubScreen`）仍被明确拒绝。真机冒烟 **NOT RUN**。
@@ -75,6 +76,7 @@
 - **✅ 卡片点击已解锁**（§2.36，2026-08-17）：`ChatDetail` / `MiniPhoneChat` 进白名单，Home/ChatList/Search/Screen 四个页面的卡片点击**第一次有下一屏**。Profile 的 `EditProfileSurface` 已完成静态预接（§2.43），但因 §9.1 全 NOT RUN 仍由 policy 明确拒绝；其余 Gems/UserCoins/RoleCard/Follow 与 Settings 7 子屏仍点不动。§12 实例关闭链**记为已接受偏差**（单层容器弹不错；根治要改 RN 侧 9 个调用点 + 双壳回归）。
 - **Tab3 创建入口已接通**（§2.40，2026-08-18，219 行）：`AppRoute.Create` 进白名单，Tab3 的 ➕ 从「只打一行日志」变成挂 `CreateSurface` 直达创建表单 —— **五个 Tab 全部可用**。壳只传 `createEnterSource` 一个 prop，**刻意不复刻** RN tabPress 那四个参数（Surface 自决落地页，§2.30 纪律）。⚠️ 真机抓到**类别性**缺陷并已修：`AppRoute.Create()` 无参 ⇒ 实例恒相等 ⇒ 去重不解除就「只能用一次」，ChatDetail 因每次带不同 characterId 而侥幸未暴露；后续每个无参路由都要配解除。✅ §2.41 已补微根/微栈/注册/bootstrap 机器断言；⚠️ §9.1 的 8 个设备/生命周期验收格仍全 `✎`。
 - **Screen P1 + P2 代码已实现**（§2.35 / §2.42）：P1 落 AB 端点分流、归因、首屏缓存与会话埋点；P2 让 `showcase` 首次接入 Media3、有界播放器池、±1 窗口、RN Android buffer、动态 50MB cache、三轴播放门与声音开关。PR #39 最终 head `13cc633` 的 G1 全绿；⚠️ feed 无 showcase，真实视频/cache 失败/API24–33 层序/audio focus 四项仍 NOT RUN，故**不是 production-ready**。
+- **Screen 原生分享代码已实现，待验证**（§2.57，2026-08-21）：按 RN Android 产品语义 + iOS 原生职责边界落同页全屏 Dialog、即时审核、相册保存、Copy/Discord/Instagram/TikTok/X/Facebook、最近使用排序与可靠推荐 share outbox。Reel 路径暂沿用 RN 的 character-backed id，但明确保持 `videoId=null`，不伪造视频 id 调分享计数接口。`git diff --check`、26 语言导出、`compileDirectApkDebugKotlin` 与 `lintDirectApkDebug` 通过；单测、模拟器/真机和社交 App 矩阵 **NOT RUN**。
 - **Search P2 筛选器已实现**（§2.34，4 文件 723 行）：性别/排序/分级抽屉 + 二级标签栏，Search 达成完整对等。`SearchTagOrderTest` **逐条对拍 RN 的 144 行现成单测**。⚠️ 分级筛选的门是「非 GooglePlay && nsfw 开」，与 Settings 的 Limitless（只有 directApk）**不同轴** —— RuStore 在这里算可选。
 - **不存在 / 未验**：Screen P2 已落代码但四项核心验收未跑，next-item/fade/firstInteractive/P3 仍无（卡片四类交互已对齐，§2.55）；Sentry、Qt 实际上报、core/feature 模块均无；**G3 nightly 已建且首跑全绿**（§2.54）。生产路由白名单 **15 类**（§2.55 后）：三纯原生 + 十二 Surface/带参目标（+RoleCard、+CharacterDetail）。13 个业务 Surface：**9 启用**（ChatDetail/Create/Settings/EditProfile/Comments/Notification/GemsSubscription/UserCoins/RoleCard）+ **2 并入 Settings**（DeleteAccount/Widget，§2.53 判定，注册仅为 OTA 偏斜保留）+ 1 待评估（Onboarding，需新注册链路）+ Debug 不计。各 Surface 的真机格仍在累积清单。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1）与 **Follow 出口无 Surface 可用**。
 
@@ -86,7 +88,7 @@
 | W1 | 平台契约 + auth + ChatDetailSurface gate | 基建 | 🟢 **完成**：契约层已收口且 CI 已验；**P9 已完成**（§2.36，白名单放开 + 桥桩回填）；§12 关闭链记为**已接受偏差**（owner 2026-08-17）。**冒烟部分兑现**（§2.37 + §2.39）：§9.1 **7 过 / 3 未跑**，业务分流项未验。语言那项的壳缺陷已修（§2.38）且**复跑 PASS（模拟器）**（§2.39） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #16/#17/#33 已并） |
 | W2 | Bootstrap + 五 Tab shell + **Login** + **Home** | 约 10k 行 RN | 🟡 **主体已落地**：Login 邮箱链路已验、五 Tab + Home 首屏、筛选抽屉 + 冷启动种子均已并入 main（§2.20 / §2.23 / §2.24）。剩 banner / 彩蛋 / mp4 封面（banner 与彩蛋倾向留 RN Surface，方案 §8.1） | `95760a6622424bc9be238e7790fdbf38fe7c7fb2` | —（PR #19 / #20 已并） |
 | W3 | **Profile** + **ChatList** + **Search** + Settings 列表/语言 | 约 19k 行 RN（最大） | 🟡 **业务面全部落地**：**Profile 全部批次完成**（P1–P7，§2.25–§2.29、§2.44、§2.45）；ChatList P1 + **P2 ChatMap**（§2.47）、Search P1/P2、他人主页、Settings 列表/语言均已落；**EditProfile 已完成静态预接、账号隔离与 Profile 刷新接力**（§2.43），会话/Surface 稳定性收口见 §2.46，但生产 policy 仍关闭。剩 EditProfile §9.1 设备矩阵与累积真机冒烟 | `93c8647f3`（§2.47 bump，含 §2.46 的 `5ba22c8bb`） | —（PR #21–#30、#41、#43、#44、#46 已并；ChatMap PR #42 已脱 draft 待并；#45 是 #46 的前身，因叠栈 base 删除被自动关闭） |
-| W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | 🟡 **进行中**：Screen P1 数据链（§2.35）与 P2 Media3 有界播放机制（§2.42，PR #39 / `6084df0`）已实现；P2 仍有真实视频/cache 失败/API24–33 层序/audio focus 四项 NOT RUN，故不 production-ready。Tab3 已接 `CreateSurface`（§2.40/§2.41）；剩 Screen next-item/fade/firstInteractive/P3、10 个未启用业务 Surface（含 W3 已预接但未放行的 EditProfile）、系统能力、OTA | `da4f65a04f50bc098c2df3bd9f8fbcc13018f7a5` | `6084df0d401e610d6fbcf26ce88c2bc494025927` |
+| W4 | **Screen/Media3** + 12 个 Surface + 系统能力 + OTA | 约 5.3k 行 RN + 系统 | 🟡 **进行中**：Screen P1 数据链（§2.35）、P2 Media3 有界播放机制（§2.42，PR #39 / `6084df0`）已实现；原生分享已在工作区接线、待验证（§2.57）。P2 仍有真实视频/cache 失败/API24–33 层序/audio focus 四项 NOT RUN，故不 production-ready。Tab3 已接 `CreateSurface`（§2.40/§2.41）；剩 Screen next-item/fade/firstInteractive/P3 其余项、10 个未启用业务 Surface（含 W3 已预接但未放行的 EditProfile）、系统能力、OTA | `da4f65a04f50bc098c2df3bd9f8fbcc13018f7a5` | `6084df0d401e610d6fbcf26ce88c2bc494025927` |
 | W5 | 对等 / 性能 / 三渠道发布切换 | 发布 | ⬜ 阻塞于 W4 | — | — |
 
 **W0+W1 时间盒**：这两波不产出用户可见价值，目标是"够用就往下走"。若超过总工期 1/4,停下复审是否过度设计（方案 §8.5）。
@@ -2487,7 +2489,7 @@ ExoPlayerImplInternal.shouldContinueLoading`，多个 ExoPlayer 并存时
   同时压在一个包里。
 - **P2**：Media3 + 有界播放器池 + ±1 窗口 + buffer 三件套。
 - **P3**：二期项（动图 WebP 动画、fade 转场预载、点赞增强、分享）——
-  方案已标「iOS 至今仍在二期清单」。
+  其中分享已于 §2.57 拆成独立迁移包实现；其余仍在二期清单。
 
 #### 两份 RN fixture 抓到我自己两个设计缺陷
 
@@ -3923,7 +3925,8 @@ Screen 卡片从「只能看」到四类交互可用：
   googlePlay 渠道打码 —— 卡片与预览必须复用同一结果，否则展开后重新露出
   原始占位符。
 
-分享本次只对齐视觉与埋点；`MediaShareModal` 仍属后续独立迁移包。
+分享在本刀只对齐视觉与卡片埋点；完整 `MediaShareModal` 已由后续 §2.57
+独立迁移包接入。
 §2.42 的 P3 状态机欠账（自动 tagline 轮播等）**未因本刀闭合**；四项
 🔴 NOT RUN（真实 showcase 视频等）也**维持原状** —— Screen P2 仍不得标
 production-ready。
@@ -4013,6 +4016,82 @@ pin bump 后壳单测**初跑 7 条失败,全部来自 Surface 静态 gate** —
   `:tipsy-auth` 15 条全绿、`lintDirectApkDebug` 过。G1 复验以 CI 为准。
 - RN 侧：全仓 tsc 通过；壳相关单测（EditProfile 协调器/通知、tracking core、
   authPageExposure）51 条全绿。
+### 2.57 W4 Screen 原生分享（2026-08-21，工作区实现，待验证）
+
+本包采用「**RN Android 定产品行为、iOS 定原生职责/lifecycle、Android 复用现有
+边界**」：不建 Share Surface、不改 Router/AppRoute、不复制 RN 页面状态；分享是
+`ScreenFragment` 同一 Compose 树上的全屏 Dialog，打开时不改变 `isCovered`、
+不结束 Screen session，底层视频继续播放。真正跳到外部 App 后走既有
+ProcessLifecycle 播放门暂停，回来后 Dialog 保持打开。
+
+#### 数据与动作契约
+
+- 分享点击从 `StatsRow` 一路携带实际 `ScreenFeedItem`，不在 Fragment 重读
+  `currentItem`，避免 pager `settledPage` 迟到导致分享相邻卡；卡片 click 埋点也按
+  这份冻结快照算 `card_id/card_type`。
+- Reel URL 逐字保持 RN 形状：
+  `/reel/{reelRouteId}?from_share=true&v=...&p=...&n=...`。当前 Screen adapter 与 RN
+  一样把 `character_id` 用作路径 id，但领域模型拆成 `characterId/reelRouteId/videoId`；
+  feed 没有真实 video-service id，故 `videoId` **保持 null**，本包明确不调用
+  `/video-service/video/share`，避免把 character id 写进错误计数。
+- 打开即 `POST /share/moderation`：成功只有 `data.ok=true` 放行；业务错误保留并读取
+  envelope `data.ok`；HTTP/鉴权/网络/畸形响应按 RN fail-open。审核中点击只提示，
+  不自动续接；明确拒绝显示敏感内容提示。该页面级请求单次总时限 15 秒，关闭或重开
+  弹层会向下 `Call.cancel()`，不能在共享 client 的无限 timeout 上累积僵死 IO。
+- 顺序固定 `Copy → Discord → Instagram → TikTok → X → Facebook`；外部渠道最近
+  点击前置，且**在审核/保存/启动闸门前**持久化，所以失败或取消也会改变排序。
+  Copy 不保存媒体，且对齐 RN，在外部渠道保存媒体期间仍可独立复制并 commit；
+  五个外部渠道彼此互斥，先写系统相册，成功后才 commit + 拉起。
+- Android 10+ 用 `MediaStore + IS_PENDING`；Native 只在 API 28 及以下请求
+  `WRITE_EXTERNAL_STORAGE` 后重试同一不可变内容快照。Manifest 的 maxSdk 保留为
+  29，兼容共享 RN Surface 里 expo-media-library 的 Android 10 权限分支，不能因
+  Native 已走 scoped storage 而全局压成 28。CDN 下载复用进程 OkHttp
+  连接池，但在线路最终出口移除 token/Authorization/Cookie/X-Auth-Token；图片按
+  URL 后缀（无后缀再看 Content-Type）保留 jpg/jpeg/png/gif/webp。响应同时校验
+  MIME，图片/视频分别设 32 MiB/256 MiB 上限，Content-Length 早拒绝且实际流逐块
+  计数；超限、空流或跨媒体响应会回滚 pending/partial 文件，不污染公共相册。CDN
+  client 覆盖 RN 共享 client 的无限 timeout（15s connect / 30s read-write / 5min call）、
+  禁用共享 CookieJar，弹层 Job 取消会直连 `Call.cancel()` 关闭 stalled body 并回滚。
+  API 24-28 发布前以 `createNewFile` 原子预留唯一目标，碰名自动加 suffix；rename 只
+  替换本次拥有的 reservation，不能覆盖或在回滚时误删历史相册文件。
+- 每次弹层有独立 session id，关闭或重新打开会取消旧保存 Job；即使底层取消迟到，
+  旧 session 也不能向新弹层注入提示、推荐反馈或外跳。
+- Discord/TikTok 确认复制成功后才提示并 commit；Instagram 用 sharesheet scheme；
+  X/Facebook 在官方包已安装时先 targeted `ACTION_SEND`，启动失败才走
+  `twitter://` / `fb://` → Web；官方包未安装时对齐 react-native-share 12.2.5，
+  直接走官方 Web。targeted 文案保持 RN 的 `message + " " + url`。渠道 commit
+  发生在外部 App 打开前，用户随后取消仍计入。
+
+#### UI、播放器与推荐反馈
+
+- `TipsyShareSheet` 对齐 RN 0.85 遮罩、三色渐变、横向按钮、关闭/Back 行为与
+  bottom inset；显式清 Compose Dialog 自带 `FLAG_DIM_BEHIND`，避免双重压暗；审核
+  拒绝、相册/外链失败复用既有红色 fail 图标，对齐 RN error toast，普通提示不带图。
+- 预览按 `MediaPreview` 的 32/90/24dp 留白、窗口高 60%、最大宽 300dp、contain；
+  视频静音循环，但只向既有 `ScreenPlayerPool` borrow。池满保留封面，**不创建第
+  二套/无界 ExoPlayer**；pool 每次 borrow 重置 repeatMode，预览循环状态不会泄漏
+  给 feed 卡片。
+- 推荐 share 走 Application 级可靠 outbox：严格 v2 event JSON，API host + owner
+  私有 SharedPreferences，先同步落盘后上传，7 天 TTL、10,000 上限、800 batch、
+  event id 去重、单飞与 2 秒→5 分钟退避；发送前冻结 token，响应后再校验 owner、
+  auth generation，换号迟到响应不会删错队列；同 owner 的正常 token refresh 不会让
+  已成功请求滞留；batch 请求单次总时限 30 秒且 auth change 会取消旧 Call，不会让
+  stalled 请求永久占住 owner single-flight。冷启动、auth change、
+  Screen 前台恢复、网络从已知离线恢复（Application 单例 `NetworkCallback`）与每次
+  track 都会触发 flush；已知离线时只可靠入队，不发请求、不增长退避，恢复后再冲。
+  服务端 `code=2` 时按 RN 二分隔离
+  永久坏事件：成功子批立即确认删除，单条坏事件删除并诊断，不让它堵住整个 FIFO。
+- 新增 5 个分享词条到 `tipsy-app/scripts/export-shell-locales.mjs` 并机械生成 26 语言
+  Android assets；复制 RN `share_link.png` / `modal_close.png`，五张社交图复用现有
+  byte-identical 资源；`tipsy-app` pin 更新到 `1f018aee6`。
+
+验证：locale export **26/26、0 missing**；root/submodule `git diff --check` 通过；
+2026-08-22 修正 `parseResponse` suspend 边界与预览 padding 重载后，
+`:app:compileDirectApkDebugKotlin` 与 `:app:lintDirectApkDebug` **PASS**。新增
+URL/order/saver、审核/content、冻结 token、点击快照及推荐队列/retry 单测，但
+**单测/assemble 均 NOT RUN**。模拟器/真机
+仍需覆盖：API 28 权限允许/拒绝、API 29+ MediaStore、六渠道已安装/未安装/取消、
+外跳往返 Dialog 与播放恢复、池满封面降级、真实 showcase 与 animated image MIME。
 
 
 

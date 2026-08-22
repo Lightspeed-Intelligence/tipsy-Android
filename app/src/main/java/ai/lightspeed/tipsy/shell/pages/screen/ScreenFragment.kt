@@ -1,5 +1,6 @@
 package ai.lightspeed.tipsy.shell.pages.screen
 
+import ai.lightspeed.tipsy.shell.BuildConfig
 import ai.lightspeed.tipsy.shell.TipsyApplication
 import ai.lightspeed.tipsy.shell.R
 import androidx.fragment.app.FragmentManager
@@ -9,6 +10,23 @@ import androidx.media3.common.util.UnstableApi
 import ai.lightspeed.tipsy.shell.i18n.L10n
 import ai.lightspeed.tipsy.shell.pages.home.HomeFilterStore
 import ai.lightspeed.tipsy.shell.pages.home.MmkvHomeCacheStorage
+import ai.lightspeed.tipsy.shell.pages.screen.recommendation.ScreenRecommendationShareChannel
+import ai.lightspeed.tipsy.shell.pages.screen.share.ApiScreenShareModerationSource
+import ai.lightspeed.tipsy.shell.pages.screen.share.ScreenShareModerationState
+import ai.lightspeed.tipsy.shell.pages.screen.share.ScreenShareMessageType
+import ai.lightspeed.tipsy.shell.pages.screen.share.ScreenShareOverlay
+import ai.lightspeed.tipsy.shell.pages.screen.share.ScreenShareUiState
+import ai.lightspeed.tipsy.shell.pages.screen.share.canStartChannel
+import ai.lightspeed.tipsy.shell.pages.screen.share.toTipsyShareContent
+import ai.lightspeed.tipsy.shell.share.TipsyShareChannel
+import ai.lightspeed.tipsy.shell.share.TipsyShareContent
+import ai.lightspeed.tipsy.shell.share.TipsyShareMediaSaveResult
+import ai.lightspeed.tipsy.shell.share.TipsyShareMediaType
+import ai.lightspeed.tipsy.shell.share.TipsyShareLaunchResult
+import ai.lightspeed.tipsy.shell.share.TipsyShareLaunchTarget
+import ai.lightspeed.tipsy.shell.share.TipsySharePlatformLauncher
+import ai.lightspeed.tipsy.shell.share.TipsySharePlatformOrderStore
+import ai.lightspeed.tipsy.shell.share.TipsyShareUrlBuilder
 import ai.lightspeed.tipsy.shell.tabs.TAB_BAR_CONTENT_HEIGHT
 import ai.lightspeed.tipsy.shell.tabs.androidTabBarBottomInsetDp
 import ai.lightspeed.tipsy.shell.ui.ScaledMetrics
@@ -17,12 +35,14 @@ import androidx.compose.ui.unit.dp
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
 import ai.lightspeed.tipsy.shell.surface.CommentsSurfaceContract
+import android.Manifest
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.statusBars
@@ -44,6 +64,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /**
@@ -69,6 +91,39 @@ import kotlinx.coroutines.launch
  * （`onEndpointResolved(flagEnabled)`），保持可测。
  */
 class ScreenFragment : Fragment() {
+
+    /** 同页 Dialog 的展示状态；不进入 [ScreenVisibility]，所以不会误结束 Screen 会话。 */
+    private val shareState = mutableStateOf(ScreenShareUiState())
+
+    private var shareModerationJob: Job? = null
+    private var shareActionJob: Job? = null
+    private var pendingLegacyShare: PendingShareAction? = null
+    private var shareSessionId = 0L
+
+    private val shareOrderStore by lazy {
+        TipsySharePlatformOrderStore.from(requireContext().applicationContext)
+    }
+
+    private val shareModerationSource by lazy {
+        val app = requireActivity().application as TipsyApplication
+        ApiScreenShareModerationSource(app.apiClient)
+    }
+
+    private val shareUrlBuilder by lazy { TipsyShareUrlBuilder(BuildConfig.WEB_BASE_URL) }
+
+    private val legacyWritePermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        val pending = pendingLegacyShare ?: return@registerForActivityResult
+        pendingLegacyShare = null
+        if (!isCurrentShareAction(pending)) return@registerForActivityResult
+        if (granted) {
+            saveAndLaunchExternal(pending, allowPermissionRequest = false)
+        } else {
+            clearShareBusy(pending)
+            showShareMessage(KEY_NO_PHOTO_PERMISSION, isError = true)
+        }
+    }
 
     private val viewModel: ScreenViewModel by viewModels {
         val app = requireActivity().application as TipsyApplication
@@ -171,6 +226,9 @@ class ScreenFragment : Fragment() {
      */
     private val foregroundObserver = object : DefaultLifecycleObserver {
         override fun onStart(owner: LifecycleOwner) {
+            (activity?.application as? TipsyApplication)
+                ?.screenRecommendationShareReporter
+                ?.flushCurrentOwner()
             viewModel.onAppForegroundChanged(foreground = true, focused = isFocused)
         }
 
@@ -240,6 +298,7 @@ class ScreenFragment : Fragment() {
                     onStartChat = ::onStartChat,
                     onCharacterClick = ::onCharacterClick,
                     onCreatorClick = ::onCreatorClick,
+                    onShareClick = ::onShareClick,
                     onCardEvent = ::onCardEvent,
                     statusBarPadding = WindowInsets.statusBars
                         .asPaddingValues()
@@ -255,6 +314,16 @@ class ScreenFragment : Fragment() {
                     bottomPadding = tabBarBottomPadding(
                         WindowInsets.systemBars.asPaddingValues().calculateBottomPadding(),
                     ),
+                )
+                // 同一 Compose 树上的全屏 Dialog：不 push Surface、不改 isCovered，
+                // 因而底层 Screen 视频和曝光会话保持运行；App 真正 onStop 时两层一起暂停。
+                ScreenShareOverlay(
+                    state = shareState.value,
+                    playerPool = playerPool,
+                    isActive = playbackActive.value,
+                    onChannelClick = ::onShareChannelClick,
+                    onClose = ::closeShareSheet,
+                    onMessageConsumed = ::consumeShareMessage,
                 )
             }
         }
@@ -340,6 +409,7 @@ class ScreenFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        closeShareSheet()
         (requireActivity().application as TipsyApplication)
             .authStateHub.removeObserver(authObserver)
         ProcessLifecycleOwner.get().lifecycle.removeObserver(foregroundObserver)
@@ -420,6 +490,267 @@ class ScreenFragment : Fragment() {
     }
 
     /**
+     * 打开分享面板时冻结点击卡片并立即开始审核。
+     *
+     * 不能在异步回调里重读 `viewModel.state.currentItem`：pager 的 settledPage 与点击
+     * 可能交错，最终会把相邻卡的 URL/归因发出去。审核 job 也与 content 快照绑定，
+     * 关闭或重新打开后迟到结果不会污染下一次会话。
+     */
+    private fun onShareClick(item: ScreenFeedItem) {
+        viewModel.onCardEvent(ScreenCardEvent.SHARE_CLICK, item)
+        val content = item.toTipsyShareContent() ?: return
+        shareModerationJob?.cancel()
+        shareActionJob?.cancel()
+        shareActionJob = null
+        pendingLegacyShare = null
+        shareSessionId += 1
+        val openedSessionId = shareSessionId
+        shareState.value = ScreenShareUiState(
+            content = content,
+            attribution = item.attribution,
+            moderation = ScreenShareModerationState.CHECKING,
+            channels = shareOrderStore.orderedChannels(),
+        )
+        shareModerationJob = viewLifecycleOwner.lifecycleScope.launch {
+            val allowed = shareModerationSource.isAllowed(item.characterId)
+            val current = shareState.value
+            if (openedSessionId != shareSessionId || current.content != content) return@launch
+            shareState.value = current.copy(
+                moderation = if (allowed) {
+                    ScreenShareModerationState.ALLOWED
+                } else {
+                    ScreenShareModerationState.BLOCKED
+                },
+            )
+        }
+    }
+
+    private fun closeShareSheet() {
+        shareModerationJob?.cancel()
+        shareModerationJob = null
+        shareActionJob?.cancel()
+        shareActionJob = null
+        pendingLegacyShare = null
+        shareSessionId += 1
+        shareState.value = ScreenShareUiState()
+    }
+
+    /**
+     * 平台最近使用排序在一切业务闸门之前写入，对齐 RN BaseShareModal：即便还在
+     * 审核、审核拒绝、保存失败或用户取消外部分享，这次点击仍会被前置。
+     */
+    private fun onShareChannelClick(channel: TipsyShareChannel) {
+        shareOrderStore.recordClick(channel)
+        val state = shareState.value
+        if (!state.visible) return
+        shareState.value = state.copy(channels = shareOrderStore.orderedChannels())
+
+        when (state.moderation) {
+            ScreenShareModerationState.CHECKING -> {
+                showShareMessage(KEY_CHECKING_COMPLIANCE)
+                return
+            }
+
+            ScreenShareModerationState.BLOCKED -> {
+                showShareMessage(KEY_SENSITIVE_CONTENT, isError = true)
+                return
+            }
+
+            ScreenShareModerationState.ALLOWED -> Unit
+        }
+        val content = state.content ?: return
+        val pending = PendingShareAction(
+            content = content,
+            attribution = state.attribution,
+            channel = channel,
+            sessionId = shareSessionId,
+        )
+        if (channel == TipsyShareChannel.COPY_LINK) {
+            launchCommittedShare(pending)
+            return
+        }
+        // RN 的 isSharing 只拦其它外部动作；Copy handler 不读它，因此保存媒体期间
+        // 仍可复制并 commit。其它外部按钮仍先更新排序，再在这里被互斥。
+        if (!state.canStartChannel(channel)) return
+
+        shareState.value = shareState.value.copy(busyChannel = channel)
+        saveAndLaunchExternal(pending)
+    }
+
+    private fun saveAndLaunchExternal(
+        action: PendingShareAction,
+        allowPermissionRequest: Boolean = true,
+    ) {
+        val app = activity?.application as? TipsyApplication ?: return
+        shareActionJob?.cancel()
+        val job = viewLifecycleOwner.lifecycleScope.launch(start = CoroutineStart.LAZY) {
+            when (val result = app.shareMediaSaver.save(action.content)) {
+                is TipsyShareMediaSaveResult.Saved -> {
+                    if (!isCurrentShareAction(action)) return@launch
+                    showShareMessage(KEY_SAVED)
+                    launchCommittedShare(action)
+                    clearShareBusy(action)
+                }
+
+                TipsyShareMediaSaveResult.NeedsLegacyWritePermission -> {
+                    if (!isCurrentShareAction(action)) return@launch
+                    if (allowPermissionRequest) {
+                        pendingLegacyShare = action
+                        legacyWritePermissionLauncher.launch(
+                            Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                        )
+                    } else {
+                        clearShareBusy(action)
+                        showShareMessage(KEY_NO_PHOTO_PERMISSION, isError = true)
+                    }
+                }
+
+                is TipsyShareMediaSaveResult.Failed -> {
+                    Log.w(TAG, "分享媒体保存失败", result.cause)
+                    if (!isCurrentShareAction(action)) return@launch
+                    clearShareBusy(action)
+                    showShareMessage(
+                        if (action.content.mediaType == TipsyShareMediaType.IMAGE) {
+                            KEY_FAILED_SAVE_IMAGE
+                        } else {
+                            KEY_FAILED_SAVE
+                        },
+                        isError = true,
+                    )
+                }
+            }
+        }
+        shareActionJob = job
+        job.invokeOnCompletion {
+            if (shareActionJob === job) shareActionJob = null
+        }
+        job.start()
+    }
+
+    /** 保存/复制成功后即视为 channel committed；外部 App 取消也仍计入，与 RN 一致。 */
+    private fun launchCommittedShare(action: PendingShareAction) {
+        if (!isCurrentShareAction(action)) return
+        val activity = activity ?: return
+        val reelUrl = runCatching { shareUrlBuilder.reelUrl(action.content) }
+            .onFailure { Log.w(TAG, "构建分享链接失败", it) }
+            .getOrNull()
+            ?: return
+        val shareText = shareUrlBuilder.shareText(L10n.t(KEY_SHARE_MESSAGE), action.content)
+
+        if (action.channel == TipsyShareChannel.COPY_LINK) {
+            val copyResult = runCatching {
+                TipsySharePlatformLauncher(activity).launch(
+                    channel = action.channel,
+                    reelUrl = reelUrl,
+                    shareText = shareText,
+                )
+            }.onFailure { Log.w(TAG, "复制分享链接失败", it) }.getOrNull()
+            when (copyResult) {
+                is TipsyShareLaunchResult.Launched -> if (
+                    copyResult.target == TipsyShareLaunchTarget.CLIPBOARD
+                ) {
+                    showShareMessage(KEY_COPIED_GO_SHARE)
+                    commitRecommendationShare(action)
+                }
+
+                is TipsyShareLaunchResult.Unavailable -> Unit
+
+                null -> Unit
+            }
+            return
+        }
+
+        val launcher = TipsySharePlatformLauncher(activity)
+        if (
+            action.channel == TipsyShareChannel.DISCORD ||
+            action.channel == TipsyShareChannel.TIKTOK
+        ) {
+            val copyResult = runCatching {
+                launcher.copyShareText(action.channel, shareText)
+            }.onFailure { Log.w(TAG, "复制渠道分享文案失败", it) }.getOrNull()
+            if (copyResult !is TipsyShareLaunchResult.Launched ||
+                copyResult.target != TipsyShareLaunchTarget.CLIPBOARD
+            ) {
+                return
+            }
+            showShareMessage(
+                if (action.channel == TipsyShareChannel.DISCORD) {
+                    KEY_OPENING_DISCORD
+                } else {
+                    KEY_OPENING_TIKTOK
+                },
+            )
+        }
+
+        // RN 在真正调用 openURL/shareSingle 前 commit；startActivity 后的取消不回滚。
+        commitRecommendationShare(action)
+        val result = runCatching {
+            // Android 的 RN hapticsFeedback 是 no-op，因此不传 hapticView。
+            launcher.launchExternal(
+                channel = action.channel,
+                reelUrl = reelUrl,
+                shareText = shareText,
+            )
+        }.onFailure { Log.w(TAG, "拉起分享渠道失败", it) }.getOrNull()
+
+        if (result is TipsyShareLaunchResult.Unavailable) {
+            showShareMessage(KEY_UNABLE_OPEN_LINK, isError = true)
+        }
+        // Screen feed 目前没有真实 video-service id；绝不拿 characterId 冒充调用
+        // `/video-service/video/share`。等接口补出 video id 后只在这里接可选计数。
+    }
+
+    private fun commitRecommendationShare(action: PendingShareAction) {
+        val channel = when (action.channel) {
+            TipsyShareChannel.COPY_LINK -> ScreenRecommendationShareChannel.COPY_LINK
+            TipsyShareChannel.DISCORD -> ScreenRecommendationShareChannel.DISCORD
+            TipsyShareChannel.INSTAGRAM -> ScreenRecommendationShareChannel.INSTAGRAM
+            TipsyShareChannel.TIKTOK -> ScreenRecommendationShareChannel.TIKTOK
+            TipsyShareChannel.X -> ScreenRecommendationShareChannel.X
+            TipsyShareChannel.FACEBOOK -> ScreenRecommendationShareChannel.FACEBOOK
+        }
+        val app = activity?.application as? TipsyApplication ?: return
+        app.screenRecommendationShareReporter.trackShare(action.attribution, channel)
+    }
+
+    private fun clearShareBusy(action: PendingShareAction) {
+        val current = shareState.value
+        if (
+            isCurrentShareAction(action) &&
+            current.content == action.content &&
+            current.busyChannel == action.channel
+        ) {
+            shareState.value = current.copy(busyChannel = null)
+        }
+    }
+
+    private fun isCurrentShareAction(action: PendingShareAction): Boolean =
+        action.sessionId == shareSessionId &&
+            shareState.value.visible &&
+            shareState.value.content == action.content
+
+    private fun showShareMessage(key: String, isError: Boolean = false) {
+        val current = shareState.value
+        if (!current.visible) return
+        shareState.value = current.copy(
+            messageKey = key,
+            messageType = if (isError) {
+                ScreenShareMessageType.ERROR
+            } else {
+                ScreenShareMessageType.INFO
+            },
+            messageSequence = current.messageSequence + 1,
+        )
+    }
+
+    private fun consumeShareMessage(sequence: Long) {
+        val current = shareState.value
+        if (current.messageSequence == sequence) {
+            shareState.value = current.copy(messageKey = null)
+        }
+    }
+
+    /**
      * 卡片级事件：埋点全部走 ViewModel（会话内去重在 tracker）。点赞进入
      * 乐观更新链，评论点击额外导航 —— 两者都保持「先埋点，再业务动作」。
      *
@@ -487,6 +818,26 @@ class ScreenFragment : Fragment() {
     companion object {
         private const val TAG = "ScreenFragment"
 
+        private const val KEY_CHECKING_COMPLIANCE = "Checking content compliance"
+        private const val KEY_SENSITIVE_CONTENT = "Share content contains sensitive information"
+        private const val KEY_SAVED = "Saved"
+        private const val KEY_NO_PHOTO_PERMISSION = "No photo library permission"
+        private const val KEY_FAILED_SAVE_IMAGE = "Failed to save image"
+        private const val KEY_FAILED_SAVE = "Failed to save"
+        private const val KEY_OPENING_DISCORD = "Link copied, opening Discord..."
+        private const val KEY_OPENING_TIKTOK = "Link copied, opening TikTok..."
+        private const val KEY_SHARE_MESSAGE = "share_message"
+        private const val KEY_COPIED_GO_SHARE = "copied_go_share"
+        private const val KEY_UNABLE_OPEN_LINK = "Unable to open link"
+
         fun newInstance(): ScreenFragment = ScreenFragment()
     }
 }
+
+/** 一次外部异步链的不可变输入；权限弹窗返回后也必须继续分享原来的卡。 */
+private data class PendingShareAction(
+    val content: TipsyShareContent,
+    val attribution: ScreenAttribution?,
+    val channel: TipsyShareChannel,
+    val sessionId: Long,
+)

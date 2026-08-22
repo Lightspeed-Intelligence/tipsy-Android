@@ -1,5 +1,6 @@
 package ai.lightspeed.tipsy.shell.network
 
+import org.json.JSONObject
 import java.io.IOException
 
 /**
@@ -24,6 +25,11 @@ sealed class ApiException(message: String) : IOException(message) {
     class Business(
         val code: Int,
         val serverMessage: String?,
+        /**
+         * 保留服务端 envelope 的 data，供少数「业务拒绝也携带结构化原因」的接口读取。
+         * 默认 null 保持现有调用点源码兼容；通用 UI 仍应优先按 [code] 分型。
+         */
+        val data: JSONObject? = null,
     ) : ApiException("业务错误 code=$code msg=$serverMessage") {
 
         val isNotEnoughGems: Boolean get() = code == ApiEnvelope.CODE_NOT_ENOUGH_GEMS

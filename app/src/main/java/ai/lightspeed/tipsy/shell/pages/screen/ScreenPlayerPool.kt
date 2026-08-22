@@ -121,6 +121,9 @@ class ScreenPlayerPool(
             return null
         }
         return try {
+            // 预览层可能把借出的实例临时设为循环播放；每次借出都恢复 feed 默认值，
+            // 不能让上一个 borrower 的播放策略泄漏到下一张卡。
+            player.repeatMode = Player.REPEAT_MODE_OFF
             player.setMediaItem(MediaItem.fromUri(url))
             player.prepare()
             player

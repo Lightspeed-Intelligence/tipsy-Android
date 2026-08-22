@@ -230,6 +230,40 @@ class MergedManifestTest {
         )
     }
 
+    /** Native 只在 <=28 请求；Manifest 到 29 保留 RN expo-media-library 兼容性。 */
+    @Test
+    fun `相册写权限兼容 RN Android 10 且不泄漏到 API 30`() {
+        val file = anyManifestOfBuildType("Release")
+        assumeTrue("未找到任何 release merged manifest", file != null)
+        val nodes = parse(file!!).getElementsByTagName("uses-permission")
+        val permission = (0 until nodes.length)
+            .map { nodes.item(it) as Element }
+            .firstOrNull {
+                it.androidName() == "android.permission.WRITE_EXTERNAL_STORAGE"
+            }
+
+        assertNotNull("Native legacy 保存与 RN Android 10 入口仍需要相册写权限", permission)
+        assertEquals(
+            "保留 expo-media-library API 29 契约，但不得泄漏到 API 30+",
+            "29",
+            permission!!.androidAttr("maxSdkVersion"),
+        )
+    }
+
+    /** X/Facebook 的包探测需要 Android 11+ package visibility，但不能注册入站 scheme。 */
+    @Test
+    fun `分享目标包对 package manager 可见`() {
+        val file = anyManifestOfBuildType("Release")
+        assumeTrue("未找到任何 release merged manifest", file != null)
+        val packages = parse(file!!).getElementsByTagName("package")
+        val names = (0 until packages.length)
+            .mapNotNull { (packages.item(it) as? Element)?.androidName() }
+            .toSet()
+
+        assertTrue("X 包查询缺失", "com.twitter.android" in names)
+        assertTrue("Facebook 包查询缺失", "com.facebook.katana" in names)
+    }
+
     /** withAndroidLargeHeap（方案 §2.3）：线上 ExoPlayer OOM 的缓解措施，漏掉是静默回归。 */
     @Test
     fun `release 保留 largeHeap`() {
