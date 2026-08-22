@@ -1,10 +1,10 @@
 # Tipsy Android 原生化迁移：现状（唯一状态真值）
 
-> 更新：2026-08-22（跨 Surface 刷新信号双桥补齐 —— §2.58，pin `9d9240143`）
+> 更新：2026-08-22（§2.58 双桥补齐 + §2.59 CreateSurface 矩阵与 tracking 红屏修复，pin `77b567cff`）
 >
 > **状态只有一份**：速览见 §0，波次见 §1，横切能力见 §3，Surface 验收见 §4，
 > 未决问题见 §5。逐刀记录（§2.x）在
-> [android-packet-log.md](android-packet-log.md)（最新 §2.58），本文 §2 只留指针。
+> [android-packet-log.md](android-packet-log.md)（最新 §2.59），本文 §2 只留指针。
 > 本头部不再复制状态快照 —— 此前头部与 §0/§1 三重记录同一状态，
 > 已实际发生漂移（ChatMap/分享/EditProfile 三处头部滞后于正文），2026-08-22 收敛。
 >
@@ -20,7 +20,7 @@
 
 - **波次进度**：W0 完成；**W1 完成**（契约层已在 CI 组合验证（§2.22）；**P9 已完成**（§2.36）；§12 关闭链记为已接受偏差）；P2 剩余/P3/P7/P8 均已决策推迟。W2 主体已落地：五 Tab + Home + Login（§2.23/§2.24，PR #20 已并，剩 banner / 彩蛋 / mp4 封面且倾向留 RN Surface）。**W3 业务面全部落地**：Profile 全部批次完成（P1–P7，§2.25–§2.29、§2.44、§2.45）；ChatList P1（§2.30）+ **P2 ChatMap 已并入 main**（§2.47，PR #42，模拟器全链路实测）；Search P1/P2（§2.31/§2.34，完整对等）；他人主页（§2.32）；Settings 列表/语言（§2.33）；**EditProfile 预接（§2.43）并已放行**（§2.49，模拟器 §9.1 矩阵已跑，换号格与真机项累积）。**W4 进行中**：Screen P1/P2 + 卡片交互 + 原生分享（§2.35/§2.42/§2.55/§2.57）；Surface 批次 3–5 已全部放行（§2.48–§2.53）；G3 nightly 已建（§2.54）。剩余见「不存在 / 未验」。
 - **代码现状**：`ai.lightspeed.tipsy.shell` 下有 `TipsyApplication`（单 ReactHost + Analytics facade）+ `MainActivity`（Tab 根 + Router/i18n 接线）+ `RNSurfaceFragment` + `auth/` + `network/` + `router/` + `surface/` + `i18n/` + `bridge/` + `analytics/` + `tabs/` + `user/` + `share/`（§2.57）+ **`pages/login/`、`pages/home/`、`pages/profile/`、`pages/chatlist/`、`pages/search/`、`pages/screen/`、`pages/settings/`**；EditProfile 刷新接力落在 `pages/profile/ProfileRefreshHub` 与 `tipsy-auth.notifyProfileChanged`。
-- **submodule**：pin **`1f018aee6`**（以 §2.56 的 release/1.4.6 合流 merge commit `86191c090` 为基线，§2.57 增补 Screen 原生分享所需的 5 个 shell locale keys；该基线含另一路并行推进的 `c7477d632` Gradle 去 node PATH 依赖 patch）。⚠️ `da4f65a` 与 PR #34 的三处壳改动**必须同时存在**：指针回退则 exclude 仍失效，而 styles/lifecycle 两处已让构建变绿 —— 会得到「构建通过但图片仍坏」的假绿。
+- **submodule**：pin **`77b567cff`**（§2.56 合流基线 `86191c090` → §2.57 分享词条 `1f018aee6` → §2.58 双桥 `9d9240143` → §2.59 tracking 红屏修复）。⚠️ `da4f65a` 与 PR #34 的三处壳改动**必须同时存在**：指针回退则 exclude 仍失效，而 styles/lifecycle 两处已让构建变绿 —— 会得到「构建通过但图片仍坏」的假绿。⚠️ §2.59 教训：**pin bump 后至少在模拟器挂一次任意 Surface** —— 静态 gate 与 G1 都拦不住「顶层 import 在原生模块缺席时求值抛」。
 - **已验证**：main 最新 merge（PR #60，2026-08-22）的 G1 Fast Gate 全绿；**G3 nightly 已建且首跑三 job 全绿**（§2.54：三 flavor debug 全量、googlePlayRelease R8 打包 + manifest 产物 grep、API 24/36 双档 instrumentation）。逐刀的本机门禁与单测数见对应 §2.x（最近一次全套件快照：§2.56，app 单测 1153 条 failures=0 / skipped=0）。
 - **他人主页已实现**（§2.32，2026-08-14）：6 文件 1,469 行，`AppRoute.UserProfile` 进白名单 —— **搜索 → 创作者 → 他人主页是壳的第一条端到端可用路径**。审计推翻了「复用自己视角」的前提（七处偏差）：只有 **1 个 tab**（RN 注释说两个，代码是一个）、数据源另有四条、`size` **200 且不翻页**、`/user/get/public` 走 `axiosAuth` 会对游客弹登录页、`/plot/list/creator` **现网从未被调用**、关注按钮在 `ProfileHeader.tsx` 而非 `user-profile.tsx`。真机冒烟 **NOT RUN**。
 - **Settings 列表 + 语言页已实现**（§2.33，8 文件 1,501 行）：补上了真实功能缺失 —— 此前**壳内没有任何入口能改语言**。审计订正三处：语言页**要原生实现**（RN 与 iOS 双证据）、`supportedLanguages` 壳内**恒为空**必须自己拉、Limitless 开关是 `nsfw` 的**唯一写方**且仅 directApk 可见。渠道 gating 收在 `SettingsRow` 并对三渠道各有单测。7 个 Surface 子屏（`AppRoute.SettingsSubScreen`）已于 §2.48 放行并跑过模拟器 §9.1 矩阵。
@@ -29,7 +29,7 @@
 - **语言复跑 PASS + 分级开关 404**（§2.39，2026-08-18）：语言那列 FAIL → **PASS**（`initialProps.context.languageCode` 实测 `zh-tw`，往返 5 次稳定）。同轮查出**`POST /user/nsfw` 少了 `/update` → 404**：因 `onNsfwToggle` 是刻意的非乐观更新（失败自动回滚），404 表现为「开关点了自己弹回去」，与「没点到」无法区分；fake-API 单测验不到真实路径，已补 `SettingsApiContractTest`（MockWebServer 真往返，已反向验证）。顺带修 `SettingsFragment` 从不观察 `languageError` 导致的**零提示**（收集器挂 `onViewCreated`，不是 `onStart`）。⚠️ 读共享 MMKV 必须先解析头部 `actualSize` —— 追加写会让 `tail` 读到上一代残留，方向正好相反。
 - **2026-08-19 Surface/会话稳定性收口**（§2.46）：Profile 短列表恢复滚动；Android 原生登录把 token、完整 `/user/info` 快照与 loggedIn 收成一个事务；登出/换号同步清 `user-storage` 与无账号维度聊天 LRU；Surface 首帧宿主对齐 iOS；修复 KeyboardProvider 污染共享 Activity 状态栏 inset。RN pin 已推 `feat/android-native`。
 - **✅ 卡片点击已解锁**（§2.36，2026-08-17）：`ChatDetail` / `MiniPhoneChat` 进白名单，Home/ChatList/Search/Screen 四个页面的卡片点击**第一次有下一屏**。此后批次 3–5 陆续放行 Settings 七子屏 / EditProfile / Comments / Notification / Gems / UserCoins / RoleCard（§2.48–§2.53）—— **仍点不动的只剩 Follow**（RN 无 FollowSurface，出口无处可去，待 owner，§2.25）。§12 实例关闭链**记为已接受偏差**（单层容器弹不错；根治要走集中封装 + 双壳回归，见 §5）。
-- **Tab3 创建入口已接通**（§2.40，2026-08-18，219 行）：`AppRoute.Create` 进白名单，Tab3 的 ➕ 从「只打一行日志」变成挂 `CreateSurface` 直达创建表单 —— **五个 Tab 全部可用**。壳只传 `createEnterSource` 一个 prop，**刻意不复刻** RN tabPress 那四个参数（Surface 自决落地页，§2.30 纪律）。⚠️ 真机抓到**类别性**缺陷并已修：`AppRoute.Create()` 无参 ⇒ 实例恒相等 ⇒ 去重不解除就「只能用一次」，ChatDetail 因每次带不同 characterId 而侥幸未暴露；后续每个无参路由都要配解除。✅ §2.41 已补微根/微栈/注册/bootstrap 机器断言；⚠️ §9.1 的 8 个设备/生命周期验收格仍全 `✎`。
+- **Tab3 创建入口已接通**（§2.40，2026-08-18，219 行）：`AppRoute.Create` 进白名单，Tab3 的 ➕ 从「只打一行日志」变成挂 `CreateSurface` 直达创建表单 —— **五个 Tab 全部可用**。壳只传 `createEnterSource` 一个 prop，**刻意不复刻** RN tabPress 那四个参数（Surface 自决落地页，§2.30 纪律）。⚠️ 真机抓到**类别性**缺陷并已修：`AppRoute.Create()` 无参 ⇒ 实例恒相等 ⇒ 去重不解除就「只能用一次」，ChatDetail 因每次带不同 characterId 而侥幸未暴露；后续每个无参路由都要配解除。✅ §2.41 已补微根/微栈/注册/bootstrap 机器断言；✅ **§9.1 模拟器矩阵已跑**（§2.59，2026-08-22：8 格 PASS，未登录格含 API 24/37 双档；登录切换格待双账号）。
 - **Screen P1 + P2 代码已实现**（§2.35 / §2.42）：P1 落 AB 端点分流、归因、首屏缓存与会话埋点；P2 让 `showcase` 首次接入 Media3、有界播放器池、±1 窗口、RN Android buffer、动态 50MB cache、三轴播放门与声音开关。PR #39 最终 head `13cc633` 的 G1 全绿；⚠️ feed 无 showcase，真实视频/cache 失败/API24–33 层序/audio focus 四项仍 NOT RUN，故**不是 production-ready**。
 - **Screen 原生分享已并入 main**（§2.57，2026-08-22，PR #60 G1 全绿）：按 RN Android 产品语义 + iOS 原生职责边界落同页全屏 Dialog、即时审核、相册保存、Copy/Discord/Instagram/TikTok/X/Facebook、最近使用排序与可靠推荐 share outbox。Reel 路径暂沿用 RN 的 character-backed id，但明确保持 `videoId=null`，不伪造视频 id 调分享计数接口。单测/lint/assemble 已由 G1 组合验证；模拟器/真机和社交 App 矩阵 **NOT RUN**（清单见 §2.57）。
 - **Search P2 筛选器已实现**（§2.34，4 文件 723 行）：性别/排序/分级抽屉 + 二级标签栏，Search 达成完整对等。`SearchTagOrderTest` **逐条对拍 RN 的 144 行现成单测**。⚠️ 分级筛选的门是「非 GooglePlay && nsfw 开」，与 Settings 的 Limitless（只有 directApk）**不同轴** —— RuStore 在这里算可选。
@@ -105,10 +105,12 @@
 
 **`CreateSurface` 是第二个进生产白名单的业务 Surface**（§2.40，2026-08-18，
 Tab3 的 ➕）。§2.41 已补齐微根、root stack、微栈目标（§2.56 后 13 个）、注册名、
-`createEnterSource` 消费链与 `hydrateTags` 前置的机器断言，关闭 §2.40 的静态
-gate 欠账。⚠️ **它是九个已启用 Surface 里唯一没跑过 §9.1 模拟器矩阵的**
-（§2.40 只做了三轮开关 + 连点幂等），8 个设备/生命周期验收格仍全 `✎`，
-**不得标 production-ready**；机器清单不替代设备生命周期证据。
+`createEnterSource` 消费链与 `hydrateTags` 前置的机器断言。
+✅ **§9.1 模拟器矩阵已跑**（§2.59，2026-08-22）：初始 fixture / 未登录
+（API 24+37 双档）/ Back / 关闭重开 / 旋转 / 15 次泄漏 / Embedded / 进程恢复
+**8 格 PASS**；登录切换格待双账号（真机批次），语言切换由 §2.39 壳级复跑覆盖。
+⚠️ 首格撞出并修掉 §2.56 合流引入的 tracking 顶层 import 红屏（P0，详见 §2.59）。
+模拟器证据不作真机结论（§2.5）。
 
 `EditProfileSurface`：§2.43 预接（静态契约、账号隔离、RN→Native Profile 刷新
 接力）→ **§2.49 已放行并跑过模拟器 §9.1 矩阵**（保存→刷新接力、Back、重开、
