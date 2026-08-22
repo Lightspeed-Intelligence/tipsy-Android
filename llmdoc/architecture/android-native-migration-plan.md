@@ -1054,17 +1054,23 @@ Native 不得显著劣于旧 RN 基线。若为稳定性接受已知性能差异
 
 ### 9.4 无障碍与 test ID
 
-**从第一个组件就做，不后补**（iOS 到后期才批量补约 295 个 accessibility ID，`51eba61`/`a0a1502`）。稳定 ID 最低集合：
+**从第一个组件就做，不后补**（iOS 到后期才批量补约 295 个 accessibility ID，`51eba61`/`a0a1502`）。
 
-```
-android.login.{root,email,code,submit}
-android.tab.{screen,home,create,chatlist,profile}
-android.home.{root,refresh,feed}
-android.home.card.<stable-id>
-android.state.{loading,empty,error}
-```
+**壳侧现行约定是 snake_case**（工程日志 §2.25 定案：本节原有的
+`android.login.{root,…}` 点分风格是成文期草案、从未落地——代码先例是
+`login_*`，现约 100 个 tag 全部 snake_case）：
 
-动态 ID 必须脱敏且稳定，**不把用户文本拼进 tag**。
+- 页面前缀 + 下划线：`login_email`、`chat_list_bell`、`profile_stat_followers`
+- 状态位：`<page>_{loading,empty,error}`
+- 动态段只用服务端稳定 id（`profile_created_card_<id>`、
+  `chat_list_item_<stableKey>`）——**必须脱敏且稳定，不把用户文本拼进 tag**
+
+**RN 侧（tipsy-app）是另一套约定，别互相照抄**：dot-camelCase + 类型后缀
+（`gems.backButton`、`chat.input.textField`），规范在
+`tipsy-app/llmdoc/reference/testid-conventions.md`。既有 testID 是自动化仓
+（`tipsy-appium-automation/helpers/v2/ids.ts`）的契约，**重命名/删除默认禁止**。
+壳内嵌的 RN Surface 沿用 RN 约定，壳原生页用 snake_case——两套并存是刻意的，
+不做「统一」。
 
 ---
 

@@ -125,6 +125,15 @@ Android 迁移相关的 RN 改动**不走 PR**，直接提交该分支（2026-08
 
 `index.surfaces.js` 是 iOS 壳与 Android 壳**共用入口**，改动需双壳回归。
 
+RN 侧改动同时受 `tipsy-app/AGENTS.md` 约束，其中两条是**跨仓契约**不是风格建议：
+- **i18n**：不硬编码用户可见文案（JSX 内 `t(...)`、JSX 外 `i18nKey(...)`、
+  确不翻译的加行内 `i18n-ignore`）；**既有翻译 key 默认禁止改名/删除**；
+  strict locale 只是抽样目标，非 strict 语言也要真翻译、不得拿英文凑数。
+- **testID**：新交互元素必须带（dot-camelCase + 类型后缀，如 `gems.backButton`；
+  列表项用业务 id 模板串，**禁用数组下标**）；既有 testID 是自动化仓
+  `tipsy-appium-automation` 的契约，**改名/删除默认禁止**。
+  完整规范：`tipsy-app/llmdoc/reference/testid-conventions.md`。
+
 ### 6. 不继承 RN 侧的弱化质量配置
 
 RN 侧 `modules/qt`、`modules/widget`、`modules/voice-call-system-session` 都有
@@ -301,7 +310,9 @@ Router 里，`ShellNavigator` 只把已决策的路由变成容器操作，不�
 提升为可选语言。
 
 **testTag / contentDescription 从第一个组件就加**，不后补（iOS 后期批量补了约 295 个）。
-最低集合见方案 §9.4。
+壳原生页用 **snake_case**（`chat_list_bell`、动态段只拼服务端稳定 id）；RN 侧是
+**另一套** dot-camelCase（`gems.backButton`）——两套并存是刻意的，**别互相照抄**，
+详见方案 §9.4。
 
 **网络**（方案 §4.5）三种鉴权模式对应 RN 两个 axios 实例：`REQUIRED` = `axiosAuth`、
 `OPPORTUNISTIC` = `axiosPublic`、`NONE` = 明确禁止身份的端点。

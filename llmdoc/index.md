@@ -78,7 +78,13 @@ RN 侧文档见 `tipsy-app/llmdoc/`；iOS 壳的同构实践见 `../Tipsy-iOS/ll
   变更仍**只允许是指针 bump** —— 改动本身要在 `tipsy-app` 的历史里可追溯，
   不能以「本仓顺手改了 submodule 工作树」的形式存在。
   ⚠️ 该分支**未合进 `main`/`release`**，靠子模块指针引用；bump pin 前确认目标 commit
-  **已推到远端**，否则 CI 拉不到（`--depth 1` 也拉不到，见进度文档 §2.10）。
+  **已推到远端**，否则 CI 拉不到（`--depth 1` 也拉不到，见工程日志 §2.10）。
+- **动 `tipsy-app/` 内的代码时还受 `tipsy-app/AGENTS.md` 约束**，其中两条是跨仓契约：
+  i18n（不硬编码文案、既有翻译 key 默认禁止改名/删除、非 strict 语言不得拿英文凑数）
+  与 testID（新交互元素必须带、既有 testID 是 `tipsy-appium-automation` 的契约默认
+  禁止改名/删除；规范见 `tipsy-app/llmdoc/reference/testid-conventions.md`）。
+  注意 RN 的 testID 是 dot-camelCase，壳原生页的 testTag 是 snake_case ——
+  两套并存是刻意的（方案 §9.4）。
 - **`index.surfaces.js` 是 iOS 壳与 Android 壳共用入口**，改动需双壳回归。
 - 状态只写在进度文档一处，不在别处复制快照。
 - 不继承 RN 侧的弱化质量配置（`lintOptions.abortOnError false`、`passWithNoTests`）。
