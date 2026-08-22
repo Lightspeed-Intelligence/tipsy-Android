@@ -4018,3 +4018,108 @@ assembleGooglePlayDebug、release manifest、app 单测、桥单测与 skipped=0
 模拟器/真机仍需覆盖：API 28 权限允许/拒绝、API 29+ MediaStore、
 六渠道已安装/未安装/取消、外跳往返 Dialog 与播放恢复、池满封面降级、
 真实 showcase 与 animated image MIME。
+
+### 2.58 W4：跨 Surface 刷新信号双桥补齐（2026-08-22）
+
+补掉 §2.56 记的桥欠账并顺带查出同族第二个：`notifyChattedListChanged`
+（建群/群成员变更 → 原生 ChatList）与 **`notifyCreatedCharactersChanged`**
+（CreateSurface 创建/编辑成功 → 原生 Profile 创作列表，`profileDetail.tsx:1574`，
+iOS 先行）。两者此前都在 `?.()` 方法级守卫下**静默降级** —— 建群后列表不出现、
+创建角色后创作 tab 不更新，不报错不崩溃。
+
+#### 落地（RN 仓 `9d9240143`，pin bump；壳侧 2 新文件 + 9 修改）
+
+- **桥（三层同构 §2.51）**：契约 `SurfaceProfileContract` 增
+  `notifyCreatedCharactersChanged`、新增 `SurfaceChatListContract`；两个
+  `AsyncFunction` 经 `onMain` 注册（Android 注册方法数 **20 → 22**）；
+  `MainThreadDispatchTest` 覆盖表 12 → **14**。两方法刻意无参 ——
+  信号不携带账号，壳从 token 真值自守边界（同 `notifyProfileChanged` 的理由）。
+- **provider 守卫按 iOS 对齐且刻意不对称**：createdCharacters 有账号才转发
+  （iOS `guard userId`，登出瞬间迟到的成功回执不触发刷新）；chattedList
+  无守卫直接广播（iOS NotificationCenter 同义，边界由消费方守）。
+- **壳侧新增 `RefreshSignalHub`**（进程级无 payload fan-out）：**即时通知而非
+  markStale/onAppear** —— Tab 切换是 show/hide（无生命周期）、Surface 是
+  sibling（关闭不重走 onStart），「标脏等下次 appear」在建群返回路径上
+  永远不触发。信号丢失是刻意语义：目标 Fragment 未挂载 = 无人订阅 = 丢弃，
+  首次挂载本来就拉全新数据。有账号语义的接力仍走 `ProfileRefreshHub`，
+  两个 hub 不合并。
+- **ChatList 消费**：`onChattedListChangedSignal` = iOS `silentRefreshFirstPage`
+  对应物 —— 不置 `isRefreshing`（不转圈）、保留旧列表、打断旧链从第 0 页重拉
+  （复用删除/置顶对账的 `reloadFromServer` 模式；已翻出的后续页刻意丢弃，
+  三端刷新形态各异但都收敛服务端真值，壳不为此引入第三种形态）。
+  首屏前 / 未登录 no-op。
+- **Profile 消费**：`onCreatedCharactersChangedSignal` 按可见性分流 ——
+  创作 tab 选中 → 就地 `reloadCreatedTab`（含首屏失败停在错误态的场景：
+  创建成功是比手动重试更强的重试理由）；其它 tab 选中 → **不打断其在飞链**，
+  把创作 tab 作废成未加载态、切回时 `loadFirstPageIfNeeded` 重拉
+  （invalidate 语义 = RN mutate；iOS 是 markPending + 可见时消费，壳的
+  单在飞链下这是等价形态）；未加载过 → no-op。
+- **静态双向锁**：新增 `BridgeSignalContractTest`（2 条，§2.51 纪律）——
+  RN 调用点消失或桥注册名漂移都会红。**已反向验证**：临时改掉注册名 →
+  1 条红；还原 → 绿。
+
+#### 验证
+
+- 本机：`:tipsy-auth:testDebugUnitTest` **15 条** skipped=0（报告 mtime 核对）；
+  壳侧四套件 `ShellAuthProviderTest` 36 + `ChatListViewModelTest` 16 +
+  `ProfileViewModelTest` 58 + `BridgeSignalContractTest` 2，failures=0 /
+  skipped=0（新增 3+2+3 条：provider 双守卫与转发、ChatList 静默重拉/双 no-op、
+  Profile 三分流）；`lintDirectApkDebug` 无新增（baseline 仍 5 条）；
+  `assembleGooglePlayDebug` 过。完整门禁交 PR G1。
+- **未动** manifest / flavor；RN 侧改动已推 `feat/android-native`
+  （`1f018aee6` → `9d9240143`，仅 tipsy-auth 模块 6 文件），壳只 bump 指针。
+- **设备验证 NOT RUN**（按累积纪律记入真机清单）：真机建群 → 返回 ChatList
+  列表即时出现新群；创建角色 → Profile 创作 tab 出现新卡（创作 tab 停留与
+  切走两条路径）；RN runtime 未启动时信号自然不存在（无需验证路径）。
+
+### 2.59 CreateSurface §9.1 矩阵补跑 + 🔴 tracking 顶层 import 红屏回归（2026-08-22）
+
+补掉九个已启用 Surface 里唯一的矩阵空白（§2.41 后一直只有静态 gate）。
+**首格就撞出 P0 回归**：点 ➕ 得到 RN 红屏（DISMISS/RELOAD）——
+`Cannot find native module 'ExpoUpdates'`。
+
+#### 🔴 回归：§2.56 合流后挂任何 Surface 都红屏（已修）
+
+`@tipsy/tracker` 集成（上游 `8b8f332ca`，随 §2.56 合流进壳 pin）让
+`src/lib/tracking/core.ts` **顶层 import expo-updates** —— 而壳的
+autolinking exclude 刻意不链接它（W4 OTA 前，settings.gradle W0 隔离）。
+该文件经 `jwt.ts` → auth gateway 进了**每个 Surface 的 import 链**，
+模块求值即抛 ⇒ **挂任何 Surface 必红屏**（ChatDetail 实测同炸）。
+
+- **暴露窗口**：§2.56 合流（08-21）起 —— 批次 3–5 矩阵（§2.48–§2.53）
+  跑在 08-20 的旧 pin 上，合流后到本轮之间**没有任何设备验证挂过 Surface**
+  （§2.56 验证是单测/assemble/manifest，§2.57 分享是纯原生 Dialog）。
+  ⚠️ 教训：**pin bump 后至少挂一次任意 Surface** —— 静态 gate 锁的是
+  微根/注册形状，锁不住「顶层 import 在原生模块缺席时抛」这类求值期崩溃，
+  G1 也不跑设备。
+- **修法**（RN 仓 `77b567cff`）：守卫 require + disabled-controller 同款
+  回退（`createdAt` null → 构建期时间戳、`isEmbeddedLaunch=true`，与该处
+  既有注释描述的回退语义一致）。模块在场的环境（独立 RN 包 / iOS 壳）
+  走 try 分支行为不变。`core.test.ts` 12 条过（vi.mock 对 require 同样
+  生效）、全仓 tsc 过。修后模拟器实测 CreateSurface / ChatDetail 均正常挂载。
+
+#### §9.1 矩阵（Pixel 10 / API 37 / directApk debug；⚠️ 模拟器不作覆盖升级证据）
+
+| 项 | 结果 |
+| --- | --- |
+| 初始 route fixture | ✅ ➕ → 创建表单完整（Create Avatar / Name / Type / Gender），首帧即渲染无白屏 |
+| 未登录 | ✅ 游客点 ➕ → Router auth gate 弹登录页、**零 Surface 容器**（API 37 + **API 24 新 build 双档**实测） |
+| Back/栈底 | ✅ 回点 ➕ 之前的 Tab（Home），进程存活（PID 不变） |
+| 关闭重开（无参解除） | ✅ 关后立即重开成功（§2.40 那个类别性缺陷未复现） |
+| 旋转 | ✅ 表单开着横↔竖往返存活 |
+| 15 次挂载/卸载 | ✅ Activities=1、ViewRootImpl=1、Views 169 无累积、零 FATAL/OOM |
+| Embedded（单层容器） | ✅ 容器实例恒 1（连 15 轮 + 重开路径全程） |
+| 进程恢复 | ✅ 表单开着 force-stop → 冷启动回 Home → 重开成功（新 PID） |
+| 登录切换 | ✎ 需第二测试账号（同 EditProfile 换号格，真机批次置顶项） |
+| 语言切换 | ✎ 壳级机制已由 §2.39 复跑覆盖（同批次 3–5 的处理） |
+| OTA N/N-1 | W4 |
+
+矩阵操作沿用 §2.37/§2.39 的纪律：坐标每次现 dump、YouTube 预先
+`pm disable-user`、代理检查 `:0`。
+
+#### 验证
+
+- RN 侧：`core.test.ts` 12 条 + 全仓 `tsc --noEmit` 过；改动已推
+  `feat/android-native`（`9d9240143` → `77b567cff`，单文件）。
+- 壳侧：pin bump 随 PR #61 一并交 G1；模拟器双设备实测见上表。
+- **设备缺口**：登录切换格（双账号）；矩阵跑在模拟器（§2.5 纪律）。

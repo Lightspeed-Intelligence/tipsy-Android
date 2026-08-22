@@ -2,6 +2,7 @@ package ai.lightspeed.tipsy.shell.pages.profile
 
 import ai.lightspeed.tipsy.shell.TipsyApplication
 import ai.lightspeed.tipsy.shell.auth.AuthStateHub
+import ai.lightspeed.tipsy.shell.bridge.RefreshSignalHub
 import ai.lightspeed.tipsy.shell.i18n.L10n
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
@@ -92,6 +93,13 @@ class ProfileFragment : Fragment() {
     }
 
     /**
+     * 桥 `notifyCreatedCharactersChanged` → 创作 tab 定向失效（CreateSurface
+     * 创建/编辑成功）。进程级 hub，onDestroy 反注册（同 authObserver）。
+     */
+    private val createdCharactersChangedListener =
+        RefreshSignalHub.Listener { viewModel.onCreatedCharactersChangedSignal() }
+
+    /**
      * EditProfileSurface 是 sibling 容器：它盖住 Profile 时，本 Fragment 可能一直
      * 保持 STARTED，关闭也不会再走 [onStart]。协调器同时处理前台即时刷新、
      * 非前台的 onStart 补消费，以及 `/user/info` 成功后才 ack dirty。
@@ -132,6 +140,7 @@ class ProfileFragment : Fragment() {
     ): View {
         val app = requireActivity().application as TipsyApplication
         app.authStateHub.addObserver(authObserver)
+        app.createdCharactersChangedHub.addListener(createdCharactersChangedListener)
 
         val composeView = ComposeView(requireContext()).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
@@ -239,6 +248,7 @@ class ProfileFragment : Fragment() {
 
     override fun onDestroy() {
         val app = requireActivity().application as TipsyApplication
+        app.createdCharactersChangedHub.removeListener(createdCharactersChangedListener)
         app.profileRefreshHub.removeObserver(profileRefreshCoordinator)
         app.authStateHub.removeObserver(authObserver)
         super.onDestroy()

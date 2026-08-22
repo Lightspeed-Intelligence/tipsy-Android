@@ -135,6 +135,27 @@ class ChatListViewModel(
     }
 
     /**
+     * 桥 `notifyChattedListChanged` 的即时刷新（建群/群成员变更，工程日志 §2.56
+     * 记的欠账）。iOS 对应 `silentRefreshFirstPage`：**立即**静默重拉，
+     * 不是 [markStale] —— ChatList Tab 常驻且 Surface 是 sibling，「等下次
+     * onAppear」在建群返回的路径上永远不触发（Fragment 未曾离开 STARTED）。
+     *
+     * 静默语义 = 不置 `isRefreshing`（不转圈）、保留旧列表直到新数据到达。
+     * 复用 [reloadFromServer] 同款「打断旧链 + 从第 0 页重拉」：**已翻出的
+     * 后续页被刻意丢弃**（触底会重新续拉）—— iOS 是只覆写第 0 页保留后续页、
+     * RN 的 SWR mutate 是全部页重验，三端形态各异但都收敛到服务端真值；
+     * 壳选与删除/置顶对账一致的既有模式，不为此包引入第三种刷新形态。
+     * 未拉过首屏 / 未登录时 no-op（首次进入本来就拉全新数据）。
+     */
+    fun onChattedListChangedSignal() {
+        val s = _state.value
+        if (!s.hasLoadedOnce) return
+        if (userIdProvider().isNullOrBlank()) return
+        cancelInFlight()
+        loadPages(fromPage = 0)
+    }
+
+    /**
      * 登录态变化。登出**只清不拉**（全接口 REQUIRED，同 Profile 的纪律）；
      * 登录重拉。清空包括种子缓存与用户信息 —— 会话列表全是账号私有数据。
      */

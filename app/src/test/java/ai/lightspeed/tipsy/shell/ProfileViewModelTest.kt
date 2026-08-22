@@ -361,6 +361,80 @@ class ProfileViewModelTest {
         assertEquals(listOf(0, 1, 0), api.createdCalls.map { it.page })
     }
 
+    // ── 桥信号：notifyCreatedCharactersChanged ────────────────
+
+    /** 创作 tab 正被选中 → 就地重拉（Surface 关闭不重走 onStart，没有下一个触发点）。 */
+    @Test
+    fun `创作信号在创作 tab 选中时就地重拉`() = runTest {
+        val api = FakeProfileApi(
+            pages = listOf(
+                page(items = listOf(item("a")), total = 1),
+                page(items = listOf(item("new"), item("a")), total = 2),
+            ),
+        )
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        assertEquals(listOf("a"), vm.state.value.createdItems.map { it.itemId })
+
+        vm.onCreatedCharactersChangedSignal()
+        advanceUntilIdle()
+
+        assertEquals(listOf(0, 0), api.createdCalls.map { it.page })
+        assertEquals(listOf("new", "a"), vm.state.value.createdItems.map { it.itemId })
+    }
+
+    /** 其它 tab 选中 → 不打断它的在飞链，只作废创作 tab，切回时重拉。 */
+    @Test
+    fun `创作信号在其它 tab 选中时作废创作 tab 切回重拉`() = runTest {
+        val api = FakeProfileApi(
+            pages = listOf(
+                page(items = listOf(item("a")), total = 1),
+                page(items = listOf(item("new"), item("a")), total = 2),
+            ),
+            memoryPages = listOf(memoryPage(items = listOf(memoryItem("m1")), total = 1)),
+        )
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        vm.onTabSelected(ProfileTab.MEMORY)
+        advanceUntilIdle()
+
+        vm.onCreatedCharactersChangedSignal()
+        advanceUntilIdle()
+        // 信号本身不发请求（否则会打断/并发当前 tab 的在飞链）
+        assertEquals(listOf(0), api.createdCalls.map { it.page })
+        assertEquals("记忆 tab 不受影响", "m1", vm.state.value.memoryItems.single().plotId)
+
+        vm.onTabSelected(ProfileTab.CREATED)
+        advanceUntilIdle()
+        assertEquals(listOf(0, 0), api.createdCalls.map { it.page })
+        assertEquals(listOf("new", "a"), vm.state.value.createdItems.map { it.itemId })
+    }
+
+    /** 创作 tab 从未加载（在别的 tab 上）→ no-op，首次进入本来就拉全新数据。 */
+    @Test
+    fun `创作信号在创作 tab 未加载时不产生额外请求`() = runTest {
+        val api = FakeProfileApi(
+            pages = listOf(page(items = listOf(item("a")), total = 1)),
+            memoryPages = listOf(memoryPage(items = listOf(memoryItem("m1")), total = 1)),
+        )
+        val vm = viewModel(api)
+        vm.onAppear()
+        advanceUntilIdle()
+        vm.onTabSelected(ProfileTab.MEMORY)
+        advanceUntilIdle()
+        // 手动把创作 tab 复位成未加载态的等价场景：语言 settle 清空全部分页
+        vm.onLanguageSettled()
+        advanceUntilIdle()
+        val callsBefore = api.createdCalls.size
+
+        vm.onCreatedCharactersChangedSignal()
+        advanceUntilIdle()
+
+        assertEquals("未加载的 tab 不因信号发请求", callsBefore, api.createdCalls.size)
+    }
+
     @Test
     fun `刷新中重复触发被忽略`() = runTest {
         val api = FakeProfileApi(pages = List(5) { page(items = listOf(item("a")), total = 10) })

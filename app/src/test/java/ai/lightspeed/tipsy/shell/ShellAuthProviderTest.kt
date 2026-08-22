@@ -355,6 +355,47 @@ class ShellAuthProviderTest {
         }
     }
 
+    // ── CreateSurface → Native Profile 创作列表刷新 ──────────────
+
+    /** 守卫语义对齐 iOS（`guard let userId`）：有登录账号才转发。 */
+    @Test
+    fun `createdCharactersChanged 有 Native 账号时转发信号`() = runTest {
+        val f = fixture(persisted = tokenWithExp(now + 3600, sub = "native-owner"))
+
+        f.provider.notifyCreatedCharactersChanged()
+
+        assertEquals(1, f.createdCharactersSignals())
+    }
+
+    /** 登出瞬间迟到的成功回执不得触发刷新（且忽略必须可诊断，同 profileChanged）。 */
+    @Test
+    fun `createdCharactersChanged 在无有效 Native 账号时忽略且可诊断`() = runTest {
+        val fixtures = listOf(
+            fixture(persisted = null),
+            fixture(persisted = tokenWithExp(now - 1)),
+        )
+
+        fixtures.forEach { it.provider.notifyCreatedCharactersChanged() }
+
+        fixtures.forEach { f ->
+            assertEquals(0, f.createdCharactersSignals())
+            assertTrue(f.logs.any { it.contains("createdCharactersChanged") })
+        }
+    }
+
+    // ── RN Surface 建群/群成员变更 → Native ChatList 刷新 ─────────
+
+    /** iOS 同义实现是无守卫即时广播；账号边界由消费方（hasLoadedOnce/登出复位）守。 */
+    @Test
+    fun `chattedListChanged 直接转发信号`() = runTest {
+        val f = fixture(persisted = tokenWithExp(now + 3600))
+
+        f.provider.notifyChattedListChanged()
+        f.provider.notifyChattedListChanged()
+
+        assertEquals(2, f.chattedListSignals())
+    }
+
     // ── 未实现项必须可见（P0 建立的纪律，P1 不得破坏）───────────
 
     /**
@@ -585,6 +626,10 @@ class ShellAuthProviderTest {
         val routeRequests: List<AppRoute>,
         /** EditProfileSurface 成功通知解析出的 Native 账号。 */
         val profileRefreshRequests: List<String>,
+        /** CreateSurface 创建/编辑成功信号计数。 */
+        val createdCharactersSignals: () -> Int,
+        /** 建群/群成员变更信号计数。 */
+        val chattedListSignals: () -> Int,
     ) {
         val popSurfaceCount: Int get() = popSurfaceCounter()
         val logoutCount: Int get() = logoutCounter()
@@ -636,6 +681,8 @@ class ShellAuthProviderTest {
         val loginReasons = mutableListOf<String?>()
         val routeRequests = mutableListOf<AppRoute>()
         val profileRefreshRequests = mutableListOf<String>()
+        var createdCharactersSignals = 0
+        var chattedListSignals = 0
         lateinit var provider: ShellAuthProvider
         val gate = ApiErrorGate(
             onAuthRejected = { provider.handleServerAuthRejectedForToken(it) },
@@ -655,6 +702,8 @@ class ShellAuthProviderTest {
             onRequestLogin = { loginReasons.add(it) },
             onRequestRoute = { routeRequests.add(it) },
             onProfileRefreshRequested = { profileRefreshRequests.add(it) },
+            onCreatedCharactersChanged = { createdCharactersSignals++ },
+            onChattedListChanged = { chattedListSignals++ },
             tokenStore = tokenStore,
             apiErrorGate = gate,
             scope = this,
@@ -668,6 +717,7 @@ class ShellAuthProviderTest {
             provider, persistence, generations,
             { popCount }, { logoutCount }, logs, gemsCalls, gate, { rnLogoutCount },
             loginReasons, routeRequests, profileRefreshRequests,
+            { createdCharactersSignals }, { chattedListSignals },
         )
     }
 
