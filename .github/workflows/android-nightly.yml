@@ -84,6 +84,16 @@ jobs:
           cache: npm
           cache-dependency-path: tipsy-app/package-lock.json
 
+      - name: 配置私有 git 依赖凭据（@tipsy/tracker）
+        # package-lock 里有 git+ssh:// 私有依赖（tipsy-tracking），runner 无 SSH key，
+        # 全局 insteadOf 重写为带 token 的 HTTPS —— 详见 android-ci.yml 同名步骤。
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${PAT_TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
+          git config --global --add url."https://x-access-token:${PAT_TOKEN}@github.com/".insteadOf "git@github.com:"
+
       - name: 安装 RN 依赖
         working-directory: tipsy-app
         run: npm ci
@@ -185,6 +195,16 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: tipsy-app/package-lock.json
+
+      - name: 配置私有 git 依赖凭据（@tipsy/tracker）
+        # package-lock 里有 git+ssh:// 私有依赖（tipsy-tracking），runner 无 SSH key，
+        # 全局 insteadOf 重写为带 token 的 HTTPS —— 详见 android-ci.yml 同名步骤。
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${PAT_TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
+          git config --global --add url."https://x-access-token:${PAT_TOKEN}@github.com/".insteadOf "git@github.com:"
 
       - name: 安装 RN 依赖
         working-directory: tipsy-app

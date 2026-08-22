@@ -122,6 +122,21 @@ jobs:
           cache: npm
           cache-dependency-path: tipsy-app/package-lock.json
 
+      - name: 配置私有 git 依赖凭据（@tipsy/tracker）
+        # RN 合入 release/1.4.6 后 package-lock 里有 git+ssh:// 的私有依赖
+        # （github.com/Lightspeed-Intelligence/tipsy-tracking）。runner 无 SSH key，
+        # 不重写 URL 时 npm ci 在 clone 该依赖处必挂。全局 insteadOf 把两种 ssh
+        # 形式都重写为带 token 的 HTTPS（iOS CI 同解）；子模块那步的显式 https
+        # URL 不受影响。PAT_TOKEN 复用拉子模块的同一个 —— classic token 的 repo
+        # scope 覆盖签发账号可读的全部私有仓，但**签发账号必须对 tipsy-tracking
+        # 有读权限**，缺权限的症状是 npm ci 报 128 而非 401。
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config --global url."https://x-access-token:${PAT_TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
+          git config --global --add url."https://x-access-token:${PAT_TOKEN}@github.com/".insteadOf "git@github.com:"
+
       - name: 安装 RN 依赖
         working-directory: tipsy-app
         # 必须 npm ci（锁版本）；postinstall 会跑 patch-package，见方案 §3.2

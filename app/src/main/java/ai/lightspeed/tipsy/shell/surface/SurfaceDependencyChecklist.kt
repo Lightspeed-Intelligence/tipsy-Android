@@ -48,7 +48,7 @@ object SurfaceDependencyChecklist {
         Requirement("SWRConfig", "缓存与 revalidate 语义和现网不一致"),
         Requirement("GestureHandlerRootView", "手势失效（左滑返回、抽屉拖拽）"),
         Requirement("PortalProvider", "所有 portal 投递无宿主"),
-        Requirement("NavigationContainer", "页内导航不可用"),
+        Requirement("TrackedNavigationContainer", "页内导航不可用"),
         Requirement("Stack.Navigator", "五个微栈目标都到不了"),
         Requirement("RoleCardLimit", "角色卡超限弹窗只写 session store，无人渲染"),
         Requirement("GreetingVideoPortal", "点开场白视频卡只写 store —— 「点了没反应」"),
@@ -93,19 +93,23 @@ object SurfaceDependencyChecklist {
         Requirement("SWRConfig", "创建流程缓存与 revalidate 语义漂移"),
         Requirement("GestureHandlerRootView", "头像裁剪、抽屉与返回手势失效"),
         Requirement("PortalProvider", "标签抽屉与创建弹层没有 portal 宿主"),
-        Requirement("NavigationContainer", "CreateStack 无法挂载"),
-        Requirement("Stack.Navigator", "10 个创建微栈目标都不可达"),
+        Requirement("TrackedNavigationContainer", "CreateStack 无法挂载"),
+        Requirement("Stack.Navigator", "13 个创建微栈目标都不可达"),
         Requirement("SurfaceToastHost", "保存/上传结果只写 toast store，界面无提示"),
     )
 
     /**
      * Android 当前 RN pin 实际注册的创建微栈目标。
      *
-     * RN 注释仍写“9 页”，但 JSX 已有 10 个；`type.ts` 里遗留的 `Upscale`
-     * 没有实际注册且无 navigate 调用，不能把类型声明误当运行期真值。
+     * 1.4.6 合流（进度 §2.56）带入剧情卡三屏（PlotCardManagement/Drafts/StoryDesign，
+     * 注册序紧跟 Create）。`type.ts` 里遗留的 `Upscale` 仍无实际注册且无 navigate
+     * 调用，不能把类型声明误当运行期真值。
      */
     val CREATE_STACK_TARGETS: List<String> = listOf(
         "Create",
+        "PlotCardManagement",
+        "PlotCardDrafts",
+        "PlotCardStoryDesign",
         "CreateAvatar",
         "EditVoice",
         "Generate",
@@ -131,7 +135,7 @@ object SurfaceDependencyChecklist {
         Requirement("SWRConfig", "缓存与 revalidate 语义和现网不一致"),
         Requirement("GestureHandlerRootView", "手势返回与页内拖拽失效"),
         Requirement("PortalProvider", "toast 与设置页弹层没有 portal 宿主"),
-        Requirement("NavigationContainer", "SettingStack 无法挂载"),
+        Requirement("TrackedNavigationContainer", "SettingStack 无法挂载"),
         Requirement("Stack.Navigator", "12 个设置微栈目标都不可达"),
         Requirement("SurfaceToastHost", "提交反馈等结果只写 toast store，界面无提示"),
     )
@@ -150,7 +154,7 @@ object SurfaceDependencyChecklist {
         Requirement("SWRConfig", "缓存与 revalidate 语义和现网不一致"),
         Requirement("GestureHandlerRootView", "手势返回与页内拖拽失效"),
         Requirement("PortalProvider", "评论页弹层（删除确认等）没有 portal 宿主"),
-        Requirement("NavigationContainer", "ChatDetail 栈无法挂载"),
+        Requirement("TrackedNavigationContainer", "ChatDetail 栈无法挂载"),
         Requirement("Stack.Navigator", "初始屏 Comments 与二级页都不可达"),
         Requirement("SurfaceToastHost", "评论提交/删除结果只写 toast store，界面无提示"),
     )
@@ -168,7 +172,7 @@ object SurfaceDependencyChecklist {
         Requirement("SWRConfig", "缓存与 revalidate 语义和现网不一致"),
         Requirement("GestureHandlerRootView", "手势返回与页内拖拽失效"),
         Requirement("PortalProvider", "通知页弹层没有 portal 宿主"),
-        Requirement("NavigationContainer", "NotificationStack 无法挂载"),
+        Requirement("TrackedNavigationContainer", "NotificationStack 无法挂载"),
         Requirement("Stack.Navigator", "列表与详情两页都不可达"),
         Requirement("SurfaceToastHost", "操作结果只写 toast store，界面无提示"),
     )
@@ -205,7 +209,7 @@ object SurfaceDependencyChecklist {
      * 旧原生编辑页只作休眠回滚备份。Android 因而不复活另一套业务实现，只用
      * 通用容器 + [EditProfileSurfaceContract] 保留组件身份。
      *
-     * `NavigationContainer` / 单屏 `Stack.Navigator` 看似多余，但抽屉子树里的
+     * `TrackedNavigationContainer` / 单屏 `Stack.Navigator` 看似多余，但抽屉子树里的
      * `TipsyAutoHeightDrawer` 无条件调用 `useNavigation()`；删掉会在启动时直接崩。
      */
     val EDIT_PROFILE: List<Requirement> = listOf(
@@ -214,7 +218,7 @@ object SurfaceDependencyChecklist {
         Requirement("SWRConfig", "资料与头像框请求的缓存/revalidate 语义漂移"),
         Requirement("GestureHandlerRootView", "返回手势与社媒抽屉拖拽失效"),
         Requirement("PortalProvider", "社媒抽屉的具名 portal 没有根宿主"),
-        Requirement("NavigationContainer", "TipsyAutoHeightDrawer 的 useNavigation 启动即崩"),
+        Requirement("TrackedNavigationContainer", "TipsyAutoHeightDrawer 的 useNavigation 启动即崩"),
         Requirement("Stack.Navigator", "EditProfile 单屏根无法挂载"),
         Requirement("SurfaceToastHost", "保存/上传结果只写 toast store，界面无提示"),
     )
