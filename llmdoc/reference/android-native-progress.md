@@ -39,7 +39,7 @@
 > 动态 50MB cache、三轴播放门与声音开关。⚠️ 真实视频、cache 失败、API24–33
 > 层序、audio focus 四项仍 NOT RUN，**不得标 production-ready**；next-item / fade /
 > firstInteractive 与 P3 其余二期项仍未做。Screen 原生分享已在工作区实现
-> （§2.57），Direct APK Debug Kotlin 编译已过，但单测/lint/设备验收尚未运行。
+> （§2.57），Direct APK Debug Kotlin 编译与 lint 已过，但单测/设备验收尚未运行。
 > **Tab3 创建入口已接 CreateSurface**（§2.40，2026-08-18）：`AppRoute.Create`
 > 进白名单，**五个 Tab 全部可用**；模拟器三轮开关 + 连点幂等已验。
 > ⚠️ 真机实测出一个**类别性**缺陷并已修：无参路由（实例恒相等）若不解除
@@ -76,7 +76,7 @@
 - **✅ 卡片点击已解锁**（§2.36，2026-08-17）：`ChatDetail` / `MiniPhoneChat` 进白名单，Home/ChatList/Search/Screen 四个页面的卡片点击**第一次有下一屏**。Profile 的 `EditProfileSurface` 已完成静态预接（§2.43），但因 §9.1 全 NOT RUN 仍由 policy 明确拒绝；其余 Gems/UserCoins/RoleCard/Follow 与 Settings 7 子屏仍点不动。§12 实例关闭链**记为已接受偏差**（单层容器弹不错；根治要改 RN 侧 9 个调用点 + 双壳回归）。
 - **Tab3 创建入口已接通**（§2.40，2026-08-18，219 行）：`AppRoute.Create` 进白名单，Tab3 的 ➕ 从「只打一行日志」变成挂 `CreateSurface` 直达创建表单 —— **五个 Tab 全部可用**。壳只传 `createEnterSource` 一个 prop，**刻意不复刻** RN tabPress 那四个参数（Surface 自决落地页，§2.30 纪律）。⚠️ 真机抓到**类别性**缺陷并已修：`AppRoute.Create()` 无参 ⇒ 实例恒相等 ⇒ 去重不解除就「只能用一次」，ChatDetail 因每次带不同 characterId 而侥幸未暴露；后续每个无参路由都要配解除。✅ §2.41 已补微根/微栈/注册/bootstrap 机器断言；⚠️ §9.1 的 8 个设备/生命周期验收格仍全 `✎`。
 - **Screen P1 + P2 代码已实现**（§2.35 / §2.42）：P1 落 AB 端点分流、归因、首屏缓存与会话埋点；P2 让 `showcase` 首次接入 Media3、有界播放器池、±1 窗口、RN Android buffer、动态 50MB cache、三轴播放门与声音开关。PR #39 最终 head `13cc633` 的 G1 全绿；⚠️ feed 无 showcase，真实视频/cache 失败/API24–33 层序/audio focus 四项仍 NOT RUN，故**不是 production-ready**。
-- **Screen 原生分享代码已实现，待验证**（§2.57，2026-08-21）：按 RN Android 产品语义 + iOS 原生职责边界落同页全屏 Dialog、即时审核、相册保存、Copy/Discord/Instagram/TikTok/X/Facebook、最近使用排序与可靠推荐 share outbox。Reel 路径暂沿用 RN 的 character-backed id，但明确保持 `videoId=null`，不伪造视频 id 调分享计数接口。`git diff --check`、26 语言导出与 `compileDirectApkDebugKotlin` 通过；单测/lint、模拟器/真机和社交 App 矩阵 **NOT RUN**。
+- **Screen 原生分享代码已实现，待验证**（§2.57，2026-08-21）：按 RN Android 产品语义 + iOS 原生职责边界落同页全屏 Dialog、即时审核、相册保存、Copy/Discord/Instagram/TikTok/X/Facebook、最近使用排序与可靠推荐 share outbox。Reel 路径暂沿用 RN 的 character-backed id，但明确保持 `videoId=null`，不伪造视频 id 调分享计数接口。`git diff --check`、26 语言导出、`compileDirectApkDebugKotlin` 与 `lintDirectApkDebug` 通过；单测、模拟器/真机和社交 App 矩阵 **NOT RUN**。
 - **Search P2 筛选器已实现**（§2.34，4 文件 723 行）：性别/排序/分级抽屉 + 二级标签栏，Search 达成完整对等。`SearchTagOrderTest` **逐条对拍 RN 的 144 行现成单测**。⚠️ 分级筛选的门是「非 GooglePlay && nsfw 开」，与 Settings 的 Limitless（只有 directApk）**不同轴** —— RuStore 在这里算可选。
 - **不存在 / 未验**：Screen P2 已落代码但四项核心验收未跑，next-item/fade/firstInteractive/P3 仍无（卡片四类交互已对齐，§2.55）；Sentry、Qt 实际上报、core/feature 模块均无；**G3 nightly 已建且首跑全绿**（§2.54）。生产路由白名单 **15 类**（§2.55 后）：三纯原生 + 十二 Surface/带参目标（+RoleCard、+CharacterDetail）。13 个业务 Surface：**9 启用**（ChatDetail/Create/Settings/EditProfile/Comments/Notification/GemsSubscription/UserCoins/RoleCard）+ **2 并入 Settings**（DeleteAccount/Widget，§2.53 判定，注册仅为 OTA 偏斜保留）+ 1 待评估（Onboarding，需新注册链路）+ Debug 不计。各 Surface 的真机格仍在累积清单。⚠️ 待 owner：**性别筛选持久化静默失效**（§2.23.1）与 **Follow 出口无 Surface 可用**。
 
@@ -4087,8 +4087,9 @@ ProcessLifecycle 播放门暂停，回来后 Dialog 保持打开。
 
 验证：locale export **26/26、0 missing**；root/submodule `git diff --check` 通过；
 2026-08-22 修正 `parseResponse` suspend 边界与预览 padding 重载后，
-`:app:compileDirectApkDebugKotlin` **PASS**。新增 URL/order/saver、审核/content、冻结
-token、点击快照及推荐队列/retry 单测，但**单测/assemble/lint 均 NOT RUN**。模拟器/真机
+`:app:compileDirectApkDebugKotlin` 与 `:app:lintDirectApkDebug` **PASS**。新增
+URL/order/saver、审核/content、冻结 token、点击快照及推荐队列/retry 单测，但
+**单测/assemble 均 NOT RUN**。模拟器/真机
 仍需覆盖：API 28 权限允许/拒绝、API 29+ MediaStore、六渠道已安装/未安装/取消、
 外跳往返 Dialog 与播放恢复、池满封面降级、真实 showcase 与 animated image MIME。
 

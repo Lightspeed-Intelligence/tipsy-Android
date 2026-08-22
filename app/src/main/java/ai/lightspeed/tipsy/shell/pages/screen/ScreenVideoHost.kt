@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -58,10 +59,6 @@ fun ScreenVideoHost(
     isActive: Boolean,
     /** 声音开关，见 [ScreenSoundPreference]。 */
     soundEnabled: Boolean,
-    /** 分享预览循环；feed 默认 false，维持播完回封面的业务状态机。 */
-    loop: Boolean = false,
-    /** feed 用 ZOOM 铺满，分享预览传 FIT 保持完整媒体。 */
-    resizeMode: Int = AspectRatioFrameLayout.RESIZE_MODE_ZOOM,
     pool: ScreenPlayerPool,
     /** 播完回调 —— 上层据此切 tagline（`hasUserInteracted` 的判定在上层）。 */
     onPlaybackEnded: () -> Unit,
@@ -86,6 +83,10 @@ fun ScreenVideoHost(
      */
     onFirstFrame: () -> Unit,
     modifier: Modifier = Modifier,
+    /** 分享预览循环；feed 默认 false，维持播完回封面的业务状态机。 */
+    loop: Boolean = false,
+    /** feed 用 ZOOM 铺满，分享预览传 FIT 保持完整媒体。 */
+    resizeMode: Int = AspectRatioFrameLayout.RESIZE_MODE_ZOOM,
 ) {
     if (url.isNullOrBlank()) return
 
@@ -99,7 +100,7 @@ fun ScreenVideoHost(
     // 都会 recycle + 重新 borrow**，把一个正在用、缓冲已就绪的播放器扔掉重来
     // （邻页 ↔ 当前页来回切时尤其明显：起播延迟、白白丢缓冲、还多几次
     // 解码器创建）。而真正要修的只是「借不到之后没有第二次机会」这一种情况。
-    var retryTick by remember(url) { mutableStateOf(0) }
+    var retryTick by remember(url) { mutableIntStateOf(0) }
     LaunchedEffect(url, isCurrent) {
         // 成为当前页且当前手上没有播放器 → 触发一次重试。
         // 此时别的卡多半已经归还了实例（池满是瞬时状态）

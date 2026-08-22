@@ -19,10 +19,13 @@
     <!--
       Native saver 仅 Android 9 及以下请求；上限保留到 29 是为了兼容仍在 RN Surface
       使用的 expo-media-library Android 10 权限分支，不能在壳合并时压成 28。
+      ScopedStorage lint 说明该权限在 API 29 不提供传统全盘写入；本壳在 API 29
+      本就走 MediaStore，不依赖它写文件，声明只用于满足共享 RN 模块的权限契约。
     -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="29" />
+        android:maxSdkVersion="29"
+        tools:ignore="ScopedStorage" />
 
     <!--
       X/Facebook shareSingle 对等：只查询是否安装以选择 targeted Intent 或官方 Web。

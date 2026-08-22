@@ -2,6 +2,7 @@ package ai.lightspeed.tipsy.shell.share
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.core.content.edit
 import org.json.JSONArray
 
 /**
@@ -27,7 +28,7 @@ class TipsySharePlatformOrderStore(
         val updated = TipsySharePlatformOrder.recordClick(current, channel)
         if (updated == current) return
         val encoded = JSONArray().apply { updated.forEach(::put) }.toString()
-        preferences.edit().putString(STORAGE_KEY, encoded).apply()
+        preferences.edit { putString(STORAGE_KEY, encoded) }
     }
 
     private fun readStoredIds(): List<String> {

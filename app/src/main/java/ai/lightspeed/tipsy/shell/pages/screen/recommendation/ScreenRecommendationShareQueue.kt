@@ -41,11 +41,13 @@ class SharedPreferencesScreenRecommendationQueueStorage(
 
     override fun read(key: String): String? = preferences.getString(key, null)
 
-    @SuppressLint("ApplySharedPref")
+    // SharedPreferences.edit KTX intentionally discards Editor.commit()'s Boolean result.
+    // The reliable outbox must propagate that result, so this boundary uses the platform API.
+    @SuppressLint("ApplySharedPref", "UseKtx")
     override fun write(key: String, value: String): Boolean =
         preferences.edit().putString(key, value).commit()
 
-    @SuppressLint("ApplySharedPref")
+    @SuppressLint("ApplySharedPref", "UseKtx")
     override fun remove(key: String): Boolean = preferences.edit().remove(key).commit()
 
     companion object {
