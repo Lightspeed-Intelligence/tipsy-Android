@@ -286,6 +286,27 @@ class ScreenViewModelTest {
         assertTrue(events.isEmpty())
     }
 
+    @Test
+    fun `分享事件使用点击卡片而不是异步 settled 的 currentItem`() = runTest {
+        val api = FakeApi()
+        api.pages = mapOf(0 to page(listOf(item("a"), item("b"), item("c"))))
+        val events = mutableListOf<Pair<String, Map<String, String>>>()
+        val vm = viewModel(api, owner = "u1", events = events)
+        vm.onEndpointResolved(flagEnabled = true)
+        advanceUntilIdle()
+        vm.onFocusChanged(true)
+        events.clear()
+
+        val state = vm.state.value
+        val clickedIndex = state.items.indices.first { it != state.currentIndex }
+        val clicked = state.items[clickedIndex]
+        vm.onCardEvent(ScreenCardEvent.SHARE_CLICK, clicked)
+
+        val share = events.single { it.first == ScreenCardEvent.SHARE_CLICK.wire }
+        assertEquals((clickedIndex + 1).toString(), share.second["card_id"])
+        assertEquals(clicked.cardType.wire, share.second["card_type"])
+    }
+
     // ── 卡片交互 ─────────────────────────────────────
 
     @Test

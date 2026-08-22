@@ -25,9 +25,18 @@ import ai.lightspeed.tipsy.shell.i18n.L10n
 import ai.lightspeed.tipsy.shell.i18n.LanguageCodes
 import ai.lightspeed.tipsy.shell.network.ApiClient
 import ai.lightspeed.tipsy.shell.network.ApiErrorGate
+import ai.lightspeed.tipsy.shell.pages.screen.recommendation.ApiScreenRecommendationBatchSource
+import ai.lightspeed.tipsy.shell.pages.screen.recommendation.ScreenRecommendationDiagnostic
+import ai.lightspeed.tipsy.shell.pages.screen.recommendation.ScreenRecommendationConnectivityState
+import ai.lightspeed.tipsy.shell.pages.screen.recommendation.ScreenRecommendationNetworkMonitor
+import ai.lightspeed.tipsy.shell.pages.screen.recommendation.ScreenRecommendationShareReporter
+import ai.lightspeed.tipsy.shell.pages.screen.recommendation.ShellTokenScreenRecommendationProvider
+import ai.lightspeed.tipsy.shell.pages.screen.recommendation.SharedPreferencesScreenRecommendationQueueStorage
 import ai.lightspeed.tipsy.shell.pages.profile.ProfileRefreshHub
 import ai.lightspeed.tipsy.shell.router.AppRoute
 import ai.lightspeed.tipsy.shell.router.AppRouter
+import ai.lightspeed.tipsy.shell.share.AndroidTipsyShareMediaSaver
+import ai.lightspeed.tipsy.shell.share.TipsyShareMediaSaver
 import ai.lightspeed.tipsy.shell.user.CurrentUser
 import ai.lightspeed.tipsy.shell.user.CurrentUserMirror
 import ai.lightspeed.tipsy.shell.user.CurrentUserStore
@@ -128,6 +137,20 @@ class TipsyApplication : Application(), ReactApplication {
     /** 壳侧 API 客户端（W1-P6）。W2 的 Home / Login 用它发请求。 */
     lateinit var apiClient: ApiClient
         private set
+
+    /** 分享媒体写入相册的进程级边界；下载复用同一 OkHttpClient，但最终线前剥离凭据。 */
+    lateinit var shareMediaSaver: TipsyShareMediaSaver
+        private set
+
+    /** Screen 推荐 share 反馈的可靠 outbox；Application 持有，不能随页面销毁丢任务。 */
+    lateinit var screenRecommendationShareReporter: ScreenRecommendationShareReporter
+        private set
+
+    /** Application 生命周期的网络恢复观察者；只在 false→true 边沿唤醒 share outbox。 */
+    private lateinit var screenRecommendationNetworkMonitor: ScreenRecommendationNetworkMonitor
+
+    /** monitor 与 reporter 的线程安全共享网络状态；null 表示尚未取得系统快照。 */
+    private val screenRecommendationConnectivityState = ScreenRecommendationConnectivityState()
 
     /** `/user/info` 的进程级唯一 store；Native 页与 Surface 共享同一份发布链。 */
     lateinit var currentUserStore: CurrentUserStore
@@ -384,8 +407,9 @@ class TipsyApplication : Application(), ReactApplication {
 
         // 网络层（W1-P6）。**共享 RN 的 OkHttpClient** —— 见 ApiClient 注释：
         // 各起一套会让连接池/DNS/TLS session 变成两份，且「同一后端两条链路」难查。
+        val sharedClient = sharedOkHttpClient()
         apiClient = ApiClient(
-            client = sharedOkHttpClient(),
+            client = sharedClient,
             baseUrl = BuildConfig.API_BASE_URL,
             tokenStore = tokenStore,
             errorGate = apiErrorGate,
@@ -394,6 +418,45 @@ class TipsyApplication : Application(), ReactApplication {
             // P7 接壳的 lane store 后换成真值；现在 null = 壳无意见
             laneProvider = { null },
         )
+
+        shareMediaSaver = AndroidTipsyShareMediaSaver(
+            context = applicationContext,
+            contentResolver = contentResolver,
+            okHttpClient = sharedClient,
+        )
+
+        screenRecommendationShareReporter = ScreenRecommendationShareReporter(
+            apiBaseUrl = BuildConfig.API_BASE_URL,
+            storage = SharedPreferencesScreenRecommendationQueueStorage(applicationContext),
+            batchSource = ApiScreenRecommendationBatchSource(apiClient),
+            tokenProvider = ShellTokenScreenRecommendationProvider(tokenStore),
+            ownerUserIdProvider = { tokenStore.currentUserId() },
+            generations = generations,
+            coroutineScope = appScope,
+            diagnostic = ScreenRecommendationDiagnostic { eventCode, fields ->
+                Analytics.track(eventCode, fields)
+            },
+            connectivityProvider = screenRecommendationConnectivityState::isConnected,
+        )
+        authStateHub.addObserver(object : AuthStateHub.Observer {
+            override fun onDidLogin(userId: String?) {
+                screenRecommendationShareReporter.onAuthChanged()
+            }
+
+            override fun onDidLogout() {
+                screenRecommendationShareReporter.onAuthChanged()
+            }
+        })
+        screenRecommendationNetworkMonitor = ScreenRecommendationNetworkMonitor(
+            context = applicationContext,
+            connectivityState = screenRecommendationConnectivityState,
+            onReconnect = { screenRecommendationShareReporter.flushCurrentOwner() },
+            diagnostic = ScreenRecommendationDiagnostic { eventCode, fields ->
+                Analytics.track(eventCode, fields)
+            },
+        ).also { it.start() }
+        // 冷启动已有会话时冲出该 owner 的历史队列；未登录时安全 no-op。
+        screenRecommendationShareReporter.flushCurrentOwner()
 
         currentUserStore = CurrentUserStore(
             source = UserInfoApi(apiClient),

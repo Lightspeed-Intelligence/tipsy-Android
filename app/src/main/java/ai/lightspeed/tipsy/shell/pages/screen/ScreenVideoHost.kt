@@ -58,6 +58,10 @@ fun ScreenVideoHost(
     isActive: Boolean,
     /** 声音开关，见 [ScreenSoundPreference]。 */
     soundEnabled: Boolean,
+    /** 分享预览循环；feed 默认 false，维持播完回封面的业务状态机。 */
+    loop: Boolean = false,
+    /** feed 用 ZOOM 铺满，分享预览传 FIT 保持完整媒体。 */
+    resizeMode: Int = AspectRatioFrameLayout.RESIZE_MODE_ZOOM,
     pool: ScreenPlayerPool,
     /** 播完回调 —— 上层据此切 tagline（`hasUserInteracted` 的判定在上层）。 */
     onPlaybackEnded: () -> Unit,
@@ -117,14 +121,14 @@ fun ScreenVideoHost(
     if (current == null) return
 
     // 播完 / 首帧：listener 的生命周期跟着 player 实例，换实例要重挂
-    DisposableEffect(current) {
+    DisposableEffect(current, loop) {
         val listener = object : Player.Listener {
             override fun onRenderedFirstFrame() {
                 onFirstFrame()
             }
 
             override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_ENDED) {
+                if (!loop && state == Player.STATE_ENDED) {
                     // 对齐 RN handleVideoEnd：暂停 + 回首帧 + 上层切 tagline
                     current.pause()
                     current.seekTo(0)
@@ -146,6 +150,10 @@ fun ScreenVideoHost(
         }
         current.addListener(listener)
         onDispose { current.removeListener(listener) }
+    }
+
+    LaunchedEffect(current, loop) {
+        current.repeatMode = if (loop) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
     }
 
     // ## 播放门：两种「不播」语义不同，别合并
@@ -211,13 +219,16 @@ fun ScreenVideoHost(
                 useController = false
                 // RN 是 resizeMode="cover" —— Media3 的对等是 ZOOM（裁切铺满），
                 // 不是 FIT（会留黑边）。全屏 feed 留黑边等于视觉不对等。
-                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                this.resizeMode = resizeMode
                 // 封面由上层的 Coil 图承担，PlayerView 自己不要画背景色，
                 // 否则首帧前会盖住封面变成黑屏 —— 正是缩略图时序要防的那个黑帧。
                 setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
             }
         },
-        update = { view -> view.player = current },
+        update = { view ->
+            view.resizeMode = resizeMode
+            view.player = current
+        },
         onRelease = { view -> view.player = null },
     )
 }

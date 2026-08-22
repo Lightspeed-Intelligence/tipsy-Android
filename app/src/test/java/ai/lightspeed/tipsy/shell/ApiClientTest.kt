@@ -258,6 +258,18 @@ class ApiClientTest {
         assertTrue("UI 要能区分「宝石不足」和「网络错误」", ex.isNotEnoughGems)
     }
 
+    @Test
+    fun `业务异常保留结构化 data`() = runTest {
+        server.enqueue(ok("""{"code":2,"msg":"blocked","data":{"ok":false}}"""))
+        val f = fixture(token = validToken)
+
+        val ex = assertThrows(ApiException.Business::class.java) {
+            kotlinx.coroutines.runBlocking { f.client.get("x", authMode = AuthMode.REQUIRED) }
+        }
+
+        assertEquals(false, ex.data?.getBoolean("ok"))
+    }
+
     // ── 401 / 402 汇聚 ────────────────────────────────────────
 
     @Test
@@ -334,6 +346,40 @@ class ApiClientTest {
         assertEquals("POST", req.method)
         assertEquals("""{"msg":"hi"}""", req.body.readUtf8())
         assertTrue(req.getHeader("Content-Type")!!.startsWith("application/json"))
+    }
+
+    @Test
+    fun `冻结 token POST 使用事件产生时的当前会话`() = runTest {
+        server.enqueue(ok())
+        val f = fixture(token = validToken)
+
+        f.client.postWithFrozenToken(
+            path = "screen/recommendation/batch",
+            jsonBody = """{"events":[]}""",
+            frozenToken = validToken,
+        )
+
+        val req = server.takeRequest()
+        assertEquals(validToken, req.getHeader("token"))
+        assertEquals("""{"events":[]}""", req.body.readUtf8())
+    }
+
+    @Test
+    fun `冻结 token 已非当前账号时不发送`() = runTest {
+        val accountA = tokenWithExp(now + 3_600, sub = "account-a")
+        val accountB = tokenWithExp(now + 3_600, sub = "account-b")
+        val f = fixture(token = accountB)
+
+        assertThrows(ApiException.Unauthenticated::class.java) {
+            kotlinx.coroutines.runBlocking {
+                f.client.postWithFrozenToken(
+                    path = "screen/recommendation/batch",
+                    frozenToken = accountA,
+                )
+            }
+        }
+
+        assertEquals("账号 A 的排队事件不得使用账号 B 的会话发送", 0, server.requestCount)
     }
 
     @Test

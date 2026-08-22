@@ -77,6 +77,29 @@ class LocaleAssetsTest {
         }
     }
 
+    @Test
+    fun `Screen 分享可达词条在 26 个语言里都存在`() {
+        val required = setOf(
+            "Share",
+            "Copy Link",
+            "share_message",
+            "copied_go_share",
+            "Unable to open link",
+            "Saved",
+            "No photo library permission",
+            "Failed to save",
+            "Failed to save image",
+            "Checking content compliance",
+            "Share content contains sensitive information",
+            "Link copied, opening Discord...",
+            "Link copied, opening TikTok...",
+        )
+        for (code in LanguageCodes.SUPPORTED) {
+            val missing = required - keysOf(code)
+            assertTrue("$code.json 缺少 Screen 分享词条：$missing", missing.isEmpty())
+        }
+    }
+
     private fun keysOf(code: String): Set<String> {
         val json = org.json.JSONObject(File(localesDir, "$code.json").readText())
         return json.keys().asSequence().toSet()

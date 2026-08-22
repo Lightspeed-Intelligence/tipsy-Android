@@ -193,6 +193,15 @@ class ScreenViewModel(
         tracker.trackCardEvent(event, _state.value.currentIndex, _state.value.currentItem)
     }
 
+    /** 卡片点击的精确版本；分享弹层用它冻结点击时的 item。 */
+    fun onCardEvent(event: ScreenCardEvent, item: ScreenFeedItem) {
+        val state = _state.value
+        val clickedIndex = state.items.indexOfFirst { it.characterId == item.characterId }
+            .takeIf { it >= 0 }
+            ?: state.currentIndex
+        tracker.trackCardEvent(event, clickedIndex, item)
+    }
+
     /**
      * 点赞/取消点赞：RN `VideoActionButtons` 的同序实现。
      *
